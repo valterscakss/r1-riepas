@@ -126,6 +126,31 @@ Operations Manager, and Business Owner.
 
 ---
 
+## Cross-cutting workstream — living documentation
+
+Documentation is maintained **every increment**, not written once at the end. A
+feature is not "done" until its docs are updated in the same PR. Owned artifacts:
+
+| Doc | Kept current | Location |
+| :- | :- | :- |
+| **API reference (OpenAPI 3.1)** | The source of truth for every endpoint; generated/validated in CI | `docs/api/openapi.yaml` |
+| **Architecture overview + diagrams** | Components, data flow, trust boundaries | `docs/architecture/` |
+| **Data model / ERD** | Updated with each migration | `docs/architecture/data-model.md` |
+| **Runbook** (deploy, rollback, restore, on-call) | Updated as ops procedures change | `docs/runbook/` |
+| **ADRs** (architecture decision records) | One per significant decision (hosting, ORM, auth, retention) | `docs/adr/` |
+| **Staff user guide** | Intake/retrieval walkthroughs for training (§3.6: operate in 2h) | `docs/user-guide/` |
+| **CHANGELOG** | Per release | `CHANGELOG.md` |
+
+**Gate addition (all increments):** the increment's docs are updated in the same PR;
+CI fails if the OpenAPI spec drifts from the implemented routes.
+
+## Integration APIs — see `integration-api-plan.md`
+
+Planning the app's inbound/outbound APIs for connecting to other systems (vehicle
+registry, accounting/e-invoicing, payments, BI) is tracked separately. Phase-1
+touchpoints (Twilio, and optionally plate-lookup enrichment) are folded into the
+increments above; the rest are sequenced there.
+
 ## Deferred to post-MVP (with rationale)
 
 | Item | Why deferred |
