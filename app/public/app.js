@@ -2,8 +2,15 @@ const $ = (sel) => document.querySelector(sel);
 const esc = (s) => (s == null ? '' : String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])));
 
 let ME = null;
+// Crash-proof storage: some privacy modes throw on localStorage read/write.
+// Fall back silently to in-memory (token then lasts for the page session).
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
 // Token-based auth (cookie-independent — works even if the browser blocks cookies).
-let TOKEN = localStorage.getItem('r1_token') || null;
+let TOKEN = store.get('r1_token') || null;
 const authHeaders = (extra) => (TOKEN ? { ...(extra || {}), Authorization: 'Bearer ' + TOKEN } : (extra || {}));
 
 // --- Auth bootstrapping ---
@@ -36,23 +43,29 @@ $('#login-form').addEventListener('submit', async (e) => {
   const fd = new FormData(e.target);
   const msg = $('#login-msg');
   msg.textContent = 'Signing in…';
-  const res = await fetch('/api/login', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: fd.get('username'), password: fd.get('password') }),
-  });
-  const data = await res.json();
-  if (res.ok) {
-    ME = data.user;
-    TOKEN = data.token || null;
-    if (TOKEN) localStorage.setItem('r1_token', TOKEN);
-    msg.textContent = '';
-    showApp();
-  } else msg.textContent = data.error?.message ?? 'Login failed';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: fd.get('username'), password: fd.get('password') }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      ME = data.user;
+      TOKEN = data.token || null;
+      if (TOKEN) store.set('r1_token', TOKEN);
+      msg.textContent = '';
+      showApp();
+    } else {
+      msg.textContent = data.error?.message ?? 'Login failed';
+    }
+  } catch (err) {
+    msg.textContent = 'Error: ' + (err?.message ?? 'could not sign in');
+  }
 });
 
 async function logout() {
   try { await fetch('/api/logout', { method: 'POST', headers: authHeaders() }); } catch {}
-  ME = null; TOKEN = null; localStorage.removeItem('r1_token');
+  ME = null; TOKEN = null; store.del('r1_token');
   showLogin();
 }
 
@@ -60,7 +73,7 @@ async function logout() {
 async function api(url, opts) {
   const o = opts || {};
   const res = await fetch(url, { ...o, headers: authHeaders(o.headers) });
-  if (res.status === 401) { ME = null; TOKEN = null; localStorage.removeItem('r1_token'); showLogin(); throw new Error('unauthorized'); }
+  if (res.status === 401) { ME = null; TOKEN = null; store.del('r1_token'); showLogin(); throw new Error('unauthorized'); }
   return res;
 }
 
