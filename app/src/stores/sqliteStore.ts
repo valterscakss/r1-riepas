@@ -183,7 +183,12 @@ export class SqliteStore implements Store {
 
   async createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' }): Promise<void> {
     this.db.prepare('INSERT INTO users (username, name, password_hash, role) VALUES (?,?,?,?)')
-      .run(u.username, u.name, u.passwordHash, u.role);
+      .run(u.username.toLowerCase(), u.name, u.passwordHash, u.role);
+  }
+
+  async setPasswordByUsername(username: string, passwordHash: string): Promise<boolean> {
+    const info = this.db.prepare('UPDATE users SET password_hash = ? WHERE username = ?').run(passwordHash, username.toLowerCase());
+    return info.changes > 0;
   }
 
   async countUsers(): Promise<number> {

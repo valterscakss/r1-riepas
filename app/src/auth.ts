@@ -62,13 +62,21 @@ export const toSession = (u: User): SessionUser => ({ id: u.id, username: u.user
  */
 export async function seedAdmin(store: Store): Promise<void> {
   await store.ensureAuth();
-  if ((await store.countUsers()) > 0) return;
-  const username = process.env.ADMIN_USERNAME || 'admin';
+  const username = (process.env.ADMIN_USERNAME || 'admin').toLowerCase();
   const password = process.env.ADMIN_PASSWORD;
-  if (!password) {
-    console.warn('[auth] No users and ADMIN_PASSWORD not set — no admin was created. Set ADMIN_USERNAME/ADMIN_PASSWORD.');
+  if ((await store.countUsers()) === 0) {
+    if (!password) {
+      console.warn('[auth] No users and ADMIN_PASSWORD not set — no admin was created. Set ADMIN_USERNAME/ADMIN_PASSWORD.');
+      return;
+    }
+    await store.createUser({ username, name: 'Administrator', passwordHash: await hashPassword(password), role: 'admin' });
+    console.log(`[auth] Seeded initial admin user "${username}".`);
     return;
   }
-  await store.createUser({ username, name: 'Administrator', passwordHash: await hashPassword(password), role: 'admin' });
-  console.log(`[auth] Seeded initial admin user "${username}".`);
+  // Admin already exists. If ADMIN_PASSWORD is set, keep it in sync with env so
+  // the password can be reset by changing the env var and redeploying.
+  if (password) {
+    const ok = await store.setPasswordByUsername(username, await hashPassword(password));
+    if (ok) console.log(`[auth] Synced password for admin user "${username}" from ADMIN_PASSWORD.`);
+  }
 }
