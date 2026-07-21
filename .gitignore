@@ -16,3 +16,8 @@ coverage/
 # Real seed generated from the source workbook — contains customer data
 /app/data/real-seed.json
 
+# SQLite database files (contain customer data)
+/app/data/*.db
+/app/data/*.db-shm
+/app/data/*.db-wal
+

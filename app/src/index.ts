@@ -1,21 +1,27 @@
 import express from 'express';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { Store, IntakeInput } from './types.js';
-import { LocalStore } from './stores/localStore.js';
+import { SqliteStore } from './stores/sqliteStore.js';
 import { SheetsStore } from './stores/sheetsStore.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
 
 // --- Choose the datastore -------------------------------------------------
-// Google Sheets if configured, otherwise the local seed store (dev/demo).
+// Default: a self-contained SQLite database (no external service). Google Sheets
+// remains available as an opt-in backend if SHEET_ID/SHEET_TAB are configured.
 function makeStore(): Store {
   if (process.env.SHEET_ID && process.env.SHEET_TAB) {
     return new SheetsStore(process.env.SHEET_ID, process.env.SHEET_TAB);
   }
-  const seed = process.env.SEED_FILE ?? join(__dirname, '..', 'data', 'sample-seed.json');
-  return new LocalStore(seed);
+  const dataDir = join(__dirname, '..', 'data');
+  const dbFile = process.env.DB_FILE ?? join(dataDir, 'r1.db');
+  // On first run, seed from the real dataset if present, else the synthetic sample.
+  const realSeed = join(dataDir, 'real-seed.json');
+  const seed = process.env.SEED_FILE ?? (existsSync(realSeed) ? realSeed : join(dataDir, 'sample-seed.json'));
+  return new SqliteStore(dbFile, seed);
 }
 const store = makeStore();
 
