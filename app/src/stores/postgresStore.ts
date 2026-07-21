@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { Store, StorageRecord, IntakeInput } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User } from '../types.js';
 
 /**
  * Postgres datastore — the production backend for Supabase (or any Postgres).
@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS storage (
 CREATE INDEX IF NOT EXISTS idx_storage_plate ON storage(UPPER(plate));
 CREATE INDEX IF NOT EXISTS idx_storage_status ON storage(status);
 CREATE INDEX IF NOT EXISTS idx_storage_location ON storage(location);
+
+CREATE TABLE IF NOT EXISTS users (
+  id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  username      TEXT UNIQUE NOT NULL,
+  name          TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'staff',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 
 interface Row {
@@ -116,5 +125,65 @@ export class PostgresStore implements Store {
       [date, Number(id)],
     );
     return res.rows[0] ? toRecord(res.rows[0]) : null;
+  }
+
+  async replaceAll(records: IntakeInput[]): Promise<{ imported: number }> {
+    await this.init();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('TRUNCATE storage RESTART IDENTITY');
+      const COLS = ['season', 'location', 'plate', 'make_model', 'customer_name', 'is_company', 'phone', 'size1', 'brand', 'quantity', 'size2', 'rim_note', 'notes', 'intake_date', 'release_date', 'status'];
+      const BATCH = 500;
+      let imported = 0;
+      for (let i = 0; i < records.length; i += BATCH) {
+        const chunk = records.slice(i, i + BATCH);
+        const values: unknown[] = [];
+        const tuples = chunk.map((r, idx) => {
+          const rd = (r as { releaseDate?: string }).releaseDate ?? null;
+          const st = (r as { status?: string }).status ?? (rd ? 'released' : 'active');
+          values.push(
+            r.season ?? null, r.location ?? null, r.plate ?? null, r.makeModel ?? null,
+            r.customerName ?? null, r.isCompany ?? false, r.phone ?? null, r.size1 ?? null,
+            r.brand ?? null, r.quantity ?? null, r.size2 ?? null, r.rimNote ?? null,
+            r.notes ?? null, r.intakeDate ?? null, rd, st,
+          );
+          const base = idx * COLS.length;
+          return `(${COLS.map((_, c) => `$${base + c + 1}`).join(',')})`;
+        });
+        await client.query(`INSERT INTO storage (${COLS.join(',')}) VALUES ${tuples.join(',')}`, values);
+        imported += chunk.length;
+      }
+      await client.query('COMMIT');
+      return { imported };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  // --- Auth ---
+  async ensureAuth(): Promise<void> { await this.init(); }
+
+  async getUserByUsername(username: string): Promise<User | null> {
+    await this.init();
+    const res = await this.pool.query<{ id: number; username: string; name: string; password_hash: string; role: string }>(
+      'SELECT * FROM users WHERE username = $1', [username]);
+    const r = res.rows[0];
+    return r ? { id: String(r.id), username: r.username, name: r.name, passwordHash: r.password_hash, role: r.role === 'admin' ? 'admin' : 'staff' } : null;
+  }
+
+  async createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' }): Promise<void> {
+    await this.init();
+    await this.pool.query('INSERT INTO users (username, name, password_hash, role) VALUES ($1,$2,$3,$4)',
+      [u.username, u.name, u.passwordHash, u.role]);
+  }
+
+  async countUsers(): Promise<number> {
+    await this.init();
+    const res = await this.pool.query<{ n: string }>('SELECT COUNT(*) AS n FROM users');
+    return Number(res.rows[0].n);
   }
 }

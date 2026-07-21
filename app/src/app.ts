@@ -1,10 +1,17 @@
 import express from 'express';
+import cookieParser from 'cookie-parser';
+import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { IntakeInput } from './types.js';
 import { getStore } from './store.js';
+import { parseWorkbook } from './importExcel.js';
+import {
+  COOKIE, signToken, verifyPassword, currentUser, requireAuth, requireAdmin, toSession,
+} from './auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 const asyncH = (fn: (req: express.Request, res: express.Response) => Promise<unknown>) =>
   (req: express.Request, res: express.Response) =>
@@ -13,17 +20,51 @@ const asyncH = (fn: (req: express.Request, res: express.Response) => Promise<unk
       res.status(500).json({ error: { message: String(err?.message ?? err) } });
     });
 
-/** Build the configured Express app (shared by the local server and Vercel). */
+const cookieOpts = {
+  httpOnly: true as const,
+  sameSite: 'lax' as const,
+  secure: process.env.NODE_ENV === 'production',
+  path: '/',
+  maxAge: 12 * 60 * 60 * 1000,
+};
+
 export function createApp(): express.Express {
   const app = express();
   app.use(express.json());
+  app.use(cookieParser());
+
+  // --- Auth ---
+  app.post('/api/login', asyncH(async (req, res) => {
+    const store = await getStore();
+    const { username, password } = req.body ?? {};
+    if (!username || !password) return res.status(400).json({ error: { message: 'Username and password required' } });
+    const user = await store.getUserByUsername(String(username).trim());
+    if (!user || !(await verifyPassword(String(password), user.passwordHash))) {
+      return res.status(401).json({ error: { message: 'Invalid username or password' } });
+    }
+    const session = toSession(user);
+    res.cookie(COOKIE, signToken(session), cookieOpts);
+    res.json({ user: session });
+  }));
+
+  app.post('/api/logout', (_req, res) => {
+    res.clearCookie(COOKIE, { ...cookieOpts, maxAge: undefined });
+    res.json({ ok: true });
+  });
+
+  app.get('/api/me', (req, res) => {
+    const u = currentUser(req);
+    if (!u) return res.status(401).json({ error: { message: 'Not authenticated' } });
+    res.json({ user: u });
+  });
 
   app.get('/api/health', asyncH(async (_req, res) => {
     const store = await getStore();
     res.json({ ok: true, store: store.kind() });
   }));
 
-  app.get('/api/storage', asyncH(async (req, res) => {
+  // --- Data (auth required) ---
+  app.get('/api/storage', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
     const status = req.query.status === 'released' ? 'released' : req.query.status === 'active' ? 'active' : undefined;
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
@@ -31,15 +72,14 @@ export function createApp(): express.Express {
     res.json({ count: records.length, records });
   }));
 
-  app.get('/api/storage/:id', asyncH(async (req, res) => {
+  app.get('/api/storage/:id', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.get(req.params.id);
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
     res.json(rec);
   }));
 
-  // Lookup previous storage by plate — powers intake auto-fill (SRS FR-2.2.1/2).
-  app.get('/api/lookup', asyncH(async (req, res) => {
+  app.get('/api/lookup', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
     const raw = typeof req.query.plate === 'string' ? req.query.plate : '';
     const plate = raw.toUpperCase().replace(/\s+/g, '');
@@ -60,8 +100,7 @@ export function createApp(): express.Express {
     });
   }));
 
-  // Intake — create a new storage record.
-  app.post('/api/intake', asyncH(async (req, res) => {
+  app.post('/api/intake', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
     const b = req.body ?? {};
     if (!b.location && !b.plate) {
@@ -87,12 +126,30 @@ export function createApp(): express.Express {
     res.status(201).json(rec);
   }));
 
-  // Retrieval — mark a record released.
-  app.post('/api/storage/:id/release', asyncH(async (req, res) => {
+  app.post('/api/storage/:id/release', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.release(req.params.id, { releaseDate: req.body?.releaseDate });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
     res.json(rec);
+  }));
+
+  // --- Excel import (admin only): parse the workbook and REPLACE the DB.
+  // The file is parsed in memory and never stored; Excel is the source of truth.
+  app.post('/api/import', requireAdmin, upload.single('file'), asyncH(async (req, res) => {
+    const file = (req as express.Request & { file?: { buffer: Buffer } }).file;
+    if (!file) return res.status(400).json({ error: { message: 'No file uploaded (field name: file)' } });
+    let parsed;
+    try {
+      parsed = parseWorkbook(file.buffer);
+    } catch {
+      return res.status(400).json({ error: { message: 'Could not read the file as an .xlsx workbook' } });
+    }
+    if (parsed.records.length === 0) {
+      return res.status(400).json({ error: { message: 'No recognizable seasonal sheets found in the workbook' } });
+    }
+    const store = await getStore();
+    const { imported } = await store.replaceAll(parsed.records);
+    res.json({ ok: true, imported, ...parsed.summary });
   }));
 
   // Static UI (also served on Vercel via the catch-all rewrite).

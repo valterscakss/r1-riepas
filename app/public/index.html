@@ -7,70 +7,105 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <header>
-    <h1>🛞 R1 Tires — Storage</h1>
-    <span id="store-badge" class="badge">connecting…</span>
-  </header>
-
-  <nav class="tabs">
-    <button class="tab active" data-tab="search">Search / Current storage</button>
-    <button class="tab" data-tab="intake">New intake</button>
-  </nav>
-
-  <!-- SEARCH / LIST -->
-  <section id="tab-search" class="panel">
-    <div class="row">
-      <input id="q" type="search" placeholder="Search by plate, location, name or phone…" autocomplete="off" />
-      <select id="status">
-        <option value="active">Active (in storage)</option>
-        <option value="released">Released</option>
-        <option value="">All</option>
-      </select>
-      <button id="search-btn">Search</button>
-    </div>
-    <p id="search-meta" class="meta"></p>
-    <div class="table-wrap">
-      <table id="results">
-        <thead>
-          <tr>
-            <th>Loc</th><th>Plate</th><th>Vehicle</th><th>Customer</th><th>Phone</th>
-            <th>Size</th><th>Brand</th><th>Qty</th><th>Intake</th><th>Status</th><th></th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- INTAKE -->
-  <section id="tab-intake" class="panel hidden">
-    <form id="intake-form">
-      <div id="lookup-banner" class="banner hidden"></div>
-      <div class="grid">
-        <label>Location (VIETA)<input name="location" placeholder="A1" /></label>
-        <label>Plate (AUTO NR.)
-          <span class="plate-row">
-            <input name="plate" id="plate-input" placeholder="GG1666" autocomplete="off" />
-            <button type="button" id="lookup-btn" class="ghost small">Look up</button>
-          </span>
-        </label>
-        <label>Vehicle (make/model)<input name="makeModel" placeholder="BMW X5" /></label>
-        <label>Customer name<input name="customerName" placeholder="Maksims / KNAUF" /></label>
-        <label>Phone<input name="phone" placeholder="29441992" /></label>
-        <label>Tire size (IZMĒRS)<input name="size1" placeholder="235/50/19" /></label>
-        <label>Brand<input name="brand" placeholder="Michelin" /></label>
-        <label>Quantity (SKAITS)<input name="quantity" placeholder="4 or 2+2" /></label>
-        <label>2nd size (staggered)<input name="size2" placeholder="275/45/20" /></label>
-        <label>Rim note (DISKI)<input name="rimNote" placeholder="4 Lietie diski" /></label>
-        <label>Intake date<input name="intakeDate" type="date" /></label>
-        <label class="wide">Notes<input name="notes" placeholder="Optional" /></label>
-      </div>
-      <div class="row">
-        <button type="submit">Save intake</button>
-        <span id="intake-msg" class="meta"></span>
-      </div>
+  <!-- LOGIN OVERLAY -->
+  <div id="login" class="login-overlay hidden">
+    <form id="login-form" class="login-card">
+      <h1>🛞 R1 Tires</h1>
+      <p class="meta">Sign in to continue</p>
+      <label>Username<input name="username" autocomplete="username" autofocus /></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" /></label>
+      <button type="submit">Sign in</button>
+      <p id="login-msg" class="meta"></p>
     </form>
-  </section>
+  </div>
+
+  <!-- APP (shown once authenticated) -->
+  <div id="app" class="hidden">
+    <header>
+      <h1>🛞 R1 Tires — Storage</h1>
+      <span id="store-badge" class="badge">…</span>
+      <span id="user-area" class="user-area"></span>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="search">Search / Current storage</button>
+      <button class="tab" data-tab="intake">New intake</button>
+      <button class="tab admin-only hidden" data-tab="admin">Admin</button>
+    </nav>
+
+    <!-- SEARCH / LIST -->
+    <section id="tab-search" class="panel">
+      <div class="row">
+        <input id="q" type="search" placeholder="Search by plate, location, name or phone…" autocomplete="off" />
+        <select id="status">
+          <option value="active">Active (in storage)</option>
+          <option value="released">Released</option>
+          <option value="">All</option>
+        </select>
+        <button id="search-btn">Search</button>
+      </div>
+      <p id="search-meta" class="meta"></p>
+      <div class="table-wrap">
+        <table id="results">
+          <thead>
+            <tr>
+              <th>Loc</th><th>Plate</th><th>Vehicle</th><th>Customer</th><th>Phone</th>
+              <th>Size</th><th>Brand</th><th>Qty</th><th>Intake</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- INTAKE -->
+    <section id="tab-intake" class="panel hidden">
+      <form id="intake-form">
+        <div id="lookup-banner" class="banner hidden"></div>
+        <div class="grid">
+          <label>Location (VIETA)<input name="location" placeholder="A1" /></label>
+          <label>Plate (AUTO NR.)
+            <span class="plate-row">
+              <input name="plate" id="plate-input" placeholder="GG1666" autocomplete="off" />
+              <button type="button" id="lookup-btn" class="ghost small">Look up</button>
+            </span>
+          </label>
+          <label>Vehicle (make/model)<input name="makeModel" placeholder="BMW X5" /></label>
+          <label>Customer name<input name="customerName" placeholder="Maksims / KNAUF" /></label>
+          <label>Phone<input name="phone" placeholder="29441992" /></label>
+          <label>Tire size (IZMĒRS)<input name="size1" placeholder="235/50/19" /></label>
+          <label>Brand<input name="brand" placeholder="Michelin" /></label>
+          <label>Quantity (SKAITS)<input name="quantity" placeholder="4 or 2+2" /></label>
+          <label>2nd size (staggered)<input name="size2" placeholder="275/45/20" /></label>
+          <label>Rim note (DISKI)<input name="rimNote" placeholder="4 Lietie diski" /></label>
+          <label>Intake date<input name="intakeDate" type="date" /></label>
+          <label class="wide">Notes<input name="notes" placeholder="Optional" /></label>
+        </div>
+        <div class="row">
+          <button type="submit">Save intake</button>
+          <span id="intake-msg" class="meta"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- ADMIN -->
+    <section id="tab-admin" class="panel hidden">
+      <h2>Import from Excel</h2>
+      <p class="meta">
+        Upload the master workbook (<code>.xlsx</code>). It is parsed and the database is
+        <b>replaced</b> to match — Excel is the source of truth. The file itself is not stored.
+      </p>
+      <div class="banner new">
+        ⚠️ This replaces all current storage records with what's in the uploaded file.
+      </div>
+      <form id="import-form" class="row">
+        <input type="file" id="import-file" accept=".xlsx" />
+        <button type="submit">Upload &amp; import</button>
+        <span id="import-msg" class="meta"></span>
+      </form>
+      <pre id="import-result" class="result hidden"></pre>
+    </section>
+  </div>
 
   <script src="/app.js"></script>
 </body>

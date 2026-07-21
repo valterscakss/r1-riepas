@@ -31,8 +31,14 @@ async function makeStore(): Promise<Store> {
 }
 
 let storeP: Promise<Store> | null = null;
-/** Lazily construct the store once and reuse it (safe across serverless calls). */
+/** Lazily construct the store once, seed the initial admin, and reuse it. */
 export function getStore(): Promise<Store> {
-  if (!storeP) storeP = makeStore();
+  if (!storeP) {
+    storeP = makeStore().then(async (s) => {
+      const { seedAdmin } = await import('./auth.js');
+      try { await seedAdmin(s); } catch (e) { console.error('[auth] admin seed failed:', e); }
+      return s;
+    });
+  }
   return storeP;
 }

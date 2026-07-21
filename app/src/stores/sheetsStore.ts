@@ -1,4 +1,4 @@
-import type { Store, StorageRecord, IntakeInput } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User } from '../types.js';
 import { matches } from '../types.js';
 
 /**
@@ -133,6 +133,16 @@ export class SheetsStore implements Store {
     });
     return this.get(id);
   }
+
+  // Auth and bulk import are not supported on the Sheets backend (use Postgres/SQLite).
+  private unsupported(): never {
+    throw new Error('This operation requires the Postgres or SQLite backend, not Google Sheets.');
+  }
+  async replaceAll(): Promise<{ imported: number }> { return this.unsupported(); }
+  async ensureAuth(): Promise<void> { /* no-op */ }
+  async getUserByUsername(): Promise<User | null> { return this.unsupported(); }
+  async createUser(): Promise<void> { return this.unsupported(); }
+  async countUsers(): Promise<number> { return 0; }
 }
 
 // (COL_COUNT kept for reference/validation of the layout width.)

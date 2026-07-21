@@ -22,6 +22,20 @@ export interface StorageRecord {
 export type IntakeInput = Omit<StorageRecord, 'id' | 'status' | 'releaseDate'> &
   Partial<Pick<StorageRecord, 'intakeDate'>>;
 
+export interface User {
+  id: string;
+  username: string;
+  name: string;
+  passwordHash: string;
+  role: 'admin' | 'staff';
+}
+
+export interface ImportSummary {
+  parsed: number;
+  imported: number;
+  skipped: number;
+}
+
 export interface Store {
   /** List records, optionally filtered by status and a free-text query. */
   list(opts?: { status?: 'active' | 'released'; q?: string }): Promise<StorageRecord[]>;
@@ -30,8 +44,20 @@ export interface Store {
   create(input: IntakeInput): Promise<StorageRecord>;
   /** Mark a record released (retrieval). */
   release(id: string, opts: { releaseDate?: string }): Promise<StorageRecord | null>;
+  /**
+   * Replace ALL storage rows with the given records, transactionally.
+   * Used by the Excel import pipeline (Excel = source of truth).
+   */
+  replaceAll(records: IntakeInput[]): Promise<{ imported: number }>;
   /** Which backend is active (for the UI banner). */
   kind(): string;
+
+  // --- Auth (staff users) ---
+  /** Create the users table if needed and seed an admin from env when empty. */
+  ensureAuth(): Promise<void>;
+  getUserByUsername(username: string): Promise<User | null>;
+  createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' }): Promise<void>;
+  countUsers(): Promise<number>;
 }
 
 /** Case-insensitive match of a query against the fields staff search by. */

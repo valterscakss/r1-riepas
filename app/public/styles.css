@@ -42,6 +42,22 @@ button.small { padding: 6px 10px; font-size: 13px; }
 .banner.found { background: #e6f6ec; color: #14622f; border: 1px solid #a8ddb9; }
 .banner.new { background: #eef2f6; color: #4a5560; border: 1px solid #d3dbe2; }
 .banner:not(.found):not(.new) { background: #fff8e6; color: #7a5c00; }
+
+/* Login overlay */
+.login-overlay { position: fixed; inset: 0; background: #101418; display: flex; align-items: center; justify-content: center; z-index: 50; }
+.login-card { background: #fff; padding: 28px; border-radius: 12px; width: 320px; max-width: 90vw; display: flex; flex-direction: column; gap: 10px; }
+.login-card h1 { margin: 0; font-size: 22px; }
+.login-card label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: #55606a; }
+.login-card button { margin-top: 6px; padding: 11px; }
+
+/* Header user area */
+.user-area { display: flex; align-items: center; gap: 8px; margin-left: 12px; font-size: 13px; color: #cdd6df; }
+.user-area .role { background: #2b3138; color: #9fb3c8; padding: 2px 8px; border-radius: 999px; font-size: 11px; text-transform: uppercase; }
+.admin-only.hidden { display: none; }
+
+/* Admin import result */
+.result { background: #0f1418; color: #b8c7d6; padding: 12px 14px; border-radius: 8px; font-size: 12px; white-space: pre-wrap; overflow-x: auto; }
+code { background: #eef2f6; padding: 1px 5px; border-radius: 4px; }
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
 .grid label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: #55606a; }
 .grid label.wide { grid-column: span 3; }

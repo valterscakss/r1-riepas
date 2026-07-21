@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Store, StorageRecord, IntakeInput } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User } from '../types.js';
 
 /**
  * SQLite datastore — the self-contained default backend. A real, durable, local
@@ -32,6 +32,15 @@ CREATE TABLE IF NOT EXISTS storage (
 CREATE INDEX IF NOT EXISTS idx_storage_plate  ON storage(plate);
 CREATE INDEX IF NOT EXISTS idx_storage_status ON storage(status);
 CREATE INDEX IF NOT EXISTS idx_storage_location ON storage(location);
+
+CREATE TABLE IF NOT EXISTS users (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  username      TEXT UNIQUE NOT NULL,
+  name          TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'staff',
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 
 interface Row {
@@ -139,5 +148,45 @@ export class SqliteStore implements Store {
     const info = this.db.prepare(`UPDATE storage SET status = 'released', releaseDate = ? WHERE id = ?`).run(date, Number(id));
     if (info.changes === 0) return null;
     return this.get(id);
+  }
+
+  async replaceAll(records: IntakeInput[]): Promise<{ imported: number }> {
+    const insert = this.db.prepare(`INSERT INTO storage
+      (season, location, plate, makeModel, customerName, isCompany, phone, size1, brand, quantity, size2, rimNote, notes, intakeDate, releaseDate, status)
+      VALUES (@season, @location, @plate, @makeModel, @customerName, @isCompany, @phone, @size1, @brand, @quantity, @size2, @rimNote, @notes, @intakeDate, @releaseDate, @status)`);
+    const tx = this.db.transaction((items: IntakeInput[]) => {
+      this.db.prepare('DELETE FROM storage').run();
+      for (const r of items) {
+        insert.run({
+          season: r.season ?? null, location: r.location ?? null, plate: r.plate ?? null,
+          makeModel: r.makeModel ?? null, customerName: r.customerName ?? null,
+          isCompany: r.isCompany ? 1 : 0, phone: r.phone ?? null,
+          size1: r.size1 ?? null, brand: r.brand ?? null, quantity: r.quantity ?? null,
+          size2: r.size2 ?? null, rimNote: r.rimNote ?? null, notes: r.notes ?? null,
+          intakeDate: r.intakeDate ?? null, releaseDate: (r as { releaseDate?: string }).releaseDate ?? null,
+          status: (r as { status?: string }).status ?? ((r as { releaseDate?: string }).releaseDate ? 'released' : 'active'),
+        });
+      }
+      return items.length;
+    });
+    return { imported: tx(records) };
+  }
+
+  // --- Auth ---
+  async ensureAuth(): Promise<void> { /* table created in constructor DDL */ }
+
+  async getUserByUsername(username: string): Promise<User | null> {
+    const r = this.db.prepare('SELECT * FROM users WHERE username = ?').get(username) as
+      | { id: number; username: string; name: string; password_hash: string; role: string } | undefined;
+    return r ? { id: String(r.id), username: r.username, name: r.name, passwordHash: r.password_hash, role: r.role === 'admin' ? 'admin' : 'staff' } : null;
+  }
+
+  async createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' }): Promise<void> {
+    this.db.prepare('INSERT INTO users (username, name, password_hash, role) VALUES (?,?,?,?)')
+      .run(u.username, u.name, u.passwordHash, u.role);
+  }
+
+  async countUsers(): Promise<number> {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
   }
 }
