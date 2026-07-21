@@ -44,8 +44,11 @@ export function createApp(): express.Express {
       return res.status(401).json({ error: { message: 'Invalid username or password' } });
     }
     const session = toSession(user);
-    res.cookie(COOKIE, signToken(session), cookieOpts);
-    res.json({ user: session });
+    const token = signToken(session);
+    res.cookie(COOKIE, token, cookieOpts);
+    // Also return the token so the SPA can store it and send it as a Bearer
+    // header — this keeps login working even when the browser blocks cookies.
+    res.json({ user: session, token });
   }));
 
   app.post('/api/logout', (_req, res) => {

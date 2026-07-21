@@ -31,9 +31,15 @@ export function verifyToken(token: string): SessionUser | null {
   }
 }
 
-/** Read the session user off the request cookie, if any. */
+/**
+ * Read the session user from either the Authorization: Bearer header (preferred —
+ * cookie-independent, works even when the browser blocks cookies) or the cookie.
+ */
 export function currentUser(req: express.Request): SessionUser | null {
-  const token = (req as express.Request & { cookies?: Record<string, string> }).cookies?.[COOKIE];
+  const auth = req.headers['authorization'];
+  const bearer = typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  const cookie = (req as express.Request & { cookies?: Record<string, string> }).cookies?.[COOKIE];
+  const token = bearer || cookie;
   return token ? verifyToken(token) : null;
 }
 

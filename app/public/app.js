@@ -2,11 +2,15 @@ const $ = (sel) => document.querySelector(sel);
 const esc = (s) => (s == null ? '' : String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])));
 
 let ME = null;
+// Token-based auth (cookie-independent — works even if the browser blocks cookies).
+let TOKEN = localStorage.getItem('r1_token') || null;
+const authHeaders = (extra) => (TOKEN ? { ...(extra || {}), Authorization: 'Bearer ' + TOKEN } : (extra || {}));
 
 // --- Auth bootstrapping ---
 async function init() {
+  if (!TOKEN) return showLogin();
   try {
-    const res = await fetch('/api/me');
+    const res = await fetch('/api/me', { headers: authHeaders() });
     if (res.ok) { ME = (await res.json()).user; showApp(); }
     else showLogin();
   } catch { showLogin(); }
@@ -37,20 +41,26 @@ $('#login-form').addEventListener('submit', async (e) => {
     body: JSON.stringify({ username: fd.get('username'), password: fd.get('password') }),
   });
   const data = await res.json();
-  if (res.ok) { ME = data.user; msg.textContent = ''; showApp(); }
-  else msg.textContent = data.error?.message ?? 'Login failed';
+  if (res.ok) {
+    ME = data.user;
+    TOKEN = data.token || null;
+    if (TOKEN) localStorage.setItem('r1_token', TOKEN);
+    msg.textContent = '';
+    showApp();
+  } else msg.textContent = data.error?.message ?? 'Login failed';
 });
 
 async function logout() {
-  await fetch('/api/logout', { method: 'POST' });
-  ME = null;
+  try { await fetch('/api/logout', { method: 'POST', headers: authHeaders() }); } catch {}
+  ME = null; TOKEN = null; localStorage.removeItem('r1_token');
   showLogin();
 }
 
-// Any 401 sends us back to login.
+// Any 401 sends us back to login. Injects the Bearer token on every request.
 async function api(url, opts) {
-  const res = await fetch(url, opts);
-  if (res.status === 401) { ME = null; showLogin(); throw new Error('unauthorized'); }
+  const o = opts || {};
+  const res = await fetch(url, { ...o, headers: authHeaders(o.headers) });
+  if (res.status === 401) { ME = null; TOKEN = null; localStorage.removeItem('r1_token'); showLogin(); throw new Error('unauthorized'); }
   return res;
 }
 
