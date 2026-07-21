@@ -61,6 +61,37 @@ $('#search-btn').addEventListener('click', search);
 $('#q').addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
 $('#status').addEventListener('change', search);
 
+// --- Intake auto-fill by plate (SRS FR-2.2.1/2) ---
+async function lookupPlate() {
+  const input = $('#plate-input');
+  const plate = input.value.trim();
+  const banner = $('#lookup-banner');
+  if (!plate) return;
+  banner.className = 'banner';
+  banner.textContent = 'Looking up…';
+  let data;
+  try {
+    data = await fetch('/api/lookup?plate=' + encodeURIComponent(plate)).then((r) => r.json());
+  } catch { banner.className = 'banner hidden'; return; }
+  if (!data.found) {
+    banner.className = 'banner new';
+    banner.textContent = `No previous record for ${data.plate} — new vehicle. Fill in the details.`;
+    return;
+  }
+  const s = data.suggestion;
+  const form = $('#intake-form');
+  // Prefill only empty fields, so staff edits are never overwritten.
+  const set = (name, val) => { const el = form.elements[name]; if (el && !el.value && val) el.value = val; };
+  set('makeModel', s.makeModel); set('customerName', s.customerName); set('phone', s.phone);
+  set('size1', s.size1); set('brand', s.brand); set('quantity', s.quantity);
+  set('size2', s.size2); set('rimNote', s.rimNote);
+  banner.className = 'banner found';
+  banner.innerHTML = `✅ Found ${data.history} previous record(s) for <b>${esc(data.plate)}</b> — prefilled from ${esc(data.lastSeason) || 'last visit'} (${esc(data.lastIntake) || ''}). <b>Confirm or edit</b> before saving.`;
+}
+$('#lookup-btn').addEventListener('click', lookupPlate);
+$('#plate-input').addEventListener('blur', () => { if ($('#plate-input').value.trim()) lookupPlate(); });
+$('#plate-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lookupPlate(); } });
+
 // --- Intake ---
 $('#intake-form').addEventListener('submit', async (e) => {
   e.preventDefault();

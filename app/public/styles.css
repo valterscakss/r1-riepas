@@ -35,6 +35,13 @@ button {
 button:hover { background: #285ea3; }
 button.ghost { background: #e2e6ea; color: #333; }
 .meta { color: #6a7580; font-size: 13px; }
+button.small { padding: 6px 10px; font-size: 13px; }
+.plate-row { display: flex; gap: 6px; }
+.plate-row input { flex: 1; }
+.banner { padding: 10px 12px; border-radius: 8px; margin-bottom: 14px; font-size: 13px; }
+.banner.found { background: #e6f6ec; color: #14622f; border: 1px solid #a8ddb9; }
+.banner.new { background: #eef2f6; color: #4a5560; border: 1px solid #d3dbe2; }
+.banner:not(.found):not(.new) { background: #fff8e6; color: #7a5c00; }
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
 .grid label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: #55606a; }
 .grid label.wide { grid-column: span 3; }

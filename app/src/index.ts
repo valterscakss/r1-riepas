@@ -45,6 +45,31 @@ app.get('/api/storage/:id', asyncH(async (req, res) => {
   res.json(rec);
 }));
 
+// Lookup previous storage by plate — powers intake auto-fill (SRS FR-2.2.1/2).
+app.get('/api/lookup', asyncH(async (req, res) => {
+  const raw = typeof req.query.plate === 'string' ? req.query.plate : '';
+  const plate = raw.toUpperCase().replace(/\s+/g, '');
+  if (!plate) return res.status(400).json({ error: { message: 'plate is required' } });
+  const all = await store.list({ q: plate });
+  const hits = all
+    .filter((r) => (r.plate ?? '').toUpperCase().replace(/\s+/g, '') === plate)
+    .sort((a, b) => (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''));
+  if (hits.length === 0) return res.json({ plate, found: false, history: 0, suggestion: null });
+  const s = hits[0];
+  res.json({
+    plate,
+    found: true,
+    history: hits.length,
+    lastSeason: s.season,
+    lastIntake: s.intakeDate,
+    suggestion: {
+      makeModel: s.makeModel, customerName: s.customerName, isCompany: s.isCompany,
+      phone: s.phone, size1: s.size1, brand: s.brand, quantity: s.quantity,
+      size2: s.size2, rimNote: s.rimNote,
+    },
+  });
+}));
+
 // Intake — create a new storage record.
 app.post('/api/intake', asyncH(async (req, res) => {
   const b = req.body ?? {};

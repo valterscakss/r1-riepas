@@ -45,9 +45,15 @@
   <!-- INTAKE -->
   <section id="tab-intake" class="panel hidden">
     <form id="intake-form">
+      <div id="lookup-banner" class="banner hidden"></div>
       <div class="grid">
         <label>Location (VIETA)<input name="location" placeholder="A1" /></label>
-        <label>Plate (AUTO NR.)<input name="plate" placeholder="GG1666" /></label>
+        <label>Plate (AUTO NR.)
+          <span class="plate-row">
+            <input name="plate" id="plate-input" placeholder="GG1666" autocomplete="off" />
+            <button type="button" id="lookup-btn" class="ghost small">Look up</button>
+          </span>
+        </label>
         <label>Vehicle (make/model)<input name="makeModel" placeholder="BMW X5" /></label>
         <label>Customer name<input name="customerName" placeholder="Maksims / KNAUF" /></label>
         <label>Phone<input name="phone" placeholder="29441992" /></label>
