@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+coverage/
+*.log
+.env
+.env.local
+.DS_Store
+
+# Migration working data (never commit customer data / source spreadsheets)
+/data/source/*.xlsx
+/data/source/*.xls
+/data/output/*.json
+!/data/output/.gitkeep
