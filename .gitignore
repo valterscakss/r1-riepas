@@ -12,3 +12,7 @@ coverage/
 /data/source/*.xls
 /data/output/*.json
 !/data/output/.gitkeep
+
+# Real seed generated from the source workbook — contains customer data
+/app/data/real-seed.json
+

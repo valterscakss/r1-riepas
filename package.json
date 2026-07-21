@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "import:dry-run": "tsx tools/import/importer.ts --dry-run",
-    "import:report": "tsx tools/import/importer.ts --dry-run --report data/output/reconciliation.json"
+    "import:report": "tsx tools/import/importer.ts --dry-run --report data/output/reconciliation.json",
+    "import:emit-seed": "tsx tools/import/importer.ts --dry-run --emit app/data/real-seed.json"
   },
   "devDependencies": {
     "tsx": "^4.23.1",

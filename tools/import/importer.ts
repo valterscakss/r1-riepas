@@ -319,3 +319,12 @@ if (REPORT) {
   writeFileSync(REPORT, JSON.stringify(report, null, 2));
   console.log(`\nFull report written to ${REPORT}`);
 }
+
+// --emit <path>: write the full normalized dataset (for seeding the app store).
+// NOTE: this contains real customer data — keep it gitignored.
+const EMIT = getOpt('emit');
+if (EMIT) {
+  mkdirSync(dirname(EMIT), { recursive: true });
+  writeFileSync(EMIT, JSON.stringify({ generated_from: FILE, count: records.length, records }, null, 2));
+  console.log(`Normalized dataset (${records.length} records) written to ${EMIT}`);
+}
