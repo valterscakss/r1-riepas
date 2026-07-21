@@ -178,7 +178,13 @@ export class PostgresStore implements Store {
   async createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' }): Promise<void> {
     await this.init();
     await this.pool.query('INSERT INTO users (username, name, password_hash, role) VALUES ($1,$2,$3,$4)',
-      [u.username, u.name, u.passwordHash, u.role]);
+      [u.username.toLowerCase(), u.name, u.passwordHash, u.role]);
+  }
+
+  async setPasswordByUsername(username: string, passwordHash: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('UPDATE users SET password_hash = $1 WHERE username = $2', [passwordHash, username.toLowerCase()]);
+    return (res.rowCount ?? 0) > 0;
   }
 
   async countUsers(): Promise<number> {

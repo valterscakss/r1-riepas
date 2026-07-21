@@ -142,6 +142,7 @@ export class SheetsStore implements Store {
   async ensureAuth(): Promise<void> { /* no-op */ }
   async getUserByUsername(): Promise<User | null> { return this.unsupported(); }
   async createUser(): Promise<void> { return this.unsupported(); }
+  async setPasswordByUsername(): Promise<boolean> { return this.unsupported(); }
   async countUsers(): Promise<number> { return 0; }
 }
 

@@ -57,6 +57,7 @@ export interface Store {
   ensureAuth(): Promise<void>;
   getUserByUsername(username: string): Promise<User | null>;
   createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' }): Promise<void>;
+  setPasswordByUsername(username: string, passwordHash: string): Promise<boolean>;
   countUsers(): Promise<number>;
 }
 

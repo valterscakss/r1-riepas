@@ -38,7 +38,8 @@ export function createApp(): express.Express {
     const store = await getStore();
     const { username, password } = req.body ?? {};
     if (!username || !password) return res.status(400).json({ error: { message: 'Username and password required' } });
-    const user = await store.getUserByUsername(String(username).trim());
+    // Case-insensitive username (guards against mobile auto-capitalization).
+    const user = await store.getUserByUsername(String(username).trim().toLowerCase());
     if (!user || !(await verifyPassword(String(password), user.passwordHash))) {
       return res.status(401).json({ error: { message: 'Invalid username or password' } });
     }
