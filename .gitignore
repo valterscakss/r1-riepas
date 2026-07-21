@@ -24,3 +24,4 @@ coverage/
 
 # Vercel CLI local link
 /app/.vercel/
+/.vercel/
