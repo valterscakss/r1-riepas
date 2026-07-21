@@ -15,10 +15,14 @@ const authHeaders = (extra) => (TOKEN ? { ...(extra || {}), Authorization: 'Bear
 
 // --- Auth bootstrapping ---
 async function init() {
-  // Always ask the server who we are. When login is disabled (demo mode) the
-  // server returns a demo admin, so the app opens with no login screen.
+  // Demo mode: open the app immediately with no network call (bulletproof against
+  // caching / extensions blocking /api/me). Backend auth is also disabled.
+  if (window.DEMO) {
+    ME = { id: '0', username: 'demo', name: 'Demo', role: 'admin' };
+    return showApp();
+  }
   try {
-    const res = await fetch('/api/me', { headers: authHeaders() });
+    const res = await fetch('/api/me', { headers: authHeaders(), cache: 'no-store' });
     if (res.ok) { ME = (await res.json()).user; showApp(); }
     else showLogin();
   } catch { showLogin(); }
