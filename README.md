@@ -28,10 +28,12 @@ No database writes — it parses, normalizes, validates, and quarantines bad row
 the migration can be reviewed before a real load. Latest run: 9,644 tire sets,
 0 hard errors (see `data-model-from-excel.md`).
 
-## Tech stack (per SRS §11.1)
+## Tech stack
 
-Node.js 18+ · PostgreSQL 14+ · React 18+ · TypeScript. Hosting (AWS vs. a leaner
-managed EU stack) is an open decision — see `build-plan.md`.
+Node.js + TypeScript · Express · **Supabase (Postgres)** for data · **Vercel** for
+hosting. The app has a pluggable datastore (Postgres/Supabase, Google Sheets, or a
+self-contained SQLite for local dev) selected by environment. See
+`docs/setup/vercel-supabase.md` to deploy.
 
 ## Repository layout
 

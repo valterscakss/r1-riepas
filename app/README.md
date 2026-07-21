@@ -1,11 +1,17 @@
 # R1 Tires — data-entry app
 
-A small web app for tire-storage **intake** and **search / retrieval**, backed by a
-**Google Sheet** (the MVP datastore — see `../docs/adr/0001-google-sheets-as-datastore.md`).
+A small web app for tire-storage **intake** and **search / retrieval**. It has a
+pluggable datastore and picks one automatically:
+
+| Priority | When | Backend |
+| :- | :- | :- |
+| 1 | `DATABASE_URL` set | **Postgres / Supabase** (production — see `../docs/setup/vercel-supabase.md`) |
+| 2 | `SHEET_ID` + `SHEET_TAB` set | Google Sheets (opt-in) |
+| 3 | otherwise | **SQLite** (self-contained local dev) |
 
 ## Run locally (no cloud credentials)
 
-Uses a local seed so you can develop against realistic data immediately.
+Uses a local SQLite database seeded with realistic data immediately.
 
 ```bash
 cd app

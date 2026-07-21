@@ -1,0 +1,102 @@
+import express from 'express';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import type { IntakeInput } from './types.js';
+import { getStore } from './store.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const asyncH = (fn: (req: express.Request, res: express.Response) => Promise<unknown>) =>
+  (req: express.Request, res: express.Response) =>
+    fn(req, res).catch((err) => {
+      console.error(err);
+      res.status(500).json({ error: { message: String(err?.message ?? err) } });
+    });
+
+/** Build the configured Express app (shared by the local server and Vercel). */
+export function createApp(): express.Express {
+  const app = express();
+  app.use(express.json());
+
+  app.get('/api/health', asyncH(async (_req, res) => {
+    const store = await getStore();
+    res.json({ ok: true, store: store.kind() });
+  }));
+
+  app.get('/api/storage', asyncH(async (req, res) => {
+    const store = await getStore();
+    const status = req.query.status === 'released' ? 'released' : req.query.status === 'active' ? 'active' : undefined;
+    const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+    const records = await store.list({ status, q });
+    res.json({ count: records.length, records });
+  }));
+
+  app.get('/api/storage/:id', asyncH(async (req, res) => {
+    const store = await getStore();
+    const rec = await store.get(req.params.id);
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    res.json(rec);
+  }));
+
+  // Lookup previous storage by plate — powers intake auto-fill (SRS FR-2.2.1/2).
+  app.get('/api/lookup', asyncH(async (req, res) => {
+    const store = await getStore();
+    const raw = typeof req.query.plate === 'string' ? req.query.plate : '';
+    const plate = raw.toUpperCase().replace(/\s+/g, '');
+    if (!plate) return res.status(400).json({ error: { message: 'plate is required' } });
+    const all = await store.list({ q: plate });
+    const hits = all
+      .filter((r) => (r.plate ?? '').toUpperCase().replace(/\s+/g, '') === plate)
+      .sort((a, b) => (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''));
+    if (hits.length === 0) return res.json({ plate, found: false, history: 0, suggestion: null });
+    const s = hits[0];
+    res.json({
+      plate, found: true, history: hits.length, lastSeason: s.season, lastIntake: s.intakeDate,
+      suggestion: {
+        makeModel: s.makeModel, customerName: s.customerName, isCompany: s.isCompany,
+        phone: s.phone, size1: s.size1, brand: s.brand, quantity: s.quantity,
+        size2: s.size2, rimNote: s.rimNote,
+      },
+    });
+  }));
+
+  // Intake — create a new storage record.
+  app.post('/api/intake', asyncH(async (req, res) => {
+    const store = await getStore();
+    const b = req.body ?? {};
+    if (!b.location && !b.plate) {
+      return res.status(400).json({ error: { message: 'At least a location or a plate is required' } });
+    }
+    const input: IntakeInput = {
+      season: b.season ?? null,
+      location: b.location ?? null,
+      plate: b.plate ? String(b.plate).toUpperCase().replace(/\s+/g, '') : null,
+      makeModel: b.makeModel ?? null,
+      customerName: b.customerName ?? null,
+      isCompany: Boolean(b.isCompany),
+      phone: b.phone ?? null,
+      size1: b.size1 ?? null,
+      brand: b.brand ?? null,
+      quantity: b.quantity ?? null,
+      size2: b.size2 ?? null,
+      rimNote: b.rimNote ?? null,
+      notes: b.notes ?? null,
+      intakeDate: b.intakeDate ?? undefined,
+    };
+    const rec = await store.create(input);
+    res.status(201).json(rec);
+  }));
+
+  // Retrieval — mark a record released.
+  app.post('/api/storage/:id/release', asyncH(async (req, res) => {
+    const store = await getStore();
+    const rec = await store.release(req.params.id, { releaseDate: req.body?.releaseDate });
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    res.json(rec);
+  }));
+
+  // Static UI (also served on Vercel via the catch-all rewrite).
+  app.use(express.static(join(__dirname, '..', 'public')));
+
+  return app;
+}
