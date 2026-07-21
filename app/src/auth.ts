@@ -43,8 +43,13 @@ export function currentUser(req: express.Request): SessionUser | null {
   return token ? verifyToken(token) : null;
 }
 
+/** When AUTH_DISABLED=true, everyone is treated as this admin (demo mode). */
+export const AUTH_DISABLED = () => process.env.AUTH_DISABLED === 'true';
+export const DEMO_USER: SessionUser = { id: '0', username: 'demo', name: 'Demo', role: 'admin' };
+
 /** Middleware: require any authenticated staff user. */
 export function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (AUTH_DISABLED()) { (req as express.Request & { user?: SessionUser }).user = DEMO_USER; return next(); }
   const u = currentUser(req);
   if (!u) return res.status(401).json({ error: { message: 'Authentication required' } });
   (req as express.Request & { user?: SessionUser }).user = u;
@@ -53,6 +58,7 @@ export function requireAuth(req: express.Request, res: express.Response, next: e
 
 /** Middleware: require an admin (e.g. for imports / user management). */
 export function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (AUTH_DISABLED()) { (req as express.Request & { user?: SessionUser }).user = DEMO_USER; return next(); }
   const u = currentUser(req);
   if (!u) return res.status(401).json({ error: { message: 'Authentication required' } });
   if (u.role !== 'admin') return res.status(403).json({ error: { message: 'Admin role required' } });

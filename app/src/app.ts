@@ -8,6 +8,7 @@ import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
 import {
   COOKIE, signToken, verifyPassword, currentUser, requireAuth, requireAdmin, toSession,
+  AUTH_DISABLED, DEMO_USER,
 } from './auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -57,6 +58,7 @@ export function createApp(): express.Express {
   });
 
   app.get('/api/me', (req, res) => {
+    if (AUTH_DISABLED()) return res.json({ user: DEMO_USER });
     const u = currentUser(req);
     if (!u) return res.status(401).json({ error: { message: 'Not authenticated' } });
     res.json({ user: u });

@@ -15,7 +15,8 @@ const authHeaders = (extra) => (TOKEN ? { ...(extra || {}), Authorization: 'Bear
 
 // --- Auth bootstrapping ---
 async function init() {
-  if (!TOKEN) return showLogin();
+  // Always ask the server who we are. When login is disabled (demo mode) the
+  // server returns a demo admin, so the app opens with no login screen.
   try {
     const res = await fetch('/api/me', { headers: authHeaders() });
     if (res.ok) { ME = (await res.json()).user; showApp(); }
