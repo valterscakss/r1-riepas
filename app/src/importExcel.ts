@@ -74,9 +74,16 @@ const isStandard = (header: unknown[]): boolean => {
   return STD_HEADER.every((w, i) => h[i] === w);
 };
 
+// Testing placeholder: while ANONYMIZE_PHONES=true, every phone is replaced with
+// an obvious dummy so real numbers aren't exposed during testing. Turn the flag
+// off and re-import to restore the actual numbers from the workbook.
+const DUMMY_PHONE = process.env.DUMMY_PHONE || '01010101010';
+const anonymizePhones = () => process.env.ANONYMIZE_PHONES === 'true';
+
 export function parseWorkbook(buffer: Buffer): ParseResult {
   const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const records: ParsedRecord[] = [];
+  const anon = anonymizePhones();
   let sheets = 0, rows = 0, parsed = 0, skipped = 0;
 
   for (const name of wb.SheetNames) {
@@ -102,7 +109,7 @@ export function parseWorkbook(buffer: Buffer): ParseResult {
         makeModel: clean(make),
         customerName: nameStr,
         isCompany,
-        phone: ph.phone,
+        phone: anon ? (ph.phone ? DUMMY_PHONE : null) : ph.phone,
         size1: normSize(size),
         brand: clean(brand),
         quantity: qty.raw,
