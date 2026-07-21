@@ -4,6 +4,9 @@
   "description": "R1 Tires — data-entry UI backed by Google Sheets",
   "type": "module",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",

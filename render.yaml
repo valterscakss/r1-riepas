@@ -1,0 +1,30 @@
+# Render Blueprint — deploys the R1 Tires app (native Node, no Docker needed).
+# In Render: New → Blueprint → connect this repo. Render reads this file.
+#
+# DATA PERSISTENCE:
+#   The SQLite database lives on the mounted disk below so it survives redeploys.
+#   Disks require a paid instance type (starter+). On the free plan there is no
+#   persistent disk and the database resets on every deploy — fine for a demo,
+#   not for real customer data. See docs/setup/deploy.md.
+services:
+  - type: web
+    name: r1-tires
+    runtime: node
+    rootDir: app
+    plan: starter          # 'free' has no disk; 'starter' (paid) enables the disk below
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DB_FILE
+        value: /data/r1.db
+      # To seed real data on first boot, upload a seed file to the disk and set:
+      # - key: SEED_FILE
+      #   value: /data/real-seed.json
+    disk:
+      name: r1-data
+      mountPath: /data
+      sizeGB: 1
