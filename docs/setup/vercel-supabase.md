@@ -36,16 +36,32 @@ them. (You can also import a CSV via the Supabase Table Editor if you prefer.)
 
 ## Step 3 — Vercel (hosting)
 
-1. At <https://vercel.com> → **Add New → Project** → import this GitHub repo.
+1. At <https://vercel.com> → **Add New → Project** → import this GitHub repo
+   (branch `main`).
 2. Set **Root Directory = `app`** (the app lives there; `app/vercel.json` routes
    everything to the Express handler).
-3. Add an **Environment Variable**:
-   - `DATABASE_URL` = your Supabase connection string (same as above).
+3. Add these **Environment Variables**:
+
+   | Key | Value |
+   | :- | :- |
+   | `DATABASE_URL` | Supabase connection string from Step 1 (with password) |
+   | `AUTH_SECRET` | any long random string (signs login sessions) |
+   | `ADMIN_USERNAME` | e.g. `admin` — **your login username** |
+   | `ADMIN_PASSWORD` | choose one — **your login password** |
+   | `ANONYMIZE_PHONES` | `true` (replaces phone numbers with `01010101010` during testing) |
+
 4. **Deploy.** You get a URL like `https://r1-tires.vercel.app`.
    - Check `‹url›/api/health` → should say `postgres (supabase)`.
-   - Open `‹url›/` for the app.
+   - Open `‹url›/` and **log in** with `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
 
-Because `DATABASE_URL` is set, the app uses Supabase automatically (not SQLite).
+The app creates its tables and seeds the admin user automatically on first hit —
+no SQL needed. Data: either import the CSV in Supabase (Step 2), or log in and use
+the **Admin → Import from Excel** tab to upload the workbook (phones get dummied
+while `ANONYMIZE_PHONES=true`).
+
+> Deploying from a terminal instead? From `app/`:
+> `npx vercel --prod` (add the env vars with `vercel env add` first). Needs your
+> Vercel login/token on that machine.
 
 ---
 
