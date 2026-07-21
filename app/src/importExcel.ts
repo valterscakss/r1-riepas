@@ -1,4 +1,3 @@
-import XLSX from 'xlsx';
 import type { IntakeInput } from './types.js';
 
 /**
@@ -80,7 +79,8 @@ const isStandard = (header: unknown[]): boolean => {
 const DUMMY_PHONE = process.env.DUMMY_PHONE || '01010101010';
 const anonymizePhones = () => process.env.ANONYMIZE_PHONES === 'true';
 
-export function parseWorkbook(buffer: Buffer): ParseResult {
+export async function parseWorkbook(buffer: Buffer): Promise<ParseResult> {
+  const XLSX = (await import('xlsx')).default;
   const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const records: ParsedRecord[] = [];
   const anon = anonymizePhones();

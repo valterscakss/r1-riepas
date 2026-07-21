@@ -21,3 +21,6 @@ coverage/
 /app/data/*.db-shm
 /app/data/*.db-wal
 
+
+# Vercel CLI local link
+/app/.vercel/

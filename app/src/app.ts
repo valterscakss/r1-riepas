@@ -140,7 +140,7 @@ export function createApp(): express.Express {
     if (!file) return res.status(400).json({ error: { message: 'No file uploaded (field name: file)' } });
     let parsed;
     try {
-      parsed = parseWorkbook(file.buffer);
+      parsed = await parseWorkbook(file.buffer);
     } catch {
       return res.status(400).json({ error: { message: 'Could not read the file as an .xlsx workbook' } });
     }
