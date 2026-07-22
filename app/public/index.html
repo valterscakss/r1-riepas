@@ -62,7 +62,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 19</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 20</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -85,8 +85,8 @@ button{font-family:'IBM Plex Sans',sans-serif;}
   <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px var(--pad);background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:40;">
     <div id="hdr-greet" style="font-size:13px;color:var(--ink-3);font-weight:500;"></div>
     <div style="display:flex;align-items:center;gap:10px;">
-      <button id="btn-changepass" class="chip" style="background:var(--surface-2);border:1px solid var(--border);color:var(--ink-2);">Mainīt paroli</button>
-      <button id="btn-logout" class="chip" style="background:var(--surface-2);border:1px solid var(--border);color:var(--ink-2);">Iziet</button>
+      <button id="btn-changepass" class="chip" style="display:none;background:var(--surface-2);border:1px solid var(--border);color:var(--ink-2);">Mainīt paroli</button>
+      <button id="btn-logout" class="chip" style="display:none;background:var(--surface-2);border:1px solid var(--border);color:var(--ink-2);">Iziet</button>
       <div style="text-align:right;"><div id="hdr-name" style="font-weight:600;font-size:13px;"></div><div id="hdr-role" style="font-size:11px;color:var(--ink-3);"></div></div>
       <div id="hdr-init" style="width:34px;height:34px;border-radius:50%;background:var(--accent-soft);color:var(--accent-2);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;"></div>
     </div>
@@ -141,7 +141,7 @@ window.fetch=function(input,init){
 
 const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:null,activity:[],customers:[],selCustomer:0,custQ:'',
   plate:'',looked:false,isNew:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',t2size:'',t2brand:'',rim:'none',thread:'',history:0,
-  smsOpen:false,smsRec:null,selSpot:null,presetSpot:null};
+  smsOpen:false,smsRec:null,selSpot:null,presetSpot:null,spotHist:[],spotHistLoading:false};
 
 const ROLES={staff:{label:'Personāls',name:'Juris Kalniņš'},manager:{label:'Vadītājs',name:'Ilze Ozola'},owner:{label:'Īpašnieks',name:'Mārtiņš Bērze'}};
 const initialsOf=n=>String(n||'—').replace(/^SIA\s*/i,'').replace(/["']/g,'').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'—';
@@ -175,12 +175,17 @@ function paintSidebar(){const st=S.stats;if(!st)return;
   $('#side-occ').textContent=st.occ+' aizņemtas';$('#side-free').textContent=st.free+' brīvas';}
 
 function paintHeader(){
+  // Demo mode (AUTH_DISABLED on the server) returns a "demo" user — hide the
+  // auth UI (users, logout, change-password) so it only appears with real login.
+  const demo=!!(S.auth&&S.auth.username==='demo');
   const name=S.auth?(S.auth.name||S.auth.username||'—'):'—';
-  const role=S.auth?(S.auth.role==='admin'?'Administrators':'Personāls'):'';
+  const role=S.auth&&!demo?(S.auth.role==='admin'?'Administrators':'Personāls'):'';
   const set=(id,v)=>{const el=$(id);if(el)el.textContent=v;};
-  set('#hdr-name',name);set('#hdr-role',role);set('#hdr-init',initialsOf(name));
-  set('#hdr-greet',S.auth?('Sveiks, '+String(name).split(' ')[0]+'!'):'');
-  const nu=$('#nav-users');if(nu)nu.style.display=(S.auth&&S.auth.role==='admin')?'':'none';}
+  const show=(id,on)=>{const el=$(id);if(el)el.style.display=on?'':'none';};
+  set('#hdr-name',demo?'':name);set('#hdr-role',role);set('#hdr-init',demo?'':initialsOf(name));
+  set('#hdr-greet',(S.auth&&!demo)?('Sveiks, '+String(name).split(' ')[0]+'!'):'');
+  show('#nav-users',S.auth&&S.auth.role==='admin'&&!demo);
+  show('#btn-logout',!demo&&!!S.auth);show('#btn-changepass',!demo&&!!S.auth);}
 
 function nav(screen){S.screen=screen;S.selSpot=null;
   if(screen==='users'){render();if(!S.usersLoaded)loadUsers().then(()=>{if(S.screen==='users')render();});return;}
@@ -406,6 +411,27 @@ function updateCustContent(){const c=document.getElementById('cust-content');if(
   c.innerHTML=custContentHTML();bind(c);
   const n=document.getElementById('cust-count');if(n)n.textContent=S.customers.length;}
 
+// ============ VEHICLE HISTORY (spot panel) ============
+async function loadVehicle(plate){S.spotHistLoading=true;renderModal();
+  try{const d=await(await fetch('/api/vehicle?plate='+encodeURIComponent(plate))).json();
+    if(S.selSpot&&S.selSpot.plate===plate)S.spotHist=d.history||[];
+  }catch{S.spotHist=[];}
+  S.spotHistLoading=false;renderModal();}
+function spotHistHTML(){
+  if(S.spotHistLoading)return `<div style="margin-top:22px;color:var(--ink-3);font-size:13px;">Ielādē vēsturi…</div>`;
+  const h=S.spotHist||[];if(!h.length)return '';
+  const rows=h.map(x=>`<div style="padding:11px 0;border-bottom:1px solid var(--border);">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <span style="font-weight:600;font-size:13px;">${esc(x.season||'—')}</span>
+      <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:6px;${x.status==='active'?'background:var(--ok-soft);color:var(--ok);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${x.status==='active'?'Glabājas':'Izsniegts'}</span></div>
+    <div style="color:var(--ink-2);font-size:12px;margin-top:4px;">${esc(x.tires||'—')}${x.tires2?`<span style="display:block;color:var(--ink-3);">+ ${esc(x.tires2)}</span>`:''}</div>
+    <div style="display:flex;gap:12px;color:var(--ink-3);font-size:11px;margin-top:4px;" class="mono"><span>Vieta ${esc(x.loc||'—')}</span><span>${esc(x.thread||'—')}</span><span>${esc(x.fee||'—')}</span></div>
+    ${(x.intakeDate||x.releaseDate)?`<div style="color:var(--ink-3);font-size:11px;margin-top:3px;">${x.intakeDate?'Pieņemts '+esc(x.intakeDate):''}${x.releaseDate?' · Izsniegts '+esc(x.releaseDate):''}</div>`:''}
+  </div>`).join('');
+  return `<div style="margin-top:24px;">
+    <div class="label" style="margin-bottom:6px;">Vēsture · ${h.length} ${h.length===1?'ieraksts':'ieraksti'}</div>
+    <div style="max-height:38vh;overflow:auto;">${rows}</div></div>`;}
+
 // ============ MODALS ============
 function renderModal(){const m=$('#modal');
   if(S.smsOpen&&S.smsRec){const r=S.smsRec;
@@ -459,6 +485,7 @@ function renderModal(){const m=$('#modal');
           <div><div class="label" style="margin-bottom:4px;">SMS kods</div><div class="mono" style="font-weight:600;">${esc(s.sms||'—')}</div></div>
         </div>
         <button data-release-spot="${esc(s.id)}" style="height:44px;margin-top:8px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Izsniegt riepas</button>
+        ${spotHistHTML()}
       </div>`:`<div style="margin-top:22px;">
         <p style="color:var(--ink-2);font-size:14px;line-height:1.6;margin:0 0 18px;">Šī vieta ir brīva un gatava jaunai pieņemšanai.</p>
         <button data-assign="${esc(s.code)}" style="width:100%;height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Piešķirt šo vietu</button>
@@ -485,13 +512,14 @@ function bind(root){
   root.querySelectorAll('[data-del-user]').forEach(el=>el.addEventListener('click',()=>deleteUserDialog(el.dataset.delUser,el.dataset.name)));
   root.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',e=>{
     if(e.target!==el&&e.target.closest('[data-stop]'))return;
-    if(el.dataset.close==='sms'){S.smsOpen=false;S.smsRec=null;}else S.selSpot=null;renderModal();render();
+    if(el.dataset.close==='sms'){S.smsOpen=false;S.smsRec=null;}else{S.selSpot=null;S.spotHist=[];S.spotHistLoading=false;}renderModal();render();
   }));
   root.querySelectorAll('[data-rim]').forEach(el=>el.addEventListener('click',()=>{grab();S.rim=el.dataset.rim;render();}));
   root.querySelectorAll('[data-spot]').forEach(el=>el.addEventListener('click',()=>{
     const code=el.dataset.spot;let found=null;
     for(const c of (S.stats?.containers||[]))for(const s of c.spots)if(s.code===code)found=s;
-    S.selSpot=found;renderModal();}));
+    S.selSpot=found;S.spotHist=[];S.spotHistLoading=false;renderModal();
+    if(found&&found.occ&&found.plate)loadVehicle(found.plate);}));
   root.querySelectorAll('[data-assign]').forEach(el=>el.addEventListener('click',()=>{
     resetIntake();S.presetSpot=el.dataset.assign;S.selSpot=null;nav('intake');}));
   root.querySelectorAll('[data-release-spot]').forEach(el=>el.addEventListener('click',async()=>{

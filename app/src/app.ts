@@ -3,7 +3,7 @@ import cookieParser from 'cookie-parser';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import type { IntakeInput } from './types.js';
+import type { IntakeInput, StorageRecord } from './types.js';
 import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
 import {
@@ -136,6 +136,26 @@ export function createApp(): express.Express {
     const d = new Date();
     return `${d.getFullYear()} ${d.getMonth() + 1 >= 3 && d.getMonth() + 1 < 9 ? 'PAVASARIS' : 'RUDENS'}`;
   };
+  // One storage row → a display-ready history item (shared by /customers and /vehicle).
+  // Staggered sets (2+2, 3+1…) are split so both pairs are visible; the old Excel
+  // sometimes kept the 2nd size in notes, so fall back to it.
+  const histItem = (r: StorageRecord) => {
+    const noteSize = !r.size2 && r.notes ? (r.notes.match(/\b(\d{3}\/\d{1,2}\/\d{2})\b/)?.[1] ?? null) : null;
+    const size2 = r.size2 ?? noteSize;
+    const stag = !!(r.quantity && r.quantity.includes('+') && size2);
+    const parts = stag ? r.quantity!.split('+') : [];
+    return {
+      season: r.season, plate: r.plate ?? '—',
+      tires: stag
+        ? [`${parts[0]}×`, r.brand, r.size1].filter(Boolean).join(' ')
+        : ([r.quantity ? `${r.quantity}×` : '', r.brand, r.size1].filter(Boolean).join(' ') + (r.size2 ? ` + ${r.size2}` : '') || '—'),
+      tires2: stag ? `${parts[1] || '2'}× ${size2}` : null,
+      loc: r.location ?? '—', thread: r.threadDepth ? `${r.threadDepth} mm` : '—',
+      fee: r.feeEur ? `€${Number(r.feeEur).toFixed(2).replace('.', ',')}` : '—',
+      status: r.status, id: r.id,
+      intakeDate: r.intakeDate, releaseDate: r.releaseDate,
+    };
+  };
 
   // Stats for dashboard + spots grid (design: containers, capacity, activity).
   app.get('/api/stats', requireAuth, asyncH(async (_req, res) => {
@@ -216,27 +236,28 @@ export function createApp(): express.Express {
         history: g.recs
           .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''))
           .slice(0, 30)
-          .map((r) => {
-            // Staggered sets (2+2, 3+1…): split the pairs so both are visible.
-            // The old Excel sometimes put the 2nd size in notes — use it as fallback.
-            const noteSize = !r.size2 && r.notes ? (r.notes.match(/\b(\d{3}\/\d{1,2}\/\d{2})\b/)?.[1] ?? null) : null;
-            const size2 = r.size2 ?? noteSize;
-            const stag = !!(r.quantity && r.quantity.includes('+') && size2);
-            const parts = stag ? r.quantity!.split('+') : [];
-            return ({
-            season: r.season, plate: r.plate ?? '—',
-            tires: stag
-              ? [`${parts[0]}×`, r.brand, r.size1].filter(Boolean).join(' ')
-              : ([r.quantity ? `${r.quantity}×` : '', r.brand, r.size1].filter(Boolean).join(' ') + (r.size2 ? ` + ${r.size2}` : '') || '—'),
-            tires2: stag ? `${parts[1] || '2'}× ${size2}` : null,
-            loc: r.location ?? '—', thread: r.threadDepth ? `${r.threadDepth} mm` : '—',
-            fee: r.feeEur ? `€${Number(r.feeEur).toFixed(2).replace('.', ',')}` : '—',
-            status: r.status, id: r.id,
-          }); }),
+          .map(histItem),
       }))
       .sort((a, b) => b.latest.localeCompare(a.latest))
       .slice(0, 30);
     res.json({ customers: list });
+  }));
+
+  // Full storage history for a single vehicle (all seasons), for the spot panel.
+  app.get('/api/vehicle', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const plate = String(req.query.plate ?? '').toUpperCase().replace(/\s+/g, '');
+    if (!plate) return res.status(400).json({ error: { message: 'plate is required' } });
+    const recs = (await store.list({ q: plate }))
+      .filter((r) => (r.plate ?? '').toUpperCase().replace(/\s+/g, '') === plate)
+      .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''));
+    if (recs.length === 0) return res.json({ plate, found: false, count: 0, customer: null, history: [] });
+    const cur = recs.find((r) => r.status === 'active') ?? recs[0];
+    res.json({
+      plate, found: true, count: recs.length,
+      customer: { name: cur.customerName, phone: cur.phone, isCompany: cur.isCompany, makeModel: cur.makeModel },
+      history: recs.map(histItem),
+    });
   }));
 
   app.post('/api/intake', requireAuth, asyncH(async (req, res) => {
