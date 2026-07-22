@@ -96,12 +96,14 @@ export function createApp(): express.Express {
       .sort((a, b) => (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''));
     if (hits.length === 0) return res.json({ plate, found: false, history: 0, suggestion: null });
     const s = hits[0];
+    // Legacy staggered rows sometimes keep the 2nd size in notes — surface it.
+    const size2 = s.size2 ?? (s.notes?.match(/\b(\d{3}\/\d{1,2}\/\d{2})\b/)?.[1] ?? null);
     res.json({
       plate, found: true, history: hits.length, lastSeason: s.season, lastIntake: s.intakeDate,
       suggestion: {
         makeModel: s.makeModel, customerName: s.customerName, isCompany: s.isCompany,
         phone: s.phone, size1: s.size1, brand: s.brand, quantity: s.quantity,
-        size2: s.size2, rimNote: s.rimNote,
+        size2, rimNote: s.rimNote,
       },
     });
   }));
