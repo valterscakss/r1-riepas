@@ -52,7 +52,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 13</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 14</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -93,7 +93,7 @@ const esc=s=>(s==null?'':String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;'
 const eur=n=>'€'+Number(n).toFixed(2).replace('.',',');
 
 const S={screen:'home',role:'staff',stats:null,activity:[],customers:[],selCustomer:0,custQ:'',
-  plate:'',looked:false,isNew:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',rim:'none',thread:'',history:0,
+  plate:'',looked:false,isNew:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',t2size:'',t2brand:'',rim:'none',thread:'',history:0,
   smsOpen:false,smsRec:null,selSpot:null,presetSpot:null};
 
 const ROLES={staff:{label:'Personāls',name:'Juris Kalniņš'},manager:{label:'Vadītājs',name:'Ilze Ozola'},owner:{label:'Īpašnieks',name:'Mārtiņš Bērze'}};
@@ -113,7 +113,7 @@ function maskSize(v){const d=String(v||'').replace(/[^0-9]/g,'').slice(0,7);
   return d.slice(0,3)+'/'+d.slice(3,5)+'/'+d.slice(5);}
 
 // pricing mirror of the server (design formula)
-function price(){const w=parseInt((S.t1size||'').slice(0,3))||0;const base=w===0?0:w<=215?15:w<=245?20:w<=275?25:30;
+function price(){const w1=parseInt((S.t1size||'').slice(0,3))||0;const w2=S.t1qty==='2+2'?(parseInt((S.t2size||'').slice(0,3))||0):0;const w=Math.max(w1,w2);const base=w===0?0:w<=215?15:w<=245?20:w<=275?25:30;
   const mult=S.rim==='aluminum'?1.3:S.rim==='steel'?1.2:1.0;
   return {w,base,mult,total:base*mult,cls:w===0?'—':w<=215?'185–215':w<=245?'225–245':w<=275?'255–275':'285+'};}
 
@@ -135,7 +135,7 @@ function nav(screen){S.screen=screen;S.selSpot=null;render();}
 document.querySelectorAll('[data-nav]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.nav==='intake')resetIntake();nav(b.dataset.nav);}));
 document.querySelectorAll('[data-role]').forEach(b=>b.addEventListener('click',()=>{S.role=b.dataset.role;paintHeader();if(S.screen==='home')render();}));
 
-function resetIntake(){Object.assign(S,{plate:'',looked:false,isNew:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',rim:'none',thread:'',history:0,smsOpen:false,smsRec:null,presetSpot:null});}
+function resetIntake(){Object.assign(S,{plate:'',looked:false,isNew:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',t2size:'',t2brand:'',rim:'none',thread:'',history:0,smsOpen:false,smsRec:null,presetSpot:null});}
 
 // ============ RENDER ============
 function render(){
@@ -199,7 +199,7 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
   </div></div>`;}
 
 function intakeHTML(){const p=price();
-  const canConfirm=S.looked&&!!S.t1size&&!!S.thread&&(!S.isNew||!!(S.cust&&S.cust.trim()));
+  const canConfirm=S.looked&&!!S.t1size&&!!S.thread&&(!S.isNew||!!(S.cust&&S.cust.trim()))&&(S.t1qty!=='2+2'||!!S.t2size);
   const rimBtn=(key,label,pos)=>{const on=S.rim===key;
     const rad=pos===0?'border-radius:8px 0 0 8px;':pos===2?'border-radius:0 8px 8px 0;border-left:0;':'border-left:0;';
     return `<button data-rim="${key}" style="height:var(--h);flex:1;border:1px solid var(--border-2);cursor:pointer;font-weight:500;font-size:13px;${on?'background:var(--accent);color:#fff;border-color:var(--accent);':'background:var(--surface);color:var(--ink-2);'}${rad}">${label}</button>`;};
@@ -234,8 +234,13 @@ function intakeHTML(){const p=price();
         <div style="display:grid;grid-template-columns:1.2fr 1.4fr 0.8fr;gap:12px;margin-bottom:14px;">
           <div class="field"><label>Izmērs</label><input id="in-size" class="mono" inputmode="numeric" value="${esc(S.t1size)}" placeholder="235/50/19"></div>
           <div class="field"><label>Ražotājs</label><input id="in-brand" list="brands" value="${esc(S.t1brand)}" placeholder="Michelin"><datalist id="brands">${BRANDS.map(b=>`<option value="${b}">`).join('')}</datalist></div>
-          <div class="field"><label>Daudzums</label><select id="in-qty">${['1','2','3','4'].map(q=>`<option value="${q}"${S.t1qty===q?' selected':''}>${q}</option>`).join('')}</select></div>
+          <div class="field"><label>Daudzums</label><select id="in-qty">${['1','2','3','4','2+2'].map(q=>`<option value="${q}"${S.t1qty===q?' selected':''}>${q}</option>`).join('')}</select></div>
         </div>
+        ${S.t1qty==='2+2'?`<div style="display:grid;grid-template-columns:1.2fr 1.4fr 0.8fr;gap:12px;margin-bottom:14px;padding:12px;background:var(--accent-soft);border:1px solid var(--border);border-radius:10px;">
+          <div class="field"><label>Izmērs (2. pāris)</label><input id="in-size2" class="mono" inputmode="numeric" value="${esc(S.t2size)}" placeholder="275/45/20"></div>
+          <div class="field"><label>Ražotājs (2. pāris)</label><input id="in-brand2" list="brands" value="${esc(S.t2brand)}" placeholder="Michelin"></div>
+          <div class="field"><label>&nbsp;</label><div style="height:var(--h);display:flex;align-items:center;font-size:12px;color:var(--ink-3);">2 priekšā + 2 aizmugurē</div></div>
+        </div>`:''}
         <div style="display:grid;grid-template-columns:1.6fr 0.9fr;gap:12px;">
           <div class="field"><label>Diski</label><div style="display:flex;">${rimBtn('none','Bez',0)}${rimBtn('aluminum','Alumīnija',1)}${rimBtn('steel','Tērauda',2)}</div></div>
           <div class="field"><label>Protektora dziļums</label><div style="position:relative;">
@@ -250,7 +255,7 @@ function intakeHTML(){const p=price();
         <div style="padding:var(--card);display:flex;flex-direction:column;gap:11px;">
           <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Klients</span><span style="font-weight:500;text-align:right;">${esc(S.looked?(S.cust&&S.cust.trim()?S.cust:(S.isNew?'Jauns klients':'—')):'—')}</span></div>
           <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Numurs</span><span class="mono" style="font-weight:600;">${esc(S.plate?S.plate.toUpperCase():'—')}</span></div>
-          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Riepas</span><span style="font-weight:500;text-align:right;">${S.t1qty&&S.t1size?esc(S.t1qty+'× '+(canonBrand(S.t1brand)||'—')+' '+S.t1size):'—'}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Riepas</span><span style="font-weight:500;text-align:right;">${S.t1qty==='2+2'?(S.t1size?esc('2× '+(canonBrand(S.t1brand)||'—')+' '+S.t1size+(S.t2size?' + 2× '+(canonBrand(S.t2brand)||canonBrand(S.t1brand)||'—')+' '+S.t2size:'')):'—'):(S.t1qty&&S.t1size?esc(S.t1qty+'× '+(canonBrand(S.t1brand)||'—')+' '+S.t1size):'—')}</span></div>
           <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Diski</span><span style="font-weight:500;">${S.rim==='aluminum'?'Alumīnija diski':S.rim==='steel'?'Tērauda diski':'Bez diskiem'}</span></div>
           <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Protektors</span><span class="mono" style="font-weight:600;">${S.thread?esc(S.thread)+' mm':'—'}</span></div>
           <div style="height:1px;background:var(--border);margin:2px 0;"></div>
@@ -364,7 +369,7 @@ function renderModal(){const m=$('#modal');
                 <div style="margin-bottom:6px;">Jūsu riepas ir noglabātas! 🛞</div>
                 <div>Kods: <strong class="mono">${esc(r.smsCode||'—')}</strong></div>
                 <div>Vieta: <strong class="mono">${esc(r.location||'—')}</strong></div>
-                <div>Izmērs: <strong class="mono">${esc(r.size1||'—')}</strong></div>
+                <div>Izmērs: <strong class="mono">${esc(r.size1||'—')}${r.size2?' + '+esc(r.size2):''}</strong></div>
                 <div>Protektors: <strong class="mono">${r.threadDepth?esc(r.threadDepth)+' mm':'—'}</strong></div>
                 <div style="margin-top:6px;color:var(--ink-2);">Izņem jebkurā laikā ar kodu vai numura zīmi.</div>
               </div>
@@ -438,12 +443,12 @@ function bind(root){
 }
 function grab(){const g=(id,k)=>{const el=$(id);if(el)S[k]=el.value;};
   g('#in-plate','plate');g('#in-size','t1size');g('#in-brand','t1brand');g('#in-qty','t1qty');g('#in-thread','thread');
-  g('#in-cust','cust');g('#in-phone','phone');
-  S.t1size=maskSize(S.t1size)||S.t1size;}
+  g('#in-cust','cust');g('#in-phone','phone');g('#in-size2','t2size');g('#in-brand2','t2brand');
+  S.t1size=maskSize(S.t1size)||S.t1size;S.t2size=maskSize(S.t2size)||S.t2size;}
 // keep summary live while typing
 document.addEventListener('input',e=>{
-  if(e.target.id==='in-size'){const m=maskSize(e.target.value);if(m!==e.target.value){e.target.value=m;e.target.setSelectionRange(m.length,m.length);}}
-  if(['in-plate','in-size','in-brand','in-thread','in-cust','in-phone'].includes(e.target.id)||e.target.id==='in-qty'){grab();
+  if(e.target.id==='in-size'||e.target.id==='in-size2'){const m=maskSize(e.target.value);if(m!==e.target.value){e.target.value=m;e.target.setSelectionRange(m.length,m.length);}}
+  if(['in-plate','in-size','in-brand','in-thread','in-cust','in-phone','in-size2','in-brand2'].includes(e.target.id)||e.target.id==='in-qty'){grab();
   clearTimeout(window.__t);window.__t=setTimeout(()=>{const el=document.activeElement;const id=el&&el.id;const pos=el&&el.selectionStart;render();
     if(id){const n=document.getElementById(id);if(n){n.focus();try{n.setSelectionRange(pos,pos);}catch{}}}},400);}});
 document.addEventListener('change',e=>{if(e.target.id==='in-qty'){grab();render();}});
@@ -456,7 +461,7 @@ async function doLookup(){grab();
     if(d.found){const s=d.suggestion||{};
       Object.assign(S,{looked:true,isNew:false,cust:s.customerName||'—',phone:s.phone||'',history:d.history,
         t1size:s.size1||S.t1size,t1brand:s.brand||S.t1brand,
-        t1qty:(String(s.quantity||'').match(/^\d$/)?String(s.quantity):S.t1qty),
+        t1qty:(String(s.quantity||'')==='2+2'?'2+2':(String(s.quantity||'').match(/^\d$/)?String(s.quantity):S.t1qty)),t2size:s.size2||'',
         rim:/alum|liet/i.test(s.rimNote||'')?'aluminum':/tērau|terau|dzelz/i.test(s.rimNote||'')?'steel':S.rim});
     } else Object.assign(S,{looked:true,isNew:true,cust:'',phone:'',history:0});
   }catch{Object.assign(S,{looked:true,isNew:true,cust:'',history:0});}
@@ -465,8 +470,12 @@ async function doLookup(){grab();
 async function confirmIntake(){grab();
   if(!(S.looked&&S.t1size&&S.thread))return;
   if(!(S.looked&&(!S.isNew||S.cust.trim())))return;
+  const is22=S.t1qty==='2+2';
+  if(is22&&!S.t2size)return;
+  const b1=canonBrand(S.t1brand),b2=canonBrand(S.t2brand);
+  const brand=is22&&b2&&b2!==b1?[b1,b2].filter(Boolean).join(' + '):(b1||null);
   const body={plate:S.plate,customerName:(S.cust&&S.cust.trim())||null,phone:(S.phone&&S.phone.trim())||null,
-    size1:maskSize(S.t1size)||S.t1size,brand:canonBrand(S.t1brand)||null,
+    size1:maskSize(S.t1size)||S.t1size,brand,size2:is22?(maskSize(S.t2size)||S.t2size):null,
     quantity:S.t1qty,rim:S.rim,threadDepth:S.thread,location:S.presetSpot||null};
   const res=await fetch('/api/intake',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data=await res.json();
