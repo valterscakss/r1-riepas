@@ -52,7 +52,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 15</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 16</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -297,7 +297,16 @@ function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capP
     </div>`).join('')}
   </div></div>`;}
 
-function customersHTML(){const list=S.customers;const sel=list[S.selCustomer]||list[0];
+function customersHTML(){
+  return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
+    <div><h1 style="margin:0;font-size:24px;font-weight:600;">Klienti</h1>
+    <div style="color:var(--ink-3);font-size:13px;margin-top:4px;"><span id="cust-count">${S.customers.length}</span> rādīti</div></div>
+    <input id="cust-q" value="${esc(S.custQ)}" placeholder="Meklēt pēc numura, vārda, telefona…" style="height:40px;width:300px;max-width:100%;padding:0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);">
+  </div>
+  <div id="cust-content">${custContentHTML()}</div></div>`;}
+
+function custContentHTML(){const list=S.customers;const sel=list[S.selCustomer]||list[0];
   const rows=list.map((c,i)=>{const on=i===(S.selCustomer<list.length?S.selCustomer:0);
     return `<button data-cust="${i}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;border:0;border-bottom:1px solid var(--border);padding:12px 14px;cursor:pointer;${on?'background:var(--accent-soft);':'background:transparent;'}">
     <div style="display:flex;align-items:center;gap:11px;min-width:0;">
@@ -309,13 +318,7 @@ function customersHTML(){const list=S.customers;const sel=list[S.selCustomer]||l
     <span class="mono">${esc(h.loc)}</span><span class="mono" style="font-size:12px;">${esc(h.thread)}</span><span class="mono">${esc(h.fee)}</span>
     <span style="display:flex;gap:6px;align-items:center;"><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;text-align:center;${h.status==='active'?'background:var(--ok-soft);color:var(--ok);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${h.status==='active'?'Glabājas':'Izsniegts'}</span>
     ${h.status==='active'?`<button data-release="${esc(h.id)}" data-plate="${esc(h.plate||'')}" data-loc="${esc(h.loc||'')}" title="Izsniegt" style="border:1px solid var(--border-2);background:var(--surface);border-radius:6px;font-size:11px;padding:3px 8px;cursor:pointer;">Izsniegt</button>`:''}</span></div>`).join('');
-  return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
-  <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
-    <div><h1 style="margin:0;font-size:24px;font-weight:600;">Klienti</h1>
-    <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${list.length} rādīti</div></div>
-    <input id="cust-q" value="${esc(S.custQ)}" placeholder="Meklēt pēc numura, vārda, telefona…" style="height:40px;width:300px;max-width:100%;padding:0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);">
-  </div>
-  <div style="display:grid;grid-template-columns:320px 1fr;gap:var(--gap);align-items:start;">
+  return `<div style="display:grid;grid-template-columns:320px 1fr;gap:var(--gap);align-items:start;">
     <div class="card" style="overflow:hidden;max-height:70vh;overflow-y:auto;">${rows||'<div style="padding:18px;color:var(--ink-3);font-size:13px;">Nav rezultātu</div>'}</div>
     ${sel?`<div style="display:flex;flex-direction:column;gap:var(--gap);">
       <div class="card" style="padding:var(--card);">
@@ -340,7 +343,13 @@ function customersHTML(){const list=S.customers;const sel=list[S.selCustomer]||l
         ${hist}
       </div>
     </div>`:'<div></div>'}
-  </div></div>`;}
+  </div>`;}
+
+// Update only the customers list/profile — the search box is never re-created,
+// so typing there never flickers or loses focus.
+function updateCustContent(){const c=document.getElementById('cust-content');if(!c)return;
+  c.innerHTML=custContentHTML();bind(c);
+  const n=document.getElementById('cust-count');if(n)n.textContent=S.customers.length;}
 
 // ============ MODALS ============
 function renderModal(){const m=$('#modal');
@@ -438,11 +447,11 @@ function bind(root){
     await fetch('/api/storage/'+encodeURIComponent(el.dataset.release)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     await Promise.all([loadStats(),loadCustomers()]);
     await offerReintake(el.dataset.plate,el.dataset.loc);}));
-  root.querySelectorAll('[data-cust]').forEach(el=>el.addEventListener('click',()=>{S.selCustomer=Number(el.dataset.cust);render();}));
+  root.querySelectorAll('[data-cust]').forEach(el=>el.addEventListener('click',()=>{S.selCustomer=Number(el.dataset.cust);updateCustContent();}));
   const pl=root.querySelector('#in-plate');
   if(pl)pl.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doLookup();}});
   const cq=root.querySelector('#cust-q');
-  if(cq){let t;cq.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(async()=>{S.custQ=cq.value;S.selCustomer=0;await loadCustomers();render();const n=$('#cust-q');if(n){n.focus();n.setSelectionRange(n.value.length,n.value.length);}},350);});}
+  if(cq){let t;cq.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(async()=>{S.custQ=cq.value;S.selCustomer=0;await loadCustomers();updateCustContent();},350);});}
 }
 function grab(){const g=(id,k)=>{const el=$(id);if(el)S[k]=el.value;};
   g('#in-plate','plate');g('#in-size','t1size');g('#in-brand','t1brand');g('#in-qty','t1qty');g('#in-thread','thread');
