@@ -62,7 +62,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 21</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 22</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -340,15 +340,15 @@ function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capP
   const spotBtn=s=>{const sel=S.selSpot&&S.selSpot.code===s.code;const ring=sel?'outline:2px solid var(--accent);outline-offset:1px;':'';
     const base='display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;height:var(--spot);border-radius:9px;cursor:pointer;border:1px solid;padding:0;';
     const style=s.occ?base+'background:var(--surface-2);border-color:var(--border-2);color:var(--ink-2);'+ring:base+'background:var(--ok-soft);border-color:oklch(0.8 0.08 155);color:var(--ok);'+ring;
-    return `<button data-spot="${esc(s.code)}" title="${esc(s.occ?(s.plate+' · '+(s.cust||'')):'Brīva vieta')}" style="${style}">
+    return `<button data-spot="${esc(s.code)}" title="${esc(s.occ?(s.plate+' · '+(s.cust||'')):'Brīvs')}" style="${style}">
       <span class="mono" style="font-weight:600;font-size:11px;">${esc(s.code)}</span>
-      ${s.occ?`<span class="mono" style="font-size:9px;opacity:.8;">${esc(s.plate||'')}</span>`:'<span style="font-size:9px;opacity:.75;">brīva</span>'}</button>`;};
+      ${s.occ?`<span class="mono" style="font-size:9px;opacity:.8;">${esc(s.plate||'')}</span>`:'<span style="font-size:9px;opacity:.75;">brīvs</span>'}</button>`;};
   return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
   <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--pad);flex-wrap:wrap;gap:12px;">
     <div><h1 style="margin:0;font-size:24px;font-weight:600;">Novietnes</h1>
     <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${st.occ} / ${st.total} aizņemtas · ${st.capPct}% noslodze</div></div>
     <div style="display:flex;gap:16px;font-size:12px;">
-      <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--ok-soft);border:1px solid oklch(0.8 0.08 155);"></span>Brīva</span>
+      <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--ok-soft);border:1px solid oklch(0.8 0.08 155);"></span>Brīvs</span>
       <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border-2);"></span>Aizņemta</span>
     </div></div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--gap);">
@@ -525,7 +525,7 @@ function renderModal(){const m=$('#modal');
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <span class="mono" style="font-weight:600;font-size:24px;">${esc(s.code)}</span>
         <button data-close="spot" style="width:34px;height:34px;border-radius:9px;border:1px solid var(--border-2);background:var(--surface);cursor:pointer;font-size:18px;color:var(--ink-2);">✕</button></div>
-      <span style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;padding:4px 10px;border-radius:7px;${s.occ?'background:var(--surface-2);border:1px solid var(--border-2);color:var(--ink-2);':'background:var(--ok-soft);color:var(--ok);'}">${s.occ?'Aizņemta':'Brīva'}</span>
+      <span style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;padding:4px 10px;border-radius:7px;${s.occ?'background:var(--surface-2);border:1px solid var(--border-2);color:var(--ink-2);':'background:var(--ok-soft);color:var(--ok);'}">${s.occ?'Aizņemta':'Brīvs'}</span>
       ${s.occ?`<div style="margin-top:22px;display:flex;flex-direction:column;gap:14px;">
         <div><div class="label" style="margin-bottom:4px;">Klients</div><div style="font-weight:600;font-size:16px;">${esc(s.cust||'—')}</div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
@@ -537,7 +537,7 @@ function renderModal(){const m=$('#modal');
         <button data-release-spot="${esc(s.id)}" style="height:44px;margin-top:8px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Izsniegt riepas</button>
         ${spotHistHTML()}
       </div>`:`<div style="margin-top:22px;">
-        <p style="color:var(--ink-2);font-size:14px;line-height:1.6;margin:0 0 18px;">Šī vieta ir brīva un gatava jaunai pieņemšanai.</p>
+        <p style="color:var(--ink-2);font-size:14px;line-height:1.6;margin:0 0 18px;">Šī vieta ir brīvs un gatava jaunai pieņemšanai.</p>
         <button data-assign="${esc(s.code)}" style="width:100%;height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Piešķirt šo vietu</button>
       </div>`}
     </div></div>`;
