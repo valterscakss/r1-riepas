@@ -106,16 +106,145 @@ export function createApp(): express.Express {
     });
   }));
 
+  // ---- Domain helpers (per design: pricing, spot assignment, SMS codes) ----
+  const SPOT_RE = /^([A-ZĀ-Ž]{1,4})(\d{1,3})$/;
+  async function spotUniverse() {
+    const store = await getStore();
+    const all = await store.list();
+    const seen = new Map<string, { code: string; c: string; n: number }>();
+    const occupied = new Map<string, (typeof all)[number]>();
+    for (const r of all) {
+      const code = (r.location ?? '').toUpperCase();
+      const m = code.match(SPOT_RE);
+      if (!m) continue;
+      if (!seen.has(code)) seen.set(code, { code, c: m[1], n: Number(m[2]) });
+      if (r.status === 'active' && !occupied.has(code)) occupied.set(code, r);
+    }
+    const spots = [...seen.values()].sort((a, b) => a.c.localeCompare(b.c) || a.n - b.n);
+    return { spots, occupied, all };
+  }
+  const priceFor = (size: string | null, rim: string | null) => {
+    const width = parseInt((size ?? '').slice(0, 3)) || 0;
+    if (!width) return { base: 0, mult: 1, total: 0 };
+    const base = width <= 215 ? 15 : width <= 245 ? 20 : width <= 275 ? 25 : 30;
+    const mult = rim === 'aluminum' ? 1.3 : rim === 'steel' ? 1.2 : 1.0;
+    return { base, mult, total: Math.round(base * mult * 100) / 100 };
+  };
+  const seasonNow = () => {
+    const d = new Date();
+    return `${d.getFullYear()} ${d.getMonth() + 1 >= 3 && d.getMonth() + 1 < 9 ? 'PAVASARIS' : 'RUDENS'}`;
+  };
+
+  // Stats for dashboard + spots grid (design: containers, capacity, activity).
+  app.get('/api/stats', requireAuth, asyncH(async (_req, res) => {
+    const { spots, occupied, all } = await spotUniverse();
+    const byC = new Map<string, { letter: string; spots: unknown[]; occ: number }>();
+    for (const s of spots) {
+      if (!byC.has(s.c)) byC.set(s.c, { letter: s.c, spots: [], occ: 0 });
+      const g = byC.get(s.c)!;
+      const r = occupied.get(s.code);
+      if (r) g.occ++;
+      g.spots.push(r
+        ? { code: s.code, occ: true, id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
+        : { code: s.code, occ: false });
+    }
+    const containers = [...byC.values()]
+      .map((g) => ({ ...g, total: g.spots.length }))
+      .sort((a, b) => b.total - a.total || a.letter.localeCompare(b.letter))
+      .slice(0, 8)
+      .sort((a, b) => a.letter.localeCompare(b.letter));
+    const occ = [...occupied.keys()].length;
+    const today = new Date().toISOString().slice(0, 10);
+    const firstFree = spots.find((s) => !occupied.has(s.code));
+    const revenue = all.filter((r) => r.status === 'active' && r.feeEur).reduce((a, r) => a + (parseFloat(r.feeEur!) || 0), 0);
+    res.json({
+      occ, total: spots.length, free: spots.length - occ,
+      capPct: spots.length ? Math.round((occ / spots.length) * 100) : 0,
+      todayIntakes: all.filter((r) => r.intakeDate === today).length,
+      smsIssued: all.filter((r) => r.smsCode).length,
+      revenueActive: Math.round(revenue * 100) / 100,
+      assignNext: firstFree?.code ?? null,
+      containers,
+    });
+  }));
+
+  // Recent activity feed (intakes + releases by date).
+  app.get('/api/activity', requireAuth, asyncH(async (_req, res) => {
+    const store = await getStore();
+    const all = await store.list();
+    const ev: { t: string; type: 'in' | 'out'; plate: string | null; loc: string | null; d: string }[] = [];
+    for (const r of all) {
+      if (r.intakeDate) ev.push({ t: r.intakeDate, type: 'in', plate: r.plate, loc: r.location, d: r.intakeDate });
+      if (r.releaseDate) ev.push({ t: r.releaseDate, type: 'out', plate: r.plate, loc: r.location, d: r.releaseDate });
+    }
+    ev.sort((a, b) => b.d.localeCompare(a.d));
+    res.json({ events: ev.slice(0, 8) });
+  }));
+
+  // Customers view: grouped by name+plate with storage history.
+  app.get('/api/customers', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().toUpperCase() : '';
+    const all = await store.list(q ? { q } : undefined);
+    const groups = new Map<string, { name: string; plate: string; phone: string | null; isCompany: boolean; makeModel: string | null; recs: typeof all }>();
+    for (const r of all) {
+      if (!r.plate && !r.customerName) continue;
+      const key = `${r.customerName ?? ''}|${r.plate ?? ''}`;
+      if (!groups.has(key)) groups.set(key, { name: r.customerName ?? r.plate ?? '—', plate: r.plate ?? '—', phone: r.phone, isCompany: r.isCompany, makeModel: r.makeModel, recs: [] as typeof all });
+      const g = groups.get(key)!;
+      g.recs.push(r);
+      if (!g.phone && r.phone) g.phone = r.phone;
+      if (!g.makeModel && r.makeModel) g.makeModel = r.makeModel;
+    }
+    const list = [...groups.values()]
+      .map((g) => ({
+        name: g.name, plate: g.plate, phone: g.phone, isCompany: g.isCompany, vehicle: g.makeModel,
+        active: g.recs.filter((r) => r.status === 'active').length,
+        since: g.recs.map((r) => r.intakeDate).filter(Boolean).sort()[0]?.slice(0, 4) ?? '—',
+        total: g.recs.length,
+        latest: g.recs.map((r) => r.intakeDate ?? '').sort().reverse()[0] ?? '',
+        history: g.recs
+          .sort((a, b) => (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''))
+          .slice(0, 8)
+          .map((r) => ({
+            season: r.season, tires: [r.quantity ? `${r.quantity}×` : '', r.brand, r.size1].filter(Boolean).join(' ') || '—',
+            loc: r.location ?? '—', thread: r.threadDepth ? `${r.threadDepth} mm` : '—',
+            fee: r.feeEur ? `€${Number(r.feeEur).toFixed(2).replace('.', ',')}` : '—',
+            status: r.status, id: r.id,
+          })),
+      }))
+      .sort((a, b) => b.latest.localeCompare(a.latest))
+      .slice(0, 30);
+    res.json({ customers: list });
+  }));
+
   app.post('/api/intake', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
     const b = req.body ?? {};
-    if (!b.location && !b.plate) {
-      return res.status(400).json({ error: { message: 'At least a location or a plate is required' } });
+    if (!b.plate) {
+      return res.status(400).json({ error: { message: 'Numura zīme ir obligāta' } });
     }
+    const plate = String(b.plate).toUpperCase().replace(/\s+/g, '');
+    // Auto-assign the first free spot unless one was provided (design FR-2.2.5).
+    let location = b.location ? String(b.location).toUpperCase().replace(/\s+/g, '') : null;
+    const { spots, occupied, all } = await spotUniverse();
+    if (!location) {
+      const firstFree = spots.find((s) => !occupied.has(s.code));
+      location = firstFree?.code ?? null;
+    }
+    // Pricing (design: base by width tier × rim multiplier).
+    const rim = b.rim === 'aluminum' || b.rim === 'steel' ? b.rim : 'none';
+    const { total } = priceFor(b.size1 ?? null, rim);
+    // Unique SMS code: R1T + plate, padded; add suffix on collision.
+    const existing = new Set(all.map((r) => r.smsCode).filter(Boolean));
+    let smsCode = ('R1T' + plate.replace(/[^A-Z0-9]/g, '')).slice(0, 8).padEnd(8, 'X');
+    let n = 2;
+    while (existing.has(smsCode)) smsCode = (smsCode.slice(0, 7) + n++).slice(0, 8);
+    const rimLabel = rim === 'aluminum' ? 'Alumīnija diski' : rim === 'steel' ? 'Tērauda diski' : null;
     const input: IntakeInput = {
-      season: b.season ?? null,
-      location: b.location ?? null,
-      plate: b.plate ? String(b.plate).toUpperCase().replace(/\s+/g, '') : null,
+      season: b.season ?? seasonNow(),
+      location,
+      plate,
       makeModel: b.makeModel ?? null,
       customerName: b.customerName ?? null,
       isCompany: Boolean(b.isCompany),
@@ -124,9 +253,12 @@ export function createApp(): express.Express {
       brand: b.brand ?? null,
       quantity: b.quantity ?? null,
       size2: b.size2 ?? null,
-      rimNote: b.rimNote ?? null,
+      rimNote: b.rimNote ?? rimLabel,
       notes: b.notes ?? null,
       intakeDate: b.intakeDate ?? undefined,
+      threadDepth: b.threadDepth ? String(b.threadDepth) : null,
+      smsCode,
+      feeEur: total ? String(total) : null,
     };
     const rec = await store.create(input);
     res.status(201).json(rec);

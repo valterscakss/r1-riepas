@@ -72,6 +72,7 @@ export class SheetsStore implements Store {
       intakeDate: g(10),
       releaseDate: release,
       status: release ? 'released' : 'active',
+      threadDepth: null, smsCode: null, feeEur: null,
     };
   }
 

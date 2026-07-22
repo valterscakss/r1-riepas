@@ -119,6 +119,7 @@ export async function parseWorkbook(buffer: Buffer): Promise<ParseResult> {
         intakeDate: parseDate(recv),
         releaseDate,
         status: releaseDate ? 'released' : 'active',
+        threadDepth: null, smsCode: null, feeEur: null,
       });
       parsed++;
     }

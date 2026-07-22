@@ -17,6 +17,10 @@ export interface StorageRecord {
   intakeDate: string | null; // SAŅEMŠANAS DATUMS (ISO yyyy-mm-dd)
   releaseDate: string | null;// IZSNIEGŠANAS DATUMS
   status: 'active' | 'released';
+  // Phase-1 features (null for migrated history)
+  threadDepth: string | null; // protektora dziļums, mm
+  smsCode: string | null;     // unikālais izsniegšanas kods
+  feeEur: string | null;      // aprēķinātā cena, EUR
 }
 
 export type IntakeInput = Omit<StorageRecord, 'id' | 'status' | 'releaseDate'> &

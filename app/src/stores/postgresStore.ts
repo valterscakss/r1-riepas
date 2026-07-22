@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS storage (
   status        TEXT NOT NULL DEFAULT 'active',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE storage ADD COLUMN IF NOT EXISTS thread_depth TEXT;
+ALTER TABLE storage ADD COLUMN IF NOT EXISTS sms_code TEXT;
+ALTER TABLE storage ADD COLUMN IF NOT EXISTS fee_eur TEXT;
 CREATE INDEX IF NOT EXISTS idx_storage_plate ON storage(UPPER(plate));
 CREATE INDEX IF NOT EXISTS idx_storage_status ON storage(status);
 CREATE INDEX IF NOT EXISTS idx_storage_location ON storage(location);
@@ -48,6 +51,7 @@ interface Row {
   phone: string | null; size1: string | null; brand: string | null; quantity: string | null;
   size2: string | null; rim_note: string | null; notes: string | null;
   intake_date: string | null; release_date: string | null; status: string;
+  thread_depth?: string | null; sms_code?: string | null; fee_eur?: string | null;
 }
 
 const toRecord = (r: Row): StorageRecord => ({
@@ -57,6 +61,7 @@ const toRecord = (r: Row): StorageRecord => ({
   size2: r.size2, rimNote: r.rim_note, notes: r.notes,
   intakeDate: r.intake_date, releaseDate: r.release_date,
   status: r.status === 'released' ? 'released' : 'active',
+  threadDepth: r.thread_depth ?? null, smsCode: r.sms_code ?? null, feeEur: r.fee_eur ?? null,
 });
 
 export class PostgresStore implements Store {
@@ -105,13 +110,14 @@ export class PostgresStore implements Store {
     await this.init();
     const res = await this.pool.query<Row>(
       `INSERT INTO storage
-        (season, location, plate, make_model, customer_name, is_company, phone, size1, brand, quantity, size2, rim_note, notes, intake_date, release_date, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULL,'active') RETURNING *`,
+        (season, location, plate, make_model, customer_name, is_company, phone, size1, brand, quantity, size2, rim_note, notes, intake_date, release_date, status, thread_depth, sms_code, fee_eur)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULL,'active',$15,$16,$17) RETURNING *`,
       [
         input.season ?? null, input.location ?? null, input.plate ?? null, input.makeModel ?? null,
         input.customerName ?? null, input.isCompany ?? false, input.phone ?? null,
         input.size1 ?? null, input.brand ?? null, input.quantity ?? null, input.size2 ?? null,
         input.rimNote ?? null, input.notes ?? null, input.intakeDate ?? new Date().toISOString().slice(0, 10),
+        input.threadDepth ?? null, input.smsCode ?? null, input.feeEur ?? null,
       ],
     );
     return toRecord(res.rows[0]);

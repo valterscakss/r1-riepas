@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS storage (
   intakeDate   TEXT,
   releaseDate  TEXT,
   status       TEXT NOT NULL DEFAULT 'active',
+  threadDepth  TEXT,
+  smsCode      TEXT,
+  feeEur       TEXT,
   createdAt    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_storage_plate  ON storage(plate);
@@ -49,6 +52,7 @@ interface Row {
   phone: string | null; size1: string | null; brand: string | null; quantity: string | null;
   size2: string | null; rimNote: string | null; notes: string | null;
   intakeDate: string | null; releaseDate: string | null; status: string;
+  threadDepth?: string | null; smsCode?: string | null; feeEur?: string | null;
 }
 
 const toRecord = (r: Row): StorageRecord => ({
@@ -58,6 +62,7 @@ const toRecord = (r: Row): StorageRecord => ({
   size2: r.size2, rimNote: r.rimNote, notes: r.notes,
   intakeDate: r.intakeDate, releaseDate: r.releaseDate,
   status: r.status === 'released' ? 'released' : 'active',
+  threadDepth: r.threadDepth ?? null, smsCode: r.smsCode ?? null, feeEur: r.feeEur ?? null,
 });
 
 export class SqliteStore implements Store {
@@ -69,6 +74,9 @@ export class SqliteStore implements Store {
     this.db = new Database(dbFile);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(DDL);
+    for (const col of ['threadDepth', 'smsCode', 'feeEur']) {
+      try { this.db.exec(`ALTER TABLE storage ADD COLUMN ${col} TEXT`); } catch { /* exists */ }
+    }
     const count = (this.db.prepare('SELECT COUNT(*) AS n FROM storage').get() as { n: number }).n;
     if (count === 0 && seedFile && existsSync(seedFile)) this.seed(seedFile);
   }
@@ -136,10 +144,11 @@ export class SqliteStore implements Store {
       size2: input.size2 ?? null, rimNote: input.rimNote ?? null, notes: input.notes ?? null,
       intakeDate: input.intakeDate ?? new Date().toISOString().slice(0, 10),
       releaseDate: null as string | null, status: 'active',
+      threadDepth: input.threadDepth ?? null, smsCode: input.smsCode ?? null, feeEur: input.feeEur ?? null,
     };
     const info = this.db.prepare(`INSERT INTO storage
-      (season, location, plate, makeModel, customerName, isCompany, phone, size1, brand, quantity, size2, rimNote, notes, intakeDate, releaseDate, status)
-      VALUES (@season, @location, @plate, @makeModel, @customerName, @isCompany, @phone, @size1, @brand, @quantity, @size2, @rimNote, @notes, @intakeDate, @releaseDate, @status)`).run(rec);
+      (season, location, plate, makeModel, customerName, isCompany, phone, size1, brand, quantity, size2, rimNote, notes, intakeDate, releaseDate, status, threadDepth, smsCode, feeEur)
+      VALUES (@season, @location, @plate, @makeModel, @customerName, @isCompany, @phone, @size1, @brand, @quantity, @size2, @rimNote, @notes, @intakeDate, @releaseDate, @status, @threadDepth, @smsCode, @feeEur)`).run(rec);
     return (await this.get(String(info.lastInsertRowid)))!;
   }
 
