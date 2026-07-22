@@ -62,7 +62,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 22</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 23</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -70,6 +70,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
     <button class="navbtn" data-nav="release"><span>↑&nbsp; Izsniegšana</span></button>
     <button class="navbtn" data-nav="spots"><span>⊞&nbsp; Novietnes</span></button>
     <button class="navbtn" data-nav="customers"><span>◉&nbsp; Klienti</span></button>
+    <button class="navbtn" data-nav="table"><span>▤&nbsp; Tabula</span></button>
     <button class="navbtn" data-nav="users" id="nav-users" style="display:none;"><span>◔&nbsp; Lietotāji</span></button>
   </nav>
   <div style="padding:16px 18px;border-top:1px solid var(--border);">
@@ -142,8 +143,9 @@ window.fetch=function(input,init){
 
 const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:null,activity:[],customers:[],selCustomer:0,custQ:'',
   plate:'',looked:false,isNew:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',t2size:'',t2brand:'',rim:'none',thread:'',history:0,
-  smsOpen:false,smsRec:null,selSpot:null,presetSpot:null,spotHist:[],spotHistLoading:false,
-  relQ:'',relResults:[],relLoading:false,relSearched:false};
+  smsOpen:false,smsRec:null,selSpot:null,presetSpot:null,spotHist:[],spotHistLoading:false,spotPickOpen:false,
+  relQ:'',relResults:[],relLoading:false,relSearched:false,
+  table:null,tableLoaded:false,tabQ:'',tabStatus:'active',tabSort:{col:'location',dir:'asc'}};
 
 const ROLES={staff:{label:'Personāls',name:'Juris Kalniņš'},manager:{label:'Vadītājs',name:'Ilze Ozola'},owner:{label:'Īpašnieks',name:'Mārtiņš Bērze'}};
 const initialsOf=n=>String(n||'—').replace(/^SIA\s*/i,'').replace(/["']/g,'').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'—';
@@ -191,6 +193,7 @@ function paintHeader(){
 
 function nav(screen){S.screen=screen;S.selSpot=null;
   if(screen==='users'){render();if(!S.usersLoaded)loadUsers().then(()=>{if(S.screen==='users')render();});return;}
+  if(screen==='table'){render();if(!S.tableLoaded)loadTable().then(()=>{if(S.screen==='table')render();});return;}
   render();}
 document.querySelectorAll('[data-nav]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.nav==='intake')resetIntake();nav(b.dataset.nav);}));
 
@@ -206,6 +209,7 @@ function render(){
   else if(S.screen==='spots')v.innerHTML=spotsHTML();
   else if(S.screen==='customers')v.innerHTML=customersHTML();
   else if(S.screen==='release')v.innerHTML=releaseHTML();
+  else if(S.screen==='table')v.innerHTML=tableHTML();
   else if(S.screen==='users')v.innerHTML=usersHTML();
   bind(v);renderModal();
   if(S.screen==='intake')updateSummary();
@@ -321,7 +325,7 @@ function intakeHTML(){const p=price();
           <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Diski</span><span style="font-weight:500;">${S.rim==='aluminum'?'Alumīnija diski':S.rim==='steel'?'Tērauda diski':'Bez diskiem'}</span></div>
           <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Protektors</span><span id="sum-thread" class="mono" style="font-weight:600;">${S.thread?esc(S.thread)+' mm':'—'}</span></div>
           <div style="height:1px;background:var(--border);margin:2px 0;"></div>
-          <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;"><span style="color:var(--ink-3);font-size:13px;">Piešķirtā vieta</span><span class="mono" style="font-weight:600;background:var(--ok-soft);color:var(--ok);border-radius:6px;padding:2px 9px;">${esc(spot)}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;"><span style="color:var(--ink-3);font-size:13px;">Piešķirtā vieta</span><button data-act="pick-spot" class="mono" title="Izvēlēties vietu manuāli" style="font-weight:600;background:var(--ok-soft);color:var(--ok);border:1px solid oklch(0.8 0.08 155);border-radius:6px;padding:3px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">${esc(spot)}<span style="font-size:10px;opacity:.75;">✎</span></button></div>
           <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:4px;">
             <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3);white-space:nowrap;"><span>Pamatcena <span id="sum-cls" style="opacity:.7;">(${p.cls})</span></span><span id="sum-base" class="mono">${p.w?eur(p.base):'—'}</span></div>
             <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3);margin-top:5px;"><span>Disku koef.</span><span id="sum-mult" class="mono">× ${p.mult.toFixed(1)}</span></div>
@@ -413,6 +417,55 @@ function custContentHTML(){const list=S.customers;const sel=list[S.selCustomer]|
 function updateCustContent(){const c=document.getElementById('cust-content');if(!c)return;
   c.innerHTML=custContentHTML();bind(c);
   const n=document.getElementById('cust-count');if(n)n.textContent=S.customers.length;}
+
+// ============ TABULA (full Excel-style list) ============
+const TAB_COLS=[
+  {k:'location',t:'Vieta',mono:1},{k:'plate',t:'Auto nr.',mono:1},{k:'makeModel',t:'Nosaukums'},
+  {k:'customerName',t:'Vārds'},{k:'phone',t:'Telefons',mono:1},{k:'size1',t:'Izmērs',mono:1},
+  {k:'brand',t:'Ražotājs'},{k:'quantity',t:'Skaits'},{k:'diski',t:'Diski',mono:1},
+  {k:'notes',t:'Piezīmes'},{k:'intakeDate',t:'Saņemts',mono:1},{k:'releaseDate',t:'Izsniegts',mono:1},
+  {k:'season',t:'Sezona'},{k:'status',t:'Statuss'}];
+const tabDiski=r=>r.size2||r.rimNote||'';
+async function loadTable(){try{const d=await(await fetch('/api/storage')).json();S.table=d.records||[];}catch{S.table=[];}S.tableLoaded=true;}
+function tableHTML(){
+  return `<div class="page" style="padding:var(--pad);margin:0 auto;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
+      <div><h1 style="margin:0;font-size:24px;font-weight:600;">Tabula</h1>
+      <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Pilns saraksts — meklē, filtrē un kārto (klikšķini uz kolonnas)</div></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <div style="display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px;">
+          ${['active','released','all'].map(k=>`<button class="chip${S.tabStatus===k?' on':''}" data-tabstatus="${k}">${k==='active'?'Glabājas':k==='released'?'Izsniegti':'Visi'}</button>`).join('')}
+        </div>
+        <input id="tab-q" value="${esc(S.tabQ)}" placeholder="Meklēt…" autocomplete="off" style="height:38px;width:240px;max-width:100%;padding:0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);">
+      </div>
+    </div>
+    <div id="tab-content">${tabContentHTML()}</div>
+  </div>`;}
+function tabContentHTML(){
+  if(!S.tableLoaded)return `<div class="card" style="padding:24px;color:var(--ink-3);font-size:13px;">Ielādē…</div>`;
+  let rows=(S.table||[]);
+  if(S.tabStatus!=='all')rows=rows.filter(r=>r.status===S.tabStatus);
+  const q=(S.tabQ||'').trim().toLowerCase();
+  if(q)rows=rows.filter(r=>[r.location,r.plate,r.makeModel,r.customerName,r.phone,r.size1,r.brand,r.quantity,tabDiski(r),r.notes,r.intakeDate,r.releaseDate,r.season].some(v=>String(v||'').toLowerCase().includes(q)));
+  const total=rows.length;
+  const sc=S.tabSort.col,dir=S.tabSort.dir==='desc'?-1:1;
+  const val=r=>sc==='diski'?tabDiski(r):r[sc];
+  rows=rows.slice().sort((a,b)=>String(val(a)??'').localeCompare(String(val(b)??''),'lv',{numeric:true})*dir);
+  const CAP=800;const shown=rows.slice(0,CAP);
+  const head=TAB_COLS.map(c=>{const on=S.tabSort.col===c.k;const arrow=on?(S.tabSort.dir==='desc'?' ↓':' ↑'):'';
+    return `<th data-sort="${c.k}" style="position:sticky;top:0;z-index:1;background:var(--surface-2);text-align:left;padding:9px 10px;font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:${on?'var(--accent-2)':'var(--ink-3)'};border-bottom:1px solid var(--border-2);cursor:pointer;white-space:nowrap;">${c.t}${arrow}</th>`;}).join('');
+  const body=shown.map(r=>`<tr style="border-bottom:1px solid var(--border);">${TAB_COLS.map(c=>{
+    if(c.k==='status')return `<td style="padding:8px 10px;"><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;white-space:nowrap;${r.status==='active'?'background:var(--ok-soft);color:var(--ok);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${r.status==='active'?'Glabājas':'Izsniegts'}</span></td>`;
+    const v=c.k==='diski'?tabDiski(r):r[c.k];
+    return `<td style="padding:8px 10px;font-size:13px;${c.mono?"font-family:'IBM Plex Mono',monospace;":''}white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;" title="${esc(v||'')}">${esc(v||'—')}</td>`;
+  }).join('')}</tr>`).join('');
+  return `<div style="color:var(--ink-3);font-size:12px;margin-bottom:8px;">Rādīti ${shown.length} no ${total}${total>CAP?' — precizē meklēšanu, lai redzētu vairāk':''}</div>
+    <div class="card" style="overflow:auto;max-height:74vh;">
+      <table style="border-collapse:collapse;width:100%;min-width:1180px;">
+        <thead><tr>${head}</tr></thead>
+        <tbody>${body||`<tr><td style="padding:20px;color:var(--ink-3);">Nav rezultātu</td></tr>`}</tbody>
+      </table></div>`;}
+function updateTabContent(){const c=document.getElementById('tab-content');if(!c)return;c.innerHTML=tabContentHTML();bind(c);}
 
 // ============ RIEPU IZSNIEGŠANA (release) ============
 function releaseHTML(){
@@ -541,6 +594,22 @@ function renderModal(){const m=$('#modal');
         <button data-assign="${esc(s.code)}" style="width:100%;height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Piešķirt šo vietu</button>
       </div>`}
     </div></div>`;
+  } else if(S.spotPickOpen){
+    const conts=(S.stats&&S.stats.containers)||[];
+    const groups=conts.map(c=>{const free=c.spots.filter(s=>!s.occ);if(!free.length)return '';
+      return `<div><div style="font-weight:600;font-size:13px;margin-bottom:8px;">Konteiners ${esc(c.letter)} <span style="color:var(--ink-3);font-weight:400;">· ${free.length} brīvs</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(62px,1fr));gap:6px;">
+        ${free.map(s=>`<button data-pickspot="${esc(s.code)}" class="mono" style="height:40px;border-radius:8px;border:1px solid oklch(0.8 0.08 155);background:var(--ok-soft);color:var(--ok);font-weight:600;font-size:12px;cursor:pointer;${S.presetSpot===s.code?'outline:2px solid var(--accent);outline-offset:1px;':''}">${esc(s.code)}</button>`).join('')}
+        </div></div>`;}).filter(Boolean).join('');
+    m.innerHTML=`<div data-close="pick" style="position:fixed;inset:0;background:oklch(0.2 0.02 260 / .45);z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;animation:r1fade .2s ease;">
+      <div data-stop="1" style="background:var(--surface);border-radius:18px;width:720px;max-width:100%;max-height:82vh;overflow:auto;box-shadow:0 24px 60px oklch(0.2 0.02 260 / .3);animation:r1pop .24s ease;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:20px 24px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:1;">
+          <div><h2 style="margin:0;font-size:18px;font-weight:600;">Izvēlies vietu</h2><div style="color:var(--ink-3);font-size:12px;margin-top:2px;">Klikšķini uz brīvas vietas, lai to piešķirtu</div></div>
+          <div style="display:flex;gap:8px;"><button data-pickspot="__auto__" style="height:38px;padding:0 14px;border:1px solid var(--border-2);background:var(--surface);border-radius:9px;font-weight:500;cursor:pointer;">Automātiski</button>
+          <button data-close="pick" style="width:38px;height:38px;border-radius:9px;border:1px solid var(--border-2);background:var(--surface);cursor:pointer;font-size:18px;color:var(--ink-2);">✕</button></div>
+        </div>
+        <div style="padding:20px 24px;display:flex;flex-direction:column;gap:18px;">${groups||'<div style="color:var(--ink-3);font-size:14px;">Nav brīvu vietu.</div>'}</div>
+      </div></div>`;
   } else m.innerHTML='';
   bind(m);
 }
@@ -558,8 +627,14 @@ function bind(root){
     else if(a==='new-user')await newUserDialog();
     else if(a==='go-release')nav('release');
     else if(a==='rel-search'){const q=document.getElementById('rel-q');S.relQ=q?q.value:S.relQ;await loadRelease();updateReleaseContent();}
+    else if(a==='pick-spot'){grab();S.spotPickOpen=true;renderModal();}
     else if(a==='sms-done'){S.smsOpen=false;S.smsRec=null;resetIntake();await Promise.all([loadStats(),loadActivity()]);nav('home');}
   }));
+  root.querySelectorAll('[data-pickspot]').forEach(el=>el.addEventListener('click',()=>{
+    const code=el.dataset.pickspot;S.presetSpot=(code==='__auto__')?null:code;S.spotPickOpen=false;renderModal();render();}));
+  root.querySelectorAll('[data-tabstatus]').forEach(el=>el.addEventListener('click',()=>{S.tabStatus=el.dataset.tabstatus;render();}));
+  root.querySelectorAll('[data-sort]').forEach(el=>el.addEventListener('click',()=>{const k=el.dataset.sort;
+    if(S.tabSort.col===k)S.tabSort.dir=S.tabSort.dir==='asc'?'desc':'asc';else S.tabSort={col:k,dir:'asc'};updateTabContent();}));
   root.querySelectorAll('[data-reset-user]').forEach(el=>el.addEventListener('click',()=>resetUserDialog(el.dataset.resetUser,el.dataset.name)));
   root.querySelectorAll('[data-del-user]').forEach(el=>el.addEventListener('click',()=>deleteUserDialog(el.dataset.delUser,el.dataset.name)));
   root.querySelectorAll('[data-rel-issue]').forEach(el=>el.addEventListener('click',async()=>{
@@ -571,7 +646,11 @@ function bind(root){
     await offerReintake(el.dataset.plate,el.dataset.loc);}));
   root.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',e=>{
     if(e.target!==el&&e.target.closest('[data-stop]'))return;
-    if(el.dataset.close==='sms'){S.smsOpen=false;S.smsRec=null;}else{S.selSpot=null;S.spotHist=[];S.spotHistLoading=false;}renderModal();render();
+    const w=el.dataset.close;
+    if(w==='sms'){S.smsOpen=false;S.smsRec=null;}
+    else if(w==='pick'){S.spotPickOpen=false;}
+    else{S.selSpot=null;S.spotHist=[];S.spotHistLoading=false;}
+    renderModal();render();
   }));
   root.querySelectorAll('[data-rim]').forEach(el=>el.addEventListener('click',()=>{grab();S.rim=el.dataset.rim;render();}));
   root.querySelectorAll('[data-spot]').forEach(el=>el.addEventListener('click',()=>{
@@ -603,6 +682,8 @@ function bind(root){
   if(rq){let t;
     rq.addEventListener('input',()=>{clearTimeout(t);S.relQ=rq.value;t=setTimeout(async()=>{await loadRelease();updateReleaseContent();},350);});
     rq.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();clearTimeout(t);S.relQ=rq.value;loadRelease().then(updateReleaseContent);}});}
+  const tq=root.querySelector('#tab-q');
+  if(tq){let t;tq.addEventListener('input',()=>{clearTimeout(t);S.tabQ=tq.value;t=setTimeout(updateTabContent,250);});}
 }
 function grab(){const g=(id,k)=>{const el=$(id);if(el)S[k]=el.value;};
   g('#in-plate','plate');g('#in-size','t1size');g('#in-brand','t1brand');g('#in-qty','t1qty');g('#in-thread','thread');
