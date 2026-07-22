@@ -210,8 +210,15 @@ export function createApp(): express.Express {
     const all = await store.list(q ? { q } : undefined);
     // Grouping: a company = one card for ALL its vehicles; an individual with a
     // real phone = one card across plates; otherwise fall back to name+plate.
-    const DUMMY = /^0+1?(01)+$/;
-    const realPhone = (p: string | null) => !!p && p.replace(/\D/g, '').length >= 7 && !DUMMY.test(p.replace(/\D/g, ''));
+    // A phone only groups if it's a genuine number — NOT the anonymized placeholder
+    // (e.g. 01010101010) or any low-entropy filler. Placeholders have very few
+    // distinct digits; without this guard every anonymized record collapses into
+    // one giant "customer".
+    const DUMMY_PHONE = (process.env.DUMMY_PHONE || '01010101010').replace(/\D/g, '');
+    const realPhone = (p: string | null) => {
+      const d = (p ?? '').replace(/\D/g, '');
+      return d.length >= 7 && d !== DUMMY_PHONE && new Set(d).size >= 3;
+    };
     const groups = new Map<string, { name: string; plates: Set<string>; phone: string | null; isCompany: boolean; makeModel: string | null; recs: typeof all }>();
     for (const r of all) {
       if (!r.plate && !r.customerName) continue;
