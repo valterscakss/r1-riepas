@@ -52,7 +52,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 14</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 15</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -233,12 +233,12 @@ function intakeHTML(){const p=price();
         <div class="label" style="margin-bottom:14px;">2 · Riepu dati</div>
         <div style="display:grid;grid-template-columns:1.2fr 1.4fr 0.8fr;gap:12px;margin-bottom:14px;">
           <div class="field"><label>Izmērs</label><input id="in-size" class="mono" inputmode="numeric" value="${esc(S.t1size)}" placeholder="235/50/19"></div>
-          <div class="field"><label>Ražotājs</label><input id="in-brand" list="brands" value="${esc(S.t1brand)}" placeholder="Michelin"><datalist id="brands">${BRANDS.map(b=>`<option value="${b}">`).join('')}</datalist></div>
+          <div class="field"><label>Ražotājs</label><input id="in-brand" value="${esc(S.t1brand)}" placeholder="Michelin" autocomplete="off"></div>
           <div class="field"><label>Daudzums</label><select id="in-qty">${['1','2','3','4','2+2'].map(q=>`<option value="${q}"${S.t1qty===q?' selected':''}>${q}</option>`).join('')}</select></div>
         </div>
         ${S.t1qty==='2+2'?`<div style="display:grid;grid-template-columns:1.2fr 1.4fr 0.8fr;gap:12px;margin-bottom:14px;padding:12px;background:var(--accent-soft);border:1px solid var(--border);border-radius:10px;">
           <div class="field"><label>Izmērs (2. pāris)</label><input id="in-size2" class="mono" inputmode="numeric" value="${esc(S.t2size)}" placeholder="275/45/20"></div>
-          <div class="field"><label>Ražotājs (2. pāris)</label><input id="in-brand2" list="brands" value="${esc(S.t2brand)}" placeholder="Michelin"></div>
+          <div class="field"><label>Ražotājs (2. pāris)</label><input id="in-brand2" value="${esc(S.t2brand)}" placeholder="Michelin" autocomplete="off"></div>
           <div class="field"><label>&nbsp;</label><div style="height:var(--h);display:flex;align-items:center;font-size:12px;color:var(--ink-3);">2 priekšā + 2 aizmugurē</div></div>
         </div>`:''}
         <div style="display:grid;grid-template-columns:1.6fr 0.9fr;gap:12px;">
@@ -253,19 +253,19 @@ function intakeHTML(){const p=price();
       <div class="card" style="overflow:hidden;position:sticky;top:76px;">
         <div style="padding:14px var(--card);border-bottom:1px solid var(--border);font-weight:600;font-size:14px;display:flex;justify-content:space-between;">Kopsavilkums <span style="font-size:11px;font-weight:500;color:var(--ink-3);">3 · Apstiprināt</span></div>
         <div style="padding:var(--card);display:flex;flex-direction:column;gap:11px;">
-          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Klients</span><span style="font-weight:500;text-align:right;">${esc(S.looked?(S.cust&&S.cust.trim()?S.cust:(S.isNew?'Jauns klients':'—')):'—')}</span></div>
-          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Numurs</span><span class="mono" style="font-weight:600;">${esc(S.plate?S.plate.toUpperCase():'—')}</span></div>
-          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Riepas</span><span style="font-weight:500;text-align:right;">${S.t1qty==='2+2'?(S.t1size?esc('2× '+(canonBrand(S.t1brand)||'—')+' '+S.t1size+(S.t2size?' + 2× '+(canonBrand(S.t2brand)||canonBrand(S.t1brand)||'—')+' '+S.t2size:'')):'—'):(S.t1qty&&S.t1size?esc(S.t1qty+'× '+(canonBrand(S.t1brand)||'—')+' '+S.t1size):'—')}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Klients</span><span id="sum-cust" style="font-weight:500;text-align:right;">${esc(S.looked?(S.cust&&S.cust.trim()?S.cust:(S.isNew?'Jauns klients':'—')):'—')}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Numurs</span><span id="sum-plate" class="mono" style="font-weight:600;">${esc(S.plate?S.plate.toUpperCase():'—')}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Riepas</span><span id="sum-tires" style="font-weight:500;text-align:right;">${S.t1qty==='2+2'?(S.t1size?esc('2× '+(canonBrand(S.t1brand)||'—')+' '+S.t1size+(S.t2size?' + 2× '+(canonBrand(S.t2brand)||canonBrand(S.t1brand)||'—')+' '+S.t2size:'')):'—'):(S.t1qty&&S.t1size?esc(S.t1qty+'× '+(canonBrand(S.t1brand)||'—')+' '+S.t1size):'—')}</span></div>
           <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Diski</span><span style="font-weight:500;">${S.rim==='aluminum'?'Alumīnija diski':S.rim==='steel'?'Tērauda diski':'Bez diskiem'}</span></div>
-          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Protektors</span><span class="mono" style="font-weight:600;">${S.thread?esc(S.thread)+' mm':'—'}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Protektors</span><span id="sum-thread" class="mono" style="font-weight:600;">${S.thread?esc(S.thread)+' mm':'—'}</span></div>
           <div style="height:1px;background:var(--border);margin:2px 0;"></div>
           <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;"><span style="color:var(--ink-3);font-size:13px;">Piešķirtā vieta</span><span class="mono" style="font-weight:600;background:var(--ok-soft);color:var(--ok);border-radius:6px;padding:2px 9px;">${esc(spot)}</span></div>
           <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:4px;">
-            <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3);white-space:nowrap;"><span>Pamatcena <span style="opacity:.7;">(${p.cls})</span></span><span class="mono">${p.w?eur(p.base):'—'}</span></div>
-            <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3);margin-top:5px;"><span>Disku koef.</span><span class="mono">× ${p.mult.toFixed(1)}</span></div>
-            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:9px;padding-top:9px;border-top:1px solid var(--border);"><span style="font-weight:600;">Kopā / sezonā</span><span class="mono" style="font-weight:600;font-size:22px;">${p.w?eur(p.total):'—'}</span></div>
+            <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3);white-space:nowrap;"><span>Pamatcena <span id="sum-cls" style="opacity:.7;">(${p.cls})</span></span><span id="sum-base" class="mono">${p.w?eur(p.base):'—'}</span></div>
+            <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3);margin-top:5px;"><span>Disku koef.</span><span id="sum-mult" class="mono">× ${p.mult.toFixed(1)}</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:9px;padding-top:9px;border-top:1px solid var(--border);"><span style="font-weight:600;">Kopā / sezonā</span><span id="sum-total" class="mono" style="font-weight:600;font-size:22px;">${p.w?eur(p.total):'—'}</span></div>
           </div>
-          <button data-act="confirm" ${canConfirm?'':'disabled'} style="height:46px;margin-top:4px;border:0;border-radius:11px;font-weight:600;font-size:15px;${canConfirm?'background:var(--accent);color:#fff;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);':'background:var(--border);color:var(--ink-3);cursor:not-allowed;'}">Apstiprināt pieņemšanu</button>
+          <button data-act="confirm" id="btn-confirm" ${canConfirm?'':'disabled'} style="height:46px;margin-top:4px;border:0;border-radius:11px;font-weight:600;font-size:15px;${canConfirm?'background:var(--accent);color:#fff;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);':'background:var(--border);color:var(--ink-3);cursor:not-allowed;'}">Apstiprināt pieņemšanu</button>
           <button data-act="reset" style="height:40px;background:transparent;border:0;color:var(--ink-3);font-weight:500;cursor:pointer;">Atcelt</button>
           <div style="font-size:11px;color:var(--ink-3);text-align:center;line-height:1.5;">Pēc apstiprināšanas klients saņems unikālo SMS kodu.</div>
         </div>
@@ -302,13 +302,13 @@ function customersHTML(){const list=S.customers;const sel=list[S.selCustomer]||l
     return `<button data-cust="${i}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;border:0;border-bottom:1px solid var(--border);padding:12px 14px;cursor:pointer;${on?'background:var(--accent-soft);':'background:transparent;'}">
     <div style="display:flex;align-items:center;gap:11px;min-width:0;">
       <span style="width:34px;height:34px;flex:none;border-radius:9px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;color:var(--ink-2);">${esc(initialsOf(c.name))}</span>
-      <span style="min-width:0;"><span style="display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(c.name)}</span><span class="mono" style="display:block;font-size:11px;color:var(--ink-3);">${esc(c.plate)}</span></span></div>
+      <span style="min-width:0;"><span style="display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(c.name)}</span><span class="mono" style="display:block;font-size:11px;color:var(--ink-3);">${esc(c.plates&&c.plates.length>1?c.plates.length+' auto: '+c.plates.slice(0,2).join(', ')+(c.plates.length>2?'…':''):c.plate)}</span></span></div>
     <span style="flex:none;font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;${c.active>0?'background:var(--ok-soft);color:var(--ok);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${c.active} aktīvs</span></button>`;}).join('');
-  const hist=(sel?sel.history:[]).map(h=>`<div style="display:grid;grid-template-columns:1.1fr 1.6fr 0.7fr 1fr 0.9fr 0.9fr;gap:10px;padding:13px var(--card);align-items:center;border-bottom:1px solid var(--border);font-size:13px;">
-    <span style="font-weight:500;">${esc(h.season||'—')}</span><span style="color:var(--ink-2);">${esc(h.tires)}</span>
+  const hist=(sel?sel.history:[]).map(h=>`<div style="display:grid;grid-template-columns:1fr 0.8fr 1.6fr 0.6fr 0.9fr 0.8fr 0.9fr;gap:10px;padding:13px var(--card);align-items:center;border-bottom:1px solid var(--border);font-size:13px;">
+    <span style="font-weight:500;">${esc(h.season||'—')}</span><span class="mono" style="font-size:12px;">${esc(h.plate||'—')}</span><span style="color:var(--ink-2);">${esc(h.tires)}${h.tires2?`<span style="display:block;font-size:12px;color:var(--ink-3);">+ ${esc(h.tires2)}</span>`:''}</span>
     <span class="mono">${esc(h.loc)}</span><span class="mono" style="font-size:12px;">${esc(h.thread)}</span><span class="mono">${esc(h.fee)}</span>
     <span style="display:flex;gap:6px;align-items:center;"><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;text-align:center;${h.status==='active'?'background:var(--ok-soft);color:var(--ok);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${h.status==='active'?'Glabājas':'Izsniegts'}</span>
-    ${h.status==='active'?`<button data-release="${esc(h.id)}" title="Izsniegt" style="border:1px solid var(--border-2);background:var(--surface);border-radius:6px;font-size:11px;padding:3px 8px;cursor:pointer;">Izsniegt</button>`:''}</span></div>`).join('');
+    ${h.status==='active'?`<button data-release="${esc(h.id)}" data-plate="${esc(h.plate||'')}" data-loc="${esc(h.loc||'')}" title="Izsniegt" style="border:1px solid var(--border-2);background:var(--surface);border-radius:6px;font-size:11px;padding:3px 8px;cursor:pointer;">Izsniegt</button>`:''}</span></div>`).join('');
   return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
   <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
     <div><h1 style="margin:0;font-size:24px;font-weight:600;">Klienti</h1>
@@ -329,14 +329,14 @@ function customersHTML(){const list=S.customers;const sel=list[S.selCustomer]||l
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px;">
           <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px;"><div class="label">Auto</div><div style="font-weight:600;margin-top:4px;font-size:13px;">${esc(sel.vehicle||'—')}</div></div>
-          <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px;"><div class="label">Numurs</div><div class="mono" style="font-weight:600;margin-top:4px;">${esc(sel.plate)}</div></div>
+          <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px;"><div class="label">${sel.plates&&sel.plates.length>1?'Numuri ('+sel.plates.length+')':'Numurs'}</div><div class="mono" style="font-weight:600;margin-top:4px;font-size:12px;">${esc(sel.plates?sel.plates.slice(0,4).join(' · ')+(sel.plates.length>4?' +'+(sel.plates.length-4):''):sel.plate)}</div></div>
           <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px;"><div class="label">Glabāšanas reizes</div><div class="mono" style="font-weight:600;margin-top:4px;">${sel.total}</div></div>
         </div>
       </div>
       <div class="card" style="overflow:hidden;">
         <div style="padding:14px var(--card);border-bottom:1px solid var(--border);font-weight:600;font-size:14px;">Glabāšanas vēsture</div>
-        <div style="display:grid;grid-template-columns:1.1fr 1.6fr 0.7fr 1fr 0.9fr 0.9fr;gap:10px;padding:10px var(--card);font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);border-bottom:1px solid var(--border);">
-          <span>Sezona</span><span>Riepas</span><span>Vieta</span><span>Protektors</span><span>Cena</span><span>Statuss</span></div>
+        <div style="display:grid;grid-template-columns:1fr 0.8fr 1.6fr 0.6fr 0.9fr 0.8fr 0.9fr;gap:10px;padding:10px var(--card);font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);border-bottom:1px solid var(--border);">
+          <span>Sezona</span><span>Numurs</span><span>Riepas</span><span>Vieta</span><span>Protektors</span><span>Cena</span><span>Statuss</span></div>
         ${hist}
       </div>
     </div>`:'<div></div>'}
@@ -429,12 +429,15 @@ function bind(root){
     resetIntake();S.presetSpot=el.dataset.assign;S.selSpot=null;nav('intake');}));
   root.querySelectorAll('[data-release-spot]').forEach(el=>el.addEventListener('click',async()=>{
     if(!confirm('Izsniegt riepas no šīs vietas?'))return;
+    const sp=S.selSpot||{};
     await fetch('/api/storage/'+encodeURIComponent(el.dataset.releaseSpot)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    S.selSpot=null;await Promise.all([loadStats(),loadActivity()]);render();}));
+    S.selSpot=null;await Promise.all([loadStats(),loadActivity()]);
+    await offerReintake(sp.plate,sp.code);}));
   root.querySelectorAll('[data-release]').forEach(el=>el.addEventListener('click',async()=>{
     if(!confirm('Izsniegt riepas?'))return;
     await fetch('/api/storage/'+encodeURIComponent(el.dataset.release)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    await Promise.all([loadStats(),loadCustomers()]);render();}));
+    await Promise.all([loadStats(),loadCustomers()]);
+    await offerReintake(el.dataset.plate,el.dataset.loc);}));
   root.querySelectorAll('[data-cust]').forEach(el=>el.addEventListener('click',()=>{S.selCustomer=Number(el.dataset.cust);render();}));
   const pl=root.querySelector('#in-plate');
   if(pl)pl.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doLookup();}});
@@ -445,13 +448,40 @@ function grab(){const g=(id,k)=>{const el=$(id);if(el)S[k]=el.value;};
   g('#in-plate','plate');g('#in-size','t1size');g('#in-brand','t1brand');g('#in-qty','t1qty');g('#in-thread','thread');
   g('#in-cust','cust');g('#in-phone','phone');g('#in-size2','t2size');g('#in-brand2','t2brand');
   S.t1size=maskSize(S.t1size)||S.t1size;S.t2size=maskSize(S.t2size)||S.t2size;}
-// keep summary live while typing
-document.addEventListener('input',e=>{
-  if(e.target.id==='in-size'||e.target.id==='in-size2'){const m=maskSize(e.target.value);if(m!==e.target.value){e.target.value=m;e.target.setSelectionRange(m.length,m.length);}}
-  if(['in-plate','in-size','in-brand','in-thread','in-cust','in-phone','in-size2','in-brand2'].includes(e.target.id)||e.target.id==='in-qty'){grab();
-  clearTimeout(window.__t);window.__t=setTimeout(()=>{const el=document.activeElement;const id=el&&el.id;const pos=el&&el.selectionStart;render();
-    if(id){const n=document.getElementById(id);if(n){n.focus();try{n.setSelectionRange(pos,pos);}catch{}}}},400);}});
+// Live summary WITHOUT re-rendering the page (no flicker while typing).
+function tiresLine(){const b1=canonBrand(S.t1brand)||'—';
+  if(S.t1qty==='2+2')return S.t1size?('2× '+b1+' '+S.t1size+(S.t2size?' + 2× '+(canonBrand(S.t2brand)||b1)+' '+S.t2size:'')):'—';
+  return (S.t1qty&&S.t1size)?(S.t1qty+'× '+b1+' '+S.t1size):'—';}
+function updateSummary(){const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
+  const p=price();
+  set('sum-cust',S.looked?(S.cust&&S.cust.trim()?S.cust:(S.isNew?'Jauns klients':'—')):'—');
+  set('sum-plate',S.plate?S.plate.toUpperCase():'—');
+  set('sum-tires',tiresLine());
+  set('sum-thread',S.thread?S.thread+' mm':'—');
+  set('sum-cls','('+p.cls+')');set('sum-base',p.w?eur(p.base):'—');
+  set('sum-mult','× '+p.mult.toFixed(1));set('sum-total',p.w?eur(p.total):'—');
+  const btn=document.getElementById('btn-confirm');
+  if(btn){const ok=S.looked&&!!S.t1size&&!!S.thread&&(!S.isNew||!!(S.cust&&S.cust.trim()))&&(S.t1qty!=='2+2'||!!S.t2size);
+    btn.disabled=!ok;
+    btn.style.cssText='height:46px;margin-top:4px;border:0;border-radius:11px;font-weight:600;font-size:15px;'+(ok?'background:var(--accent);color:#fff;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);':'background:var(--border);color:var(--ink-3);cursor:not-allowed;');}}
+// Inline type-ahead: completes the brand IN the field while typing (not a dropdown).
+function typeAhead(el,ev){if(ev&&ev.inputType&&ev.inputType.startsWith('delete'))return;
+  const v=el.value;if(!v)return;
+  const hit=BRANDS.find(b=>b.toLowerCase().startsWith(v.toLowerCase()));
+  if(hit&&hit!==v){const keep=v.length;el.value=hit;el.setSelectionRange(keep,hit.length);}}
+document.addEventListener('input',e=>{const id=e.target.id;
+  if(id==='in-size'||id==='in-size2'){const m=maskSize(e.target.value);if(m!==e.target.value){e.target.value=m;e.target.setSelectionRange(m.length,m.length);}}
+  if(id==='in-brand'||id==='in-brand2')typeAhead(e.target,e);
+  if(['in-plate','in-size','in-brand','in-thread','in-cust','in-phone','in-size2','in-brand2','in-qty'].includes(id)){grab();updateSummary();}});
 document.addEventListener('change',e=>{if(e.target.id==='in-qty'){grab();render();}});
+
+// After a release, staff usually take in the other season's tires right away.
+async function offerReintake(plate,loc){
+  if(plate&&confirm('Riepas izsniegtas ✓\n\nPieņemt '+plate+' pretējās sezonas riepas tagad?\n(Vieta '+(loc||'—')+' tikko atbrīvojās un tiks piedāvāta.)')){
+    resetIntake();S.plate=plate;S.presetSpot=loc||null;S.screen='intake';render();
+    await doLookup();
+  } else render();
+}
 
 async function doLookup(){grab();
   const plate=(S.plate||'').toUpperCase().replace(/\s/g,'');

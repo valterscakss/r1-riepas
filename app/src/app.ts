@@ -186,32 +186,51 @@ export function createApp(): express.Express {
     const store = await getStore();
     const q = typeof req.query.q === 'string' ? req.query.q.trim().toUpperCase() : '';
     const all = await store.list(q ? { q } : undefined);
-    const groups = new Map<string, { name: string; plate: string; phone: string | null; isCompany: boolean; makeModel: string | null; recs: typeof all }>();
+    // Grouping: a company = one card for ALL its vehicles; an individual with a
+    // real phone = one card across plates; otherwise fall back to name+plate.
+    const DUMMY = /^0+1?(01)+$/;
+    const realPhone = (p: string | null) => !!p && p.replace(/\D/g, '').length >= 7 && !DUMMY.test(p.replace(/\D/g, ''));
+    const groups = new Map<string, { name: string; plates: Set<string>; phone: string | null; isCompany: boolean; makeModel: string | null; recs: typeof all }>();
     for (const r of all) {
       if (!r.plate && !r.customerName) continue;
-      const key = `${r.customerName ?? ''}|${r.plate ?? ''}`;
-      if (!groups.has(key)) groups.set(key, { name: r.customerName ?? r.plate ?? '—', plate: r.plate ?? '—', phone: r.phone, isCompany: r.isCompany, makeModel: r.makeModel, recs: [] as typeof all });
+      const key = r.isCompany && r.customerName ? `co:${r.customerName.toUpperCase().trim()}`
+        : realPhone(r.phone) ? `ph:${r.phone}`
+        : `np:${r.customerName ?? ''}|${r.plate ?? ''}`;
+      if (!groups.has(key)) groups.set(key, { name: r.customerName ?? r.plate ?? '—', plates: new Set(), phone: r.phone, isCompany: r.isCompany, makeModel: r.makeModel, recs: [] as typeof all });
       const g = groups.get(key)!;
       g.recs.push(r);
+      if (r.plate) g.plates.add(r.plate);
+      if (r.isCompany) g.isCompany = true;
       if (!g.phone && r.phone) g.phone = r.phone;
       if (!g.makeModel && r.makeModel) g.makeModel = r.makeModel;
     }
     const list = [...groups.values()]
       .map((g) => ({
-        name: g.name, plate: g.plate, phone: g.phone, isCompany: g.isCompany, vehicle: g.makeModel,
+        name: g.name, plate: [...g.plates][0] ?? '—', plates: [...g.plates], phone: g.phone, isCompany: g.isCompany, vehicle: g.makeModel,
         active: g.recs.filter((r) => r.status === 'active').length,
         since: g.recs.map((r) => r.intakeDate).filter(Boolean).sort()[0]?.slice(0, 4) ?? '—',
         total: g.recs.length,
         latest: g.recs.map((r) => r.intakeDate ?? '').sort().reverse()[0] ?? '',
         history: g.recs
-          .sort((a, b) => (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''))
-          .slice(0, 8)
-          .map((r) => ({
-            season: r.season, tires: [r.quantity ? `${r.quantity}×` : '', r.brand, r.size1].filter(Boolean).join(' ') || '—',
+          .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''))
+          .slice(0, 30)
+          .map((r) => {
+            // Staggered sets (2+2, 3+1…): split the pairs so both are visible.
+            // The old Excel sometimes put the 2nd size in notes — use it as fallback.
+            const noteSize = !r.size2 && r.notes ? (r.notes.match(/\b(\d{3}\/\d{1,2}\/\d{2})\b/)?.[1] ?? null) : null;
+            const size2 = r.size2 ?? noteSize;
+            const stag = !!(r.quantity && r.quantity.includes('+') && size2);
+            const parts = stag ? r.quantity!.split('+') : [];
+            return ({
+            season: r.season, plate: r.plate ?? '—',
+            tires: stag
+              ? [`${parts[0]}×`, r.brand, r.size1].filter(Boolean).join(' ')
+              : ([r.quantity ? `${r.quantity}×` : '', r.brand, r.size1].filter(Boolean).join(' ') + (r.size2 ? ` + ${r.size2}` : '') || '—'),
+            tires2: stag ? `${parts[1] || '2'}× ${size2}` : null,
             loc: r.location ?? '—', thread: r.threadDepth ? `${r.threadDepth} mm` : '—',
             fee: r.feeEur ? `€${Number(r.feeEur).toFixed(2).replace('.', ',')}` : '—',
             status: r.status, id: r.id,
-          })),
+          }); }),
       }))
       .sort((a, b) => b.latest.localeCompare(a.latest))
       .slice(0, 30);
