@@ -62,11 +62,12 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 20</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 21</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
     <button class="navbtn" data-nav="intake"><span>↓&nbsp; Pieņemšana</span></button>
+    <button class="navbtn" data-nav="release"><span>↑&nbsp; Izsniegšana</span></button>
     <button class="navbtn" data-nav="spots"><span>⊞&nbsp; Novietnes</span></button>
     <button class="navbtn" data-nav="customers"><span>◉&nbsp; Klienti</span></button>
     <button class="navbtn" data-nav="users" id="nav-users" style="display:none;"><span>◔&nbsp; Lietotāji</span></button>
@@ -141,7 +142,8 @@ window.fetch=function(input,init){
 
 const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:null,activity:[],customers:[],selCustomer:0,custQ:'',
   plate:'',looked:false,isNew:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',t2size:'',t2brand:'',rim:'none',thread:'',history:0,
-  smsOpen:false,smsRec:null,selSpot:null,presetSpot:null,spotHist:[],spotHistLoading:false};
+  smsOpen:false,smsRec:null,selSpot:null,presetSpot:null,spotHist:[],spotHistLoading:false,
+  relQ:'',relResults:[],relLoading:false,relSearched:false};
 
 const ROLES={staff:{label:'Personāls',name:'Juris Kalniņš'},manager:{label:'Vadītājs',name:'Ilze Ozola'},owner:{label:'Īpašnieks',name:'Mārtiņš Bērze'}};
 const initialsOf=n=>String(n||'—').replace(/^SIA\s*/i,'').replace(/["']/g,'').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'—';
@@ -203,6 +205,7 @@ function render(){
   else if(S.screen==='intake')v.innerHTML=intakeHTML();
   else if(S.screen==='spots')v.innerHTML=spotsHTML();
   else if(S.screen==='customers')v.innerHTML=customersHTML();
+  else if(S.screen==='release')v.innerHTML=releaseHTML();
   else if(S.screen==='users')v.innerHTML=usersHTML();
   bind(v);renderModal();
   if(S.screen==='intake')updateSummary();
@@ -246,8 +249,8 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
         <h2 style="margin:0 0 14px;font-size:15px;font-weight:600;">Ātrās darbības</h2>
         <div style="display:flex;flex-direction:column;gap:8px;">
           <button data-act="new-intake" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">↓&nbsp; Pieņemt riepas</button>
-          <button data-act="go-spots" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">⊞&nbsp; Izsniegt pēc koda</button>
-          <button data-act="go-customers" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">◷&nbsp; Izsniegt pēc numura</button>
+          <button data-act="go-release" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">↑&nbsp; Izsniegt riepas (kods/numurs)</button>
+          <button data-act="go-customers" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">◉&nbsp; Klienti</button>
         </div>
       </div>
       <div class="card" style="padding:var(--card);">
@@ -411,6 +414,53 @@ function updateCustContent(){const c=document.getElementById('cust-content');if(
   c.innerHTML=custContentHTML();bind(c);
   const n=document.getElementById('cust-count');if(n)n.textContent=S.customers.length;}
 
+// ============ RIEPU IZSNIEGŠANA (release) ============
+function releaseHTML(){
+  return `<div class="page" style="padding:var(--pad);max-width:1000px;margin:0 auto;">
+    <div style="margin-bottom:var(--pad);"><h1 style="margin:0;font-size:24px;font-weight:600;">Riepu izsniegšana</h1>
+    <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Ievadi SMS kodu vai numura zīmi, lai atrastu glabātās riepas</div></div>
+    <div class="card" style="padding:var(--card);margin-bottom:var(--gap);">
+      <div style="display:flex;gap:10px;">
+        <input id="rel-q" value="${esc(S.relQ)}" placeholder="SMS kods vai numura zīme…" autocomplete="off" autocapitalize="characters" spellcheck="false" style="flex:1;height:52px;padding:0 16px;border:2px solid var(--border-2);border-radius:10px;background:var(--surface);font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:18px;letter-spacing:.04em;text-transform:uppercase;">
+        <button data-act="rel-search" style="height:52px;padding:0 22px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;font-size:15px;cursor:pointer;">⌕ Meklēt</button>
+      </div>
+    </div>
+    <div id="rel-content">${relContentHTML()}</div>
+  </div>`;}
+function relContentHTML(){
+  if(S.relLoading)return `<div class="card" style="padding:24px;color:var(--ink-3);font-size:13px;">Meklē…</div>`;
+  if(!S.relSearched)return `<div class="card" style="padding:30px;text-align:center;color:var(--ink-3);font-size:14px;">Ievadi SMS kodu vai numura zīmi augšā.</div>`;
+  const list=S.relResults||[];
+  if(!list.length)return `<div class="card" style="padding:30px;text-align:center;color:var(--ink-3);font-size:14px;">Nekas netika atrasts pēc <b class="mono">${esc(S.relQ)}</b>.<br><span style="font-size:13px;">Pārbaudi kodu vai numuru — iespējams, riepas jau ir izsniegtas.</span></div>`;
+  return list.map(x=>`<div class="card" style="padding:var(--card);margin-bottom:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+      <div style="display:flex;gap:14px;align-items:center;min-width:0;">
+        <span style="min-width:48px;height:48px;flex:none;padding:0 8px;border-radius:12px;background:var(--accent-soft);color:var(--accent-2);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;">${esc(x.loc||'—')}</span>
+        <div style="min-width:0;">
+          <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;"><span class="mono" style="font-weight:600;font-size:17px;">${esc(x.plate||'—')}</span>
+          <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--ok-soft);color:var(--ok);">Glabājas</span></div>
+          <div style="color:var(--ink-2);font-size:13px;margin-top:3px;">${esc(x.cust||'—')}${x.phone?` · <span class="mono">${esc(x.phone)}</span>`:''}</div>
+        </div>
+      </div>
+      <button data-rel-issue="${esc(x.id)}" data-plate="${esc(x.plate||'')}" data-loc="${esc(x.loc||'')}" style="height:44px;padding:0 20px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">Izsniegt riepas</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;margin-top:16px;">
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px;"><div class="label">SMS kods</div><div class="mono" style="font-weight:600;margin-top:3px;">${esc(x.sms||'—')}</div></div>
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px;"><div class="label">Izmērs</div><div class="mono" style="margin-top:3px;">${esc(x.size||'—')}${x.size2?' + '+esc(x.size2):''}</div></div>
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px;"><div class="label">Ražotājs</div><div style="margin-top:3px;font-weight:500;">${esc(x.brand||'—')}</div></div>
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px;"><div class="label">Protektors</div><div class="mono" style="margin-top:3px;">${esc(x.thread||'—')}</div></div>
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px;"><div class="label">Cena</div><div class="mono" style="margin-top:3px;font-weight:600;">${esc(x.fee||'—')}</div></div>
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:10px 12px;"><div class="label">Pieņemts</div><div style="margin-top:3px;font-size:13px;">${esc(x.intakeDate||'—')}</div></div>
+    </div>
+  </div>`).join('');}
+async function loadRelease(){const q=(S.relQ||'').trim();
+  if(!q){S.relResults=[];S.relSearched=false;return;}
+  S.relLoading=true;
+  try{const d=await(await fetch('/api/release-lookup?q='+encodeURIComponent(q))).json();S.relResults=d.results||[];}
+  catch{S.relResults=[];}
+  S.relLoading=false;S.relSearched=true;}
+function updateReleaseContent(){const c=document.getElementById('rel-content');if(!c)return;c.innerHTML=relContentHTML();bind(c);}
+
 // ============ VEHICLE HISTORY (spot panel) ============
 async function loadVehicle(plate){S.spotHistLoading=true;renderModal();
   try{const d=await(await fetch('/api/vehicle?plate='+encodeURIComponent(plate))).json();
@@ -506,10 +556,19 @@ function bind(root){
     else if(a==='reset'){resetIntake();render();}
     else if(a==='confirm')await confirmIntake();
     else if(a==='new-user')await newUserDialog();
+    else if(a==='go-release')nav('release');
+    else if(a==='rel-search'){const q=document.getElementById('rel-q');S.relQ=q?q.value:S.relQ;await loadRelease();updateReleaseContent();}
     else if(a==='sms-done'){S.smsOpen=false;S.smsRec=null;resetIntake();await Promise.all([loadStats(),loadActivity()]);nav('home');}
   }));
   root.querySelectorAll('[data-reset-user]').forEach(el=>el.addEventListener('click',()=>resetUserDialog(el.dataset.resetUser,el.dataset.name)));
   root.querySelectorAll('[data-del-user]').forEach(el=>el.addEventListener('click',()=>deleteUserDialog(el.dataset.delUser,el.dataset.name)));
+  root.querySelectorAll('[data-rel-issue]').forEach(el=>el.addEventListener('click',async()=>{
+    const r=await ask({icon:'question',title:'Izsniegt riepas?',html:`<b class="mono">${esc(el.dataset.plate||'')}</b> · vieta ${esc(el.dataset.loc||'')}`,confirmButtonText:'Izsniegt'});
+    if(!r.isConfirmed)return;
+    await fetch('/api/storage/'+encodeURIComponent(el.dataset.relIssue)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    toast('Riepas izsniegtas');
+    await Promise.all([loadStats(),loadRelease()]);updateReleaseContent();
+    await offerReintake(el.dataset.plate,el.dataset.loc);}));
   root.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',e=>{
     if(e.target!==el&&e.target.closest('[data-stop]'))return;
     if(el.dataset.close==='sms'){S.smsOpen=false;S.smsRec=null;}else{S.selSpot=null;S.spotHist=[];S.spotHistLoading=false;}renderModal();render();
@@ -540,6 +599,10 @@ function bind(root){
   if(pl)pl.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doLookup();}});
   const cq=root.querySelector('#cust-q');
   if(cq){let t;cq.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(async()=>{S.custQ=cq.value;S.selCustomer=0;await loadCustomers();updateCustContent();},350);});}
+  const rq=root.querySelector('#rel-q');
+  if(rq){let t;
+    rq.addEventListener('input',()=>{clearTimeout(t);S.relQ=rq.value;t=setTimeout(async()=>{await loadRelease();updateReleaseContent();},350);});
+    rq.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();clearTimeout(t);S.relQ=rq.value;loadRelease().then(updateReleaseContent);}});}
 }
 function grab(){const g=(id,k)=>{const el=$(id);if(el)S[k]=el.value;};
   g('#in-plate','plate');g('#in-size','t1size');g('#in-brand','t1brand');g('#in-qty','t1qty');g('#in-thread','thread');

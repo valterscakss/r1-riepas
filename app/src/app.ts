@@ -260,6 +260,27 @@ export function createApp(): express.Express {
     });
   }));
 
+  // Release lookup: find ACTIVE stored sets by SMS code, plate, or location.
+  app.get('/api/release-lookup', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
+    if (!q) return res.json({ q: '', results: [] });
+    const active = await store.list({ status: 'active' });
+    const norm = (s: string | null) => String(s ?? '').toUpperCase().replace(/\s+/g, '');
+    const exact = active.filter((r) => norm(r.smsCode) === q || norm(r.plate) === q || norm(r.location) === q);
+    const chosen = exact.length
+      ? exact
+      : active.filter((r) => norm(r.plate).includes(q) || norm(r.smsCode).includes(q)).slice(0, 20);
+    const results = chosen.map((r) => ({
+      id: r.id, plate: r.plate, cust: r.customerName, phone: r.phone, loc: r.location,
+      size: r.size1, size2: r.size2, brand: r.brand, quantity: r.quantity, sms: r.smsCode,
+      thread: r.threadDepth ? `${r.threadDepth} mm` : '—',
+      fee: r.feeEur ? `€${Number(r.feeEur).toFixed(2).replace('.', ',')}` : '—',
+      intakeDate: r.intakeDate, season: r.season,
+    }));
+    res.json({ q, results });
+  }));
+
   app.post('/api/intake', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
     const b = req.body ?? {};
