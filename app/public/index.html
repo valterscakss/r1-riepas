@@ -44,6 +44,16 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 .chip.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px oklch(0.2 0.02 260 / .12);font-weight:600;}
 .field label{display:block;font-size:12px;font-weight:500;color:var(--ink-2);margin-bottom:6px;}
 .field input,.field select{width:100%;height:var(--h);padding:0 12px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);}
+.r1-swal{border-radius:16px!important;font-family:'IBM Plex Sans',sans-serif!important;padding:8px 4px!important;box-shadow:0 24px 60px oklch(0.2 0.02 260 / .3)!important;}
+.r1-swal .swal2-title{font-size:20px!important;font-weight:600!important;color:var(--ink)!important;}
+.r1-swal .swal2-html-container{color:var(--ink-2)!important;font-size:14px!important;}
+.r1-btn{height:44px;padding:0 22px;border:0;border-radius:11px;font-weight:600;font-size:15px;cursor:pointer;margin:0 5px;font-family:inherit;}
+.r1-btn-primary{background:var(--accent);color:#fff;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);}
+.r1-btn-primary:hover{background:var(--accent-2);}
+.r1-btn-ghost{background:var(--surface);color:var(--ink-2);border:1px solid var(--border-2);}
+.r1-btn-danger{background:var(--danger);color:#fff;}
+.r1-toast{border-radius:12px!important;font-family:'IBM Plex Sans',sans-serif!important;}
+.swal2-container{z-index:120!important;}
 </style>
 </head>
 <body>
@@ -52,7 +62,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 17</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 18</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -87,6 +97,19 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 
 <div id="modal"></div>
 
+<script src="/vendor/sweetalert2.min.js"></script>
+<script>
+// SweetAlert2 themed to the app (falls back to native if it fails to load)
+const hasSwal=typeof Swal!=='undefined';
+const R1=hasSwal?Swal.mixin({
+  buttonsStyling:false,
+  customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-primary',cancelButton:'r1-btn r1-btn-ghost',denyButton:'r1-btn r1-btn-ghost'},
+  confirmButtonText:'Labi',cancelButtonText:'Atcelt'
+}):null;
+const ask=async(opts)=>{ if(!R1){return {isConfirmed:confirm(opts.text||opts.title||'?')}; } return R1.fire({showCancelButton:true,...opts}); };
+const toast=(title,icon='success')=>{ if(!R1){return;} Swal.fire({toast:true,position:'top-end',timer:2600,showConfirmButton:false,timerProgressBar:true,icon,title,customClass:{popup:'r1-toast'}}); };
+const alertErr=(text)=>{ if(!R1){alert(text);return;} R1.fire({icon:'error',title:'Kļūda',text,showCancelButton:false}); };
+</script>
 <script>
 const $=s=>document.querySelector(s);
 const esc=s=>(s==null?'':String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])));
@@ -439,15 +462,17 @@ function bind(root){
   root.querySelectorAll('[data-assign]').forEach(el=>el.addEventListener('click',()=>{
     resetIntake();S.presetSpot=el.dataset.assign;S.selSpot=null;nav('intake');}));
   root.querySelectorAll('[data-release-spot]').forEach(el=>el.addEventListener('click',async()=>{
-    if(!confirm('Izsniegt riepas no šīs vietas?'))return;
     const sp=S.selSpot||{};
+    const r=await ask({icon:'question',title:'Izsniegt riepas?',html:`Vieta <b class="mono">${esc(sp.code||'')}</b> · ${esc(sp.plate||'')}`,confirmButtonText:'Izsniegt'});
+    if(!r.isConfirmed)return;
     await fetch('/api/storage/'+encodeURIComponent(el.dataset.releaseSpot)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    S.selSpot=null;await Promise.all([loadStats(),loadActivity()]);
+    S.selSpot=null;await Promise.all([loadStats(),loadActivity()]);toast('Riepas izsniegtas');
     await offerReintake(sp.plate,sp.code);}));
   root.querySelectorAll('[data-release]').forEach(el=>el.addEventListener('click',async()=>{
-    if(!confirm('Izsniegt riepas?'))return;
+    const r=await ask({icon:'question',title:'Izsniegt riepas?',html:`<b class="mono">${esc(el.dataset.plate||'')}</b> · vieta ${esc(el.dataset.loc||'')}`,confirmButtonText:'Izsniegt'});
+    if(!r.isConfirmed)return;
     await fetch('/api/storage/'+encodeURIComponent(el.dataset.release)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    await Promise.all([loadStats(),loadCustomers()]);
+    await Promise.all([loadStats(),loadCustomers()]);toast('Riepas izsniegtas');
     await offerReintake(el.dataset.plate,el.dataset.loc);}));
   root.querySelectorAll('[data-cust]').forEach(el=>el.addEventListener('click',()=>{S.selCustomer=Number(el.dataset.cust);updateCustContent();}));
   const pl=root.querySelector('#in-plate');
@@ -496,10 +521,12 @@ document.addEventListener('change',e=>{if(e.target.id==='in-qty'){grab();render(
 
 // After a release, staff usually take in the other season's tires right away.
 async function offerReintake(plate,loc){
-  if(plate&&confirm('Riepas izsniegtas ✓\n\nPieņemt '+plate+' pretējās sezonas riepas tagad?\n(Vieta '+(loc||'—')+' tikko atbrīvojās un tiks piedāvāta.)')){
-    resetIntake();S.plate=plate;S.presetSpot=loc||null;S.screen='intake';render();
-    await doLookup();
-  } else render();
+  if(!plate){render();return;}
+  const r=await ask({icon:'success',title:'Riepas izsniegtas',
+    html:`Pieņemt <b class="mono">${esc(plate)}</b> pretējās sezonas riepas tagad?<br><span style="color:var(--ink-3);font-size:13px;">Vieta <b>${esc(loc||'—')}</b> tikko atbrīvojās.</span>`,
+    confirmButtonText:'Jā, pieņemt',cancelButtonText:'Vēlāk'});
+  if(r.isConfirmed){resetIntake();S.plate=plate;S.presetSpot=loc||null;S.screen='intake';render();await doLookup();}
+  else render();
 }
 
 async function doLookup(){grab();
@@ -529,7 +556,7 @@ async function confirmIntake(){grab();
   const res=await fetch('/api/intake',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data=await res.json();
   if(res.ok){S.smsRec=data;S.smsOpen=true;renderModal();await loadStats();}
-  else alert(data.error?.message||'Neizdevās saglabāt');}
+  else alertErr(data.error?.message||'Neizdevās saglabāt');}
 
 // ============ INIT ============
 (async function(){
