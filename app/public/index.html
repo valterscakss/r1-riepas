@@ -52,7 +52,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 12</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 13</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -103,6 +103,14 @@ const DAYS=['Svētdiena','Pirmdiena','Otrdiena','Trešdiena','Ceturtdiena','Piek
 const now=new Date();
 const dateStr=`${DAYS[now.getDay()]}, ${now.getDate()}. ${MONTHS[now.getMonth()]} ${now.getFullYear()}`;
 const season=(now.getMonth()+1>=3&&now.getMonth()+1<9?'Pavasaris ':'Rudens ')+now.getFullYear();
+
+const BRANDS=['Michelin','Continental','Nokian','Pirelli','Bridgestone','Goodyear','Hankook','Yokohama','Dunlop','Kumho','Toyo','Falken','Vredestein','Sailun','Nexen','BFGoodrich','Firestone','Sava','Barum','Matador','Fulda','Kleber','Gislaved','Laufenn','Triangle','Linglong'];
+const canonBrand=v=>{const t=(v||'').trim();if(!t)return t;const hit=BRANDS.find(b=>b.toLowerCase()===t.toLowerCase());return hit||t.charAt(0).toUpperCase()+t.slice(1);};
+// "2255017" -> "225/50/17" while typing
+function maskSize(v){const d=String(v||'').replace(/[^0-9]/g,'').slice(0,7);
+  if(d.length<=3)return d;
+  if(d.length<=5)return d.slice(0,3)+'/'+d.slice(3);
+  return d.slice(0,3)+'/'+d.slice(3,5)+'/'+d.slice(5);}
 
 // pricing mirror of the server (design formula)
 function price(){const w=parseInt((S.t1size||'').slice(0,3))||0;const base=w===0?0:w<=215?15:w<=245?20:w<=275?25:30;
@@ -191,15 +199,23 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
   </div></div>`;}
 
 function intakeHTML(){const p=price();
-  const canConfirm=S.looked&&!!S.t1size&&!!S.thread;
+  const canConfirm=S.looked&&!!S.t1size&&!!S.thread&&(!S.isNew||!!(S.cust&&S.cust.trim()));
   const rimBtn=(key,label,pos)=>{const on=S.rim===key;
     const rad=pos===0?'border-radius:8px 0 0 8px;':pos===2?'border-radius:0 8px 8px 0;border-left:0;':'border-left:0;';
     return `<button data-rim="${key}" style="height:var(--h);flex:1;border:1px solid var(--border-2);cursor:pointer;font-weight:500;font-size:13px;${on?'background:var(--accent);color:#fff;border-color:var(--accent);':'background:var(--surface);color:var(--ink-2);'}${rad}">${label}</button>`;};
-  const banner=!S.looked?'':`<div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;border-radius:10px;background:${S.isNew?'var(--warn-soft)':'var(--ok-soft)'};border:1px solid ${S.isNew?'oklch(0.82 0.08 82)':'oklch(0.8 0.08 155)'};">
+  const banner=!S.looked?'':S.isNew?`<div style="margin-top:14px;padding:14px;border-radius:10px;background:var(--warn-soft);border:1px solid oklch(0.82 0.08 82);">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <span style="font-size:10px;font-weight:700;letter-spacing:.05em;padding:3px 8px;border-radius:6px;color:#fff;background:var(--warn);">JAUNS</span>
+      <span style="font-weight:600;">Jauns klients — ievadi datus</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:10px;">
+      <div class="field"><label>Vārds / uzņēmums *</label><input id="in-cust" value="${esc(S.cust)}" placeholder="Anna Ozola / SIA Serviss" style="background:var(--surface);"></div>
+      <div class="field"><label>Telefons</label><input id="in-phone" class="mono" value="${esc(S.phone)}" placeholder="29123456" style="background:var(--surface);"></div>
+    </div></div>`:`<div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;border-radius:10px;background:var(--ok-soft);border:1px solid oklch(0.8 0.08 155);">
     <div style="display:flex;align-items:center;gap:10px;">
-      <span style="font-size:10px;font-weight:700;letter-spacing:.05em;padding:3px 8px;border-radius:6px;color:#fff;background:${S.isNew?'var(--warn)':'var(--ok)'};">${S.isNew?'JAUNS':'ATRASTS'}</span>
-      <div><div style="font-weight:600;">${esc(S.cust||'Jauns klients')}</div><div class="mono" style="font-size:12px;color:var(--ink-3);">${S.isNew?'Aizpildi klienta datus':esc(S.phone||'—')}</div></div>
-    </div>${!S.isNew?`<span style="font-size:12px;color:var(--ok);font-weight:600;">Iepriekšējie dati aizpildīti ✓ (${S.history} ieraksti)</span>`:''}</div>`;
+      <span style="font-size:10px;font-weight:700;letter-spacing:.05em;padding:3px 8px;border-radius:6px;color:#fff;background:var(--ok);">ATRASTS</span>
+      <div><div style="font-weight:600;">${esc(S.cust)}</div><div class="mono" style="font-size:12px;color:var(--ink-3);">${esc(S.phone||'—')}</div></div>
+    </div><span style="font-size:12px;color:var(--ok);font-weight:600;">Iepriekšējie dati aizpildīti ✓ (${S.history} ieraksti)</span></div>`;
   const spot=S.presetSpot||(S.stats&&S.stats.assignNext)||'—';
   return `<div class="page" style="padding:var(--pad);max-width:1180px;margin:0 auto;">
   <div style="margin-bottom:var(--pad);"><h1 style="margin:0;font-size:24px;font-weight:600;">Riepu pieņemšana</h1>
@@ -216,8 +232,8 @@ function intakeHTML(){const p=price();
       <div class="card" style="padding:var(--card);">
         <div class="label" style="margin-bottom:14px;">2 · Riepu dati</div>
         <div style="display:grid;grid-template-columns:1.2fr 1.4fr 0.8fr;gap:12px;margin-bottom:14px;">
-          <div class="field"><label>Izmērs</label><input id="in-size" class="mono" value="${esc(S.t1size)}" placeholder="235/50/19"></div>
-          <div class="field"><label>Ražotājs</label><input id="in-brand" value="${esc(S.t1brand)}" placeholder="Michelin"></div>
+          <div class="field"><label>Izmērs</label><input id="in-size" class="mono" inputmode="numeric" value="${esc(S.t1size)}" placeholder="235/50/19"></div>
+          <div class="field"><label>Ražotājs</label><input id="in-brand" list="brands" value="${esc(S.t1brand)}" placeholder="Michelin"><datalist id="brands">${BRANDS.map(b=>`<option value="${b}">`).join('')}</datalist></div>
           <div class="field"><label>Daudzums</label><select id="in-qty">${['1','2','3','4'].map(q=>`<option value="${q}"${S.t1qty===q?' selected':''}>${q}</option>`).join('')}</select></div>
         </div>
         <div style="display:grid;grid-template-columns:1.6fr 0.9fr;gap:12px;">
@@ -232,9 +248,9 @@ function intakeHTML(){const p=price();
       <div class="card" style="overflow:hidden;position:sticky;top:76px;">
         <div style="padding:14px var(--card);border-bottom:1px solid var(--border);font-weight:600;font-size:14px;display:flex;justify-content:space-between;">Kopsavilkums <span style="font-size:11px;font-weight:500;color:var(--ink-3);">3 · Apstiprināt</span></div>
         <div style="padding:var(--card);display:flex;flex-direction:column;gap:11px;">
-          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Klients</span><span style="font-weight:500;text-align:right;">${esc(S.looked?(S.cust||'—'):'—')}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Klients</span><span style="font-weight:500;text-align:right;">${esc(S.looked?(S.cust&&S.cust.trim()?S.cust:(S.isNew?'Jauns klients':'—')):'—')}</span></div>
           <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Numurs</span><span class="mono" style="font-weight:600;">${esc(S.plate?S.plate.toUpperCase():'—')}</span></div>
-          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Riepas</span><span style="font-weight:500;text-align:right;">${S.t1qty&&S.t1size?esc(S.t1qty+'× '+(S.t1brand||'—')+' '+S.t1size):'—'}</span></div>
+          <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Riepas</span><span style="font-weight:500;text-align:right;">${S.t1qty&&S.t1size?esc(S.t1qty+'× '+(canonBrand(S.t1brand)||'—')+' '+S.t1size):'—'}</span></div>
           <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Diski</span><span style="font-weight:500;">${S.rim==='aluminum'?'Alumīnija diski':S.rim==='steel'?'Tērauda diski':'Bez diskiem'}</span></div>
           <div style="display:flex;justify-content:space-between;gap:12px;"><span style="color:var(--ink-3);font-size:13px;">Protektors</span><span class="mono" style="font-weight:600;">${S.thread?esc(S.thread)+' mm':'—'}</span></div>
           <div style="height:1px;background:var(--border);margin:2px 0;"></div>
@@ -421,9 +437,13 @@ function bind(root){
   if(cq){let t;cq.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(async()=>{S.custQ=cq.value;S.selCustomer=0;await loadCustomers();render();const n=$('#cust-q');if(n){n.focus();n.setSelectionRange(n.value.length,n.value.length);}},350);});}
 }
 function grab(){const g=(id,k)=>{const el=$(id);if(el)S[k]=el.value;};
-  g('#in-plate','plate');g('#in-size','t1size');g('#in-brand','t1brand');g('#in-qty','t1qty');g('#in-thread','thread');}
+  g('#in-plate','plate');g('#in-size','t1size');g('#in-brand','t1brand');g('#in-qty','t1qty');g('#in-thread','thread');
+  g('#in-cust','cust');g('#in-phone','phone');
+  S.t1size=maskSize(S.t1size)||S.t1size;}
 // keep summary live while typing
-document.addEventListener('input',e=>{if(['in-plate','in-size','in-brand','in-thread'].includes(e.target.id)||e.target.id==='in-qty'){grab();
+document.addEventListener('input',e=>{
+  if(e.target.id==='in-size'){const m=maskSize(e.target.value);if(m!==e.target.value){e.target.value=m;e.target.setSelectionRange(m.length,m.length);}}
+  if(['in-plate','in-size','in-brand','in-thread','in-cust','in-phone'].includes(e.target.id)||e.target.id==='in-qty'){grab();
   clearTimeout(window.__t);window.__t=setTimeout(()=>{const el=document.activeElement;const id=el&&el.id;const pos=el&&el.selectionStart;render();
     if(id){const n=document.getElementById(id);if(n){n.focus();try{n.setSelectionRange(pos,pos);}catch{}}}},400);}});
 document.addEventListener('change',e=>{if(e.target.id==='in-qty'){grab();render();}});
@@ -438,13 +458,15 @@ async function doLookup(){grab();
         t1size:s.size1||S.t1size,t1brand:s.brand||S.t1brand,
         t1qty:(String(s.quantity||'').match(/^\d$/)?String(s.quantity):S.t1qty),
         rim:/alum|liet/i.test(s.rimNote||'')?'aluminum':/tērau|terau|dzelz/i.test(s.rimNote||'')?'steel':S.rim});
-    } else Object.assign(S,{looked:true,isNew:true,cust:'Jauns klients',phone:'',history:0});
-  }catch{Object.assign(S,{looked:true,isNew:true,cust:'Jauns klients',history:0});}
+    } else Object.assign(S,{looked:true,isNew:true,cust:'',phone:'',history:0});
+  }catch{Object.assign(S,{looked:true,isNew:true,cust:'',history:0});}
   render();}
 
 async function confirmIntake(){grab();
   if(!(S.looked&&S.t1size&&S.thread))return;
-  const body={plate:S.plate,customerName:S.isNew?null:S.cust,phone:S.phone||null,size1:S.t1size,brand:S.t1brand||null,
+  if(!(S.looked&&(!S.isNew||S.cust.trim())))return;
+  const body={plate:S.plate,customerName:(S.cust&&S.cust.trim())||null,phone:(S.phone&&S.phone.trim())||null,
+    size1:maskSize(S.t1size)||S.t1size,brand:canonBrand(S.t1brand)||null,
     quantity:S.t1qty,rim:S.rim,threadDepth:S.thread,location:S.presetSpot||null};
   const res=await fetch('/api/intake',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data=await res.json();
