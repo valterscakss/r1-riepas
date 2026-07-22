@@ -63,6 +63,10 @@ export interface Store {
   createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' }): Promise<void>;
   setPasswordByUsername(username: string, passwordHash: string): Promise<boolean>;
   countUsers(): Promise<number>;
+  /** List users WITHOUT password hashes — for admin user management. */
+  listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff'; createdAt: string | null }>>;
+  /** Delete a user by username. Returns true if a row was removed. */
+  deleteUserByUsername(username: string): Promise<boolean>;
 }
 
 /** Case-insensitive match of a query against the fields staff search by. */

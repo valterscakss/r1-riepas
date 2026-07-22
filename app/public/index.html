@@ -53,7 +53,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 .r1-btn-ghost{background:var(--surface);color:var(--ink-2);border:1px solid var(--border-2);}
 .r1-btn-danger{background:var(--danger);color:#fff;}
 .r1-toast{border-radius:12px!important;font-family:'IBM Plex Sans',sans-serif!important;}
-.swal2-container{z-index:120!important;}
+.swal2-container{z-index:2000!important;}
 </style>
 </head>
 <body>
@@ -62,13 +62,14 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 18</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 19</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
     <button class="navbtn" data-nav="intake"><span>↓&nbsp; Pieņemšana</span></button>
     <button class="navbtn" data-nav="spots"><span>⊞&nbsp; Novietnes</span></button>
     <button class="navbtn" data-nav="customers"><span>◉&nbsp; Klienti</span></button>
+    <button class="navbtn" data-nav="users" id="nav-users" style="display:none;"><span>◔&nbsp; Lietotāji</span></button>
   </nav>
   <div style="padding:16px 18px;border-top:1px solid var(--border);">
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
@@ -82,12 +83,10 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <!-- MAIN -->
 <main style="flex:1;min-width:0;display:flex;flex-direction:column;">
   <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px var(--pad);background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:40;">
-    <div style="display:flex;gap:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px;">
-      <button class="chip" data-role="staff">Personāls</button>
-      <button class="chip" data-role="manager">Vadītājs</button>
-      <button class="chip" data-role="owner">Īpašnieks</button>
-    </div>
+    <div id="hdr-greet" style="font-size:13px;color:var(--ink-3);font-weight:500;"></div>
     <div style="display:flex;align-items:center;gap:10px;">
+      <button id="btn-changepass" class="chip" style="background:var(--surface-2);border:1px solid var(--border);color:var(--ink-2);">Mainīt paroli</button>
+      <button id="btn-logout" class="chip" style="background:var(--surface-2);border:1px solid var(--border);color:var(--ink-2);">Iziet</button>
       <div style="text-align:right;"><div id="hdr-name" style="font-weight:600;font-size:13px;"></div><div id="hdr-role" style="font-size:11px;color:var(--ink-3);"></div></div>
       <div id="hdr-init" style="width:34px;height:34px;border-radius:50%;background:var(--accent-soft);color:var(--accent-2);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;"></div>
     </div>
@@ -96,6 +95,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 </main>
 
 <div id="modal"></div>
+<div id="gate"></div>
 
 <script src="/vendor/sweetalert2.min.js"></script>
 <script>
@@ -115,7 +115,31 @@ const $=s=>document.querySelector(s);
 const esc=s=>(s==null?'':String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])));
 const eur=n=>'€'+Number(n).toFixed(2).replace('.',',');
 
-const S={screen:'home',role:'staff',stats:null,activity:[],customers:[],selCustomer:0,custQ:'',
+// ---- Auth token + fetch wrapper: attach Bearer to /api calls, catch expiry ----
+const TOKEN_KEY='r1_token';
+function getToken(){try{return localStorage.getItem(TOKEN_KEY)||'';}catch{return'';}}
+function setToken(t){try{if(t)localStorage.setItem(TOKEN_KEY,t);else localStorage.removeItem(TOKEN_KEY);}catch{}}
+let _reauth=false;
+function handle401(){if(_reauth)return;_reauth=true;setToken('');S.auth=null;showLogin();}
+const _origFetch=window.fetch.bind(window);
+window.fetch=function(input,init){
+  init=init?Object.assign({},init):{};
+  const url=typeof input==='string'?input:(input&&input.url)||'';
+  const isApi=/^(?:https?:\/\/[^/]+)?\/api(?:\/|\?|$)/.test(url);
+  if(isApi){
+    const h=new Headers(init.headers||(typeof input==='object'&&input&&input.headers)||{});
+    const t=getToken();
+    if(t&&!h.has('Authorization'))h.set('Authorization','Bearer '+t);
+    init.headers=h;
+    if(!init.credentials)init.credentials='same-origin';
+  }
+  return _origFetch(input,init).then(function(r){
+    if(r.status===401&&isApi&&!/\/api\/(login|me)\b/.test(url))handle401();
+    return r;
+  });
+};
+
+const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:null,activity:[],customers:[],selCustomer:0,custQ:'',
   plate:'',looked:false,isNew:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',t2size:'',t2brand:'',rim:'none',thread:'',history:0,
   smsOpen:false,smsRec:null,selSpot:null,presetSpot:null};
 
@@ -150,13 +174,18 @@ function paintSidebar(){const st=S.stats;if(!st)return;
   const bar=$('#side-capbar');bar.style.width=st.capPct+'%';bar.style.background=color;
   $('#side-occ').textContent=st.occ+' aizņemtas';$('#side-free').textContent=st.free+' brīvas';}
 
-function paintHeader(){const r=ROLES[S.role];
-  document.querySelectorAll('[data-role]').forEach(b=>b.classList.toggle('on',b.dataset.role===S.role));
-  $('#hdr-name').textContent=r.name;$('#hdr-role').textContent=r.label;$('#hdr-init').textContent=initialsOf(r.name);}
+function paintHeader(){
+  const name=S.auth?(S.auth.name||S.auth.username||'—'):'—';
+  const role=S.auth?(S.auth.role==='admin'?'Administrators':'Personāls'):'';
+  const set=(id,v)=>{const el=$(id);if(el)el.textContent=v;};
+  set('#hdr-name',name);set('#hdr-role',role);set('#hdr-init',initialsOf(name));
+  set('#hdr-greet',S.auth?('Sveiks, '+String(name).split(' ')[0]+'!'):'');
+  const nu=$('#nav-users');if(nu)nu.style.display=(S.auth&&S.auth.role==='admin')?'':'none';}
 
-function nav(screen){S.screen=screen;S.selSpot=null;render();}
+function nav(screen){S.screen=screen;S.selSpot=null;
+  if(screen==='users'){render();if(!S.usersLoaded)loadUsers().then(()=>{if(S.screen==='users')render();});return;}
+  render();}
 document.querySelectorAll('[data-nav]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.nav==='intake')resetIntake();nav(b.dataset.nav);}));
-document.querySelectorAll('[data-role]').forEach(b=>b.addEventListener('click',()=>{S.role=b.dataset.role;paintHeader();if(S.screen==='home')render();}));
 
 function resetIntake(){Object.assign(S,{plate:'',looked:false,isNew:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',t2size:'',t2brand:'',rim:'none',thread:'',history:0,smsOpen:false,smsRec:null,presetSpot:null});}
 
@@ -169,6 +198,7 @@ function render(){
   else if(S.screen==='intake')v.innerHTML=intakeHTML();
   else if(S.screen==='spots')v.innerHTML=spotsHTML();
   else if(S.screen==='customers')v.innerHTML=customersHTML();
+  else if(S.screen==='users')v.innerHTML=usersHTML();
   bind(v);renderModal();
   if(S.screen==='intake')updateSummary();
 }
@@ -448,8 +478,11 @@ function bind(root){
     else if(a==='lookup')await doLookup();
     else if(a==='reset'){resetIntake();render();}
     else if(a==='confirm')await confirmIntake();
+    else if(a==='new-user')await newUserDialog();
     else if(a==='sms-done'){S.smsOpen=false;S.smsRec=null;resetIntake();await Promise.all([loadStats(),loadActivity()]);nav('home');}
   }));
+  root.querySelectorAll('[data-reset-user]').forEach(el=>el.addEventListener('click',()=>resetUserDialog(el.dataset.resetUser,el.dataset.name)));
+  root.querySelectorAll('[data-del-user]').forEach(el=>el.addEventListener('click',()=>deleteUserDialog(el.dataset.delUser,el.dataset.name)));
   root.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',e=>{
     if(e.target!==el&&e.target.closest('[data-stop]'))return;
     if(el.dataset.close==='sms'){S.smsOpen=false;S.smsRec=null;}else S.selSpot=null;renderModal();render();
@@ -558,11 +591,190 @@ async function confirmIntake(){grab();
   if(res.ok){S.smsRec=data;S.smsOpen=true;renderModal();await loadStats();}
   else alertErr(data.error?.message||'Neizdevās saglabāt');}
 
-// ============ INIT ============
-(async function(){
+// ============ USERS / AUTH ============
+async function loadUsers(){try{S.users=(await(await fetch('/api/users')).json()).users||[];S.usersLoaded=true;}catch{S.users=[];}}
+
+function usersHTML(){
+  const rows=(S.users||[]).map(u=>`<div style="display:grid;grid-template-columns:1fr 150px auto auto;gap:12px;align-items:center;padding:13px var(--card);border-bottom:1px solid var(--border);">
+    <div style="display:flex;align-items:center;gap:11px;min-width:0;">
+      <span style="width:34px;height:34px;flex:none;border-radius:9px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;color:var(--ink-2);">${esc(initialsOf(u.name))}</span>
+      <span style="min-width:0;"><span style="display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(u.name)}</span><span class="mono" style="display:block;font-size:11px;color:var(--ink-3);">@${esc(u.username)}</span></span>
+    </div>
+    <span><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;${u.role==='admin'?'background:var(--accent-soft);color:var(--accent-2);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${u.role==='admin'?'Administrators':'Personāls'}</span></span>
+    <button data-reset-user="${esc(u.username)}" data-name="${esc(u.name)}" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Atiestatīt paroli</button>
+    <button data-del-user="${esc(u.username)}" data-name="${esc(u.name)}" title="Dzēst lietotāju" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:13px;padding:7px 11px;cursor:pointer;color:var(--danger);">✕</button>
+  </div>`).join('');
+  return `<div class="page" style="padding:var(--pad);max-width:900px;margin:0 auto;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
+      <div><h1 style="margin:0;font-size:24px;font-weight:600;">Lietotāji</h1>
+      <div style="color:var(--ink-3);font-size:13px;margin-top:4px;"><span>${(S.users||[]).length}</span> ${(S.users||[]).length===1?'lietotājs':'lietotāji'} · pieejas un paroles</div></div>
+      <button data-act="new-user" style="height:44px;padding:0 18px;background:var(--accent);color:#fff;border:0;border-radius:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">＋ Jauns lietotājs</button>
+    </div>
+    <div class="card" style="overflow:hidden;">
+      <div style="display:grid;grid-template-columns:1fr 150px auto auto;gap:12px;padding:11px var(--card);font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);border-bottom:1px solid var(--border);">
+        <span>Lietotājs</span><span>Loma</span><span></span><span></span></div>
+      ${rows||'<div style="padding:20px;color:var(--ink-3);font-size:13px;">Nav lietotāju</div>'}
+    </div>
+    <div style="color:var(--ink-3);font-size:12px;margin-top:14px;line-height:1.6;">Paroles tiek glabātas šifrētā veidā (bcrypt). Ģenerētā parole tiek parādīta tikai vienu reizi — nokopē to un nodod lietotājam.</div>
+  </div>`;}
+
+// Strong random password from an unambiguous alphabet (no 0/O, 1/l/I).
+function genPassword(len){len=len||12;
+  const U='ABCDEFGHJKLMNPQRSTUVWXYZ',L='abcdefghijkmnopqrstuvwxyz',D='23456789',SY='!@#$%*?-_';
+  const all=U+L+D+SY;
+  const rnd=n=>{const a=new Uint32Array(1);crypto.getRandomValues(a);return a[0]%n;};
+  const out=[U[rnd(U.length)],L[rnd(L.length)],D[rnd(D.length)],SY[rnd(SY.length)]];
+  while(out.length<len)out.push(all[rnd(all.length)]);
+  for(let i=out.length-1;i>0;i--){const j=rnd(i+1);const t=out[i];out[i]=out[j];out[j]=t;}
+  return out.join('');}
+async function copyText(t){try{await navigator.clipboard.writeText(t);return true;}catch{return false;}}
+function slugUser(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'').slice(0,20);}
+const passRow=(id)=>`<div style="display:flex;gap:8px;align-items:stretch;"><input id="${id}" class="swal2-input mono" style="margin:0;flex:1;letter-spacing:.03em;"><button type="button" id="${id}-gen" class="r1-btn r1-btn-ghost" style="height:auto;padding:0 12px;white-space:nowrap;font-size:14px;">🎲 Ģenerēt</button></div>`;
+function wireGen(inputId){const g=document.getElementById(inputId+'-gen');if(g)g.addEventListener('click',()=>{document.getElementById(inputId).value=genPassword(12);});}
+
+async function showCredentials(title,username,password){
+  if(!R1){alert(title+'\\n'+username+' / '+password);return;}
+  const r=await R1.fire({icon:'success',title,
+    html:`<div style="text-align:left;">
+      <div style="color:var(--ink-3);font-size:13px;margin-bottom:12px;">Nokopē un nodod lietotājam. Parole vairs netiks rādīta.</div>
+      <div style="display:flex;justify-content:space-between;gap:10px;padding:11px 13px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;margin-bottom:8px;"><span style="color:var(--ink-3);font-size:13px;">Lietotājs</span><span class="mono" style="font-weight:600;">${esc(username)}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:10px;padding:11px 13px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;"><span style="color:var(--ink-3);font-size:13px;">Parole</span><span class="mono" style="font-weight:600;">${esc(password)}</span></div></div>`,
+    showCancelButton:true,confirmButtonText:'📋 Kopēt',cancelButtonText:'Aizvērt',
+    preConfirm:async()=>{await copyText(username+' / '+password);return true;}});
+  if(r.isConfirmed)toast('Pieejas dati nokopēti');}
+
+async function newUserDialog(){
+  if(!R1)return;
+  const {value:form}=await R1.fire({title:'Jauns lietotājs',width:470,
+    html:`<div style="text-align:left;display:flex;flex-direction:column;gap:12px;">
+      <div><label class="label" style="display:block;margin-bottom:5px;">Vārds</label><input id="nu-name" class="swal2-input" placeholder="Jānis Bērziņš" style="margin:0;width:100%;"></div>
+      <div><label class="label" style="display:block;margin-bottom:5px;">Lietotājvārds</label><input id="nu-user" class="swal2-input mono" placeholder="janis" autocapitalize="none" autocorrect="off" style="margin:0;width:100%;"></div>
+      <div><label class="label" style="display:block;margin-bottom:5px;">Loma</label><select id="nu-role" class="swal2-input" style="margin:0;width:100%;"><option value="staff">Personāls</option><option value="admin">Administrators</option></select></div>
+      <div><label class="label" style="display:block;margin-bottom:5px;">Parole</label>${passRow('nu-pass')}</div>
+    </div>`,
+    showCancelButton:true,confirmButtonText:'Izveidot',cancelButtonText:'Atcelt',
+    didOpen:()=>{wireGen('nu-pass');document.getElementById('nu-pass').value=genPassword(12);
+      const nm=document.getElementById('nu-name'),us=document.getElementById('nu-user');
+      nm.addEventListener('input',()=>{if(!us.dataset.touched)us.value=slugUser(nm.value);});
+      us.addEventListener('input',()=>{us.dataset.touched='1';});},
+    preConfirm:()=>{const name=document.getElementById('nu-name').value.trim();
+      const username=document.getElementById('nu-user').value.trim().toLowerCase();
+      const role=document.getElementById('nu-role').value;const password=document.getElementById('nu-pass').value;
+      if(!name){Swal.showValidationMessage('Ievadi vārdu');return false;}
+      if(!/^[a-z0-9._-]{3,32}$/.test(username)){Swal.showValidationMessage('Lietotājvārds: 3–32 rakstzīmes (a–z, 0–9, . _ -)');return false;}
+      if(password.length<8){Swal.showValidationMessage('Parolei jābūt vismaz 8 rakstzīmes');return false;}
+      return {name,username,role,password};}});
+  if(!form)return;
+  const res=await fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){alertErr(data.error?.message||'Neizdevās izveidot lietotāju');return;}
+  await loadUsers();render();
+  await showCredentials('Lietotājs izveidots',form.username,form.password);}
+
+async function resetUserDialog(username,name){
+  if(!R1)return;
+  const {value:form}=await R1.fire({title:'Atiestatīt paroli',width:460,
+    html:`<div style="text-align:left;">
+      <div style="color:var(--ink-3);font-size:13px;margin-bottom:12px;">Lietotājs <b class="mono">@${esc(username)}</b>${name?' · '+esc(name):''}</div>
+      <label class="label" style="display:block;margin-bottom:5px;">Jaunā parole</label>${passRow('ru-pass')}</div>`,
+    showCancelButton:true,confirmButtonText:'Atiestatīt',cancelButtonText:'Atcelt',
+    didOpen:()=>{wireGen('ru-pass');document.getElementById('ru-pass').value=genPassword(12);},
+    preConfirm:()=>{const p=document.getElementById('ru-pass').value;if(p.length<8){Swal.showValidationMessage('Parolei jābūt vismaz 8 rakstzīmes');return false;}return {password:p};}});
+  if(!form)return;
+  const res=await fetch('/api/users/'+encodeURIComponent(username)+'/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:form.password})});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){alertErr(data.error?.message||'Neizdevās atiestatīt paroli');return;}
+  await showCredentials('Parole atiestatīta',username,form.password);}
+
+async function deleteUserDialog(username,name){
+  const r=await ask({icon:'warning',title:'Dzēst lietotāju?',html:`<b class="mono">@${esc(username)}</b>${name?' · '+esc(name):''} vairs nevarēs pieteikties.`,confirmButtonText:'Dzēst',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});
+  if(!r.isConfirmed)return;
+  const res=await fetch('/api/users/'+encodeURIComponent(username),{method:'DELETE'});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){alertErr(data.error?.message||'Neizdevās dzēst');return;}
+  await loadUsers();render();toast('Lietotājs dzēsts');}
+
+async function changePasswordDialog(){
+  if(!R1)return;
+  const {value:form}=await R1.fire({title:'Mainīt savu paroli',width:460,
+    html:`<div style="text-align:left;display:flex;flex-direction:column;gap:12px;">
+      <div><label class="label" style="display:block;margin-bottom:5px;">Pašreizējā parole</label><input id="cp-old" type="password" class="swal2-input" style="margin:0;width:100%;"></div>
+      <div><label class="label" style="display:block;margin-bottom:5px;">Jaunā parole</label>${passRow('cp-new')}</div>
+    </div>`,
+    showCancelButton:true,confirmButtonText:'Saglabāt',cancelButtonText:'Atcelt',
+    didOpen:()=>{wireGen('cp-new');},
+    preConfirm:()=>{const oldp=document.getElementById('cp-old').value;const newp=document.getElementById('cp-new').value;
+      if(!oldp||!newp){Swal.showValidationMessage('Aizpildi abus laukus');return false;}
+      if(newp.length<8){Swal.showValidationMessage('Jaunajai parolei jābūt vismaz 8 rakstzīmes');return false;}
+      return {oldp,newp};}});
+  if(!form)return;
+  const res=await fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({currentPassword:form.oldp,newPassword:form.newp})});
+  const data=await res.json().catch(()=>({}));
+  if(res.ok)toast('Parole nomainīta');else alertErr(data.error?.message||'Neizdevās nomainīt paroli');}
+
+async function doLogout(){
+  const r=await ask({icon:'question',title:'Iziet?',text:'Tiksi izrakstīts no sistēmas.',confirmButtonText:'Iziet',cancelButtonText:'Palikt'});
+  if(!r.isConfirmed)return;
+  try{await fetch('/api/logout',{method:'POST'});}catch{}
+  setToken('');S.auth=null;S.users=[];S.usersLoaded=false;S.screen='home';
+  showLogin();}
+
+function loginHTML(){
+  return `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg);">
+    <div style="width:100%;max-width:380px;">
+      <div style="display:flex;flex-direction:column;align-items:center;margin-bottom:26px;">
+        <div style="width:56px;height:56px;border-radius:15px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:22px;margin-bottom:14px;">R1</div>
+        <h1 style="margin:0;font-size:22px;font-weight:600;">R1 Tires</h1>
+        <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Piesakies, lai turpinātu</div>
+      </div>
+      <div class="card" style="padding:24px;">
+        <div class="field" style="margin-bottom:14px;"><label>Lietotājvārds</label><input id="lg-user" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="lietotajvards" style="height:46px;"></div>
+        <div class="field" style="margin-bottom:18px;"><label>Parole</label><input id="lg-pass" type="password" autocomplete="current-password" placeholder="••••••••" style="height:46px;"></div>
+        <button id="lg-submit" style="width:100%;height:46px;background:var(--accent);color:#fff;border:0;border-radius:11px;font-weight:600;font-size:15px;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">Pieteikties</button>
+        <div id="lg-err" style="color:var(--danger);font-size:13px;text-align:center;margin-top:12px;min-height:16px;"></div>
+        <button id="lg-forgot" style="width:100%;background:transparent;border:0;color:var(--ink-3);font-size:13px;cursor:pointer;margin-top:2px;">Aizmirsi paroli?</button>
+      </div>
+    </div></div>`;}
+
+function showLogin(){
+  document.body.style.overflow='hidden';
+  const g=$('#gate');
+  g.style.cssText='position:fixed;inset:0;z-index:200;background:var(--bg);overflow:auto;';
+  g.innerHTML=loginHTML();
+  const user=$('#lg-user'),pass=$('#lg-pass'),err=$('#lg-err');
+  const submit=async()=>{err.textContent='';
+    const u=(user.value||'').trim(),p=pass.value||'';
+    if(!u||!p){err.textContent='Ievadi lietotājvārdu un paroli';return;}
+    try{const res=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+      const data=await res.json().catch(()=>({}));
+      if(!res.ok){err.textContent=data.error?.message||'Neizdevās pieteikties';return;}
+      setToken(data.token||'');S.auth=data.user;_reauth=false;
+      hideLogin();await startApp();
+    }catch(e){err.textContent='Savienojuma kļūda';}};
+  $('#lg-submit').addEventListener('click',submit);
+  pass.addEventListener('keydown',e=>{if(e.key==='Enter')submit();});
+  user.addEventListener('keydown',e=>{if(e.key==='Enter')pass.focus();});
+  $('#lg-forgot').addEventListener('click',()=>ask({icon:'info',title:'Aizmirsi paroli?',html:'Sazinies ar administratoru, lai atiestatītu paroli.<br><span style="color:var(--ink-3);font-size:13px;">Administrators to izdara sadaļā <b>Lietotāji → Atiestatīt paroli</b>.</span>',showCancelButton:false,confirmButtonText:'Sapratu'}));
+  setTimeout(()=>{try{user.focus();}catch{}},60);}
+function hideLogin(){const g=$('#gate');if(g){g.innerHTML='';g.style.cssText='';}document.body.style.overflow='';}
+
+async function startApp(){
+  S.role=(S.auth&&S.auth.role==='admin')?'owner':'staff';
   paintHeader();render();
   await Promise.all([loadStats(),loadActivity(),loadCustomers()]);
-  render();
+  render();}
+
+// ============ INIT ============
+function bindTopbar(){
+  const lo=$('#btn-logout');if(lo)lo.addEventListener('click',doLogout);
+  const cp=$('#btn-changepass');if(cp)cp.addEventListener('click',changePasswordDialog);}
+(async function(){
+  bindTopbar();
+  try{
+    const res=await fetch('/api/me');
+    if(res.ok){const d=await res.json();S.auth=d.user;hideLogin();await startApp();}
+    else showLogin();
+  }catch{showLogin();}
 })();
 </script>
 </body>

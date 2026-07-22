@@ -7,7 +7,7 @@ import type { IntakeInput } from './types.js';
 import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
 import {
-  COOKIE, signToken, verifyPassword, currentUser, requireAuth, requireAdmin, toSession,
+  COOKIE, signToken, verifyPassword, hashPassword, currentUser, requireAuth, requireAdmin, toSession,
   AUTH_DISABLED, DEMO_USER,
 } from './auth.js';
 
@@ -309,6 +309,67 @@ export function createApp(): express.Express {
     const store = await getStore();
     const { imported } = await store.replaceAll(parsed.records);
     res.json({ ok: true, imported, ...parsed.summary });
+  }));
+
+  // --- User management (admin only) — the in-app "login & password generator". ---
+  const USERNAME_RE = /^[a-z0-9._-]{3,32}$/;
+  const MIN_PW = 8;
+
+  app.get('/api/users', requireAdmin, asyncH(async (_req, res) => {
+    const store = await getStore();
+    res.json({ users: await store.listUsers() });
+  }));
+
+  app.post('/api/users', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const { username, name, role, password } = req.body ?? {};
+    const u = String(username ?? '').trim().toLowerCase();
+    const nm = String(name ?? '').trim();
+    const rl: 'admin' | 'staff' = role === 'admin' ? 'admin' : 'staff';
+    if (!USERNAME_RE.test(u)) return res.status(400).json({ error: { message: 'Lietotājvārds: 3–32 rakstzīmes (a–z, 0–9, . _ -)' } });
+    if (!nm) return res.status(400).json({ error: { message: 'Vārds ir obligāts' } });
+    if (String(password ?? '').length < MIN_PW) return res.status(400).json({ error: { message: `Parolei jābūt vismaz ${MIN_PW} rakstzīmes` } });
+    if (await store.getUserByUsername(u)) return res.status(409).json({ error: { message: 'Lietotājs ar šādu vārdu jau eksistē' } });
+    await store.createUser({ username: u, name: nm, passwordHash: await hashPassword(String(password)), role: rl });
+    res.json({ ok: true, user: { username: u, name: nm, role: rl } });
+  }));
+
+  app.post('/api/users/:username/reset', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const u = String(req.params.username ?? '').trim().toLowerCase();
+    const { password } = req.body ?? {};
+    if (String(password ?? '').length < MIN_PW) return res.status(400).json({ error: { message: `Parolei jābūt vismaz ${MIN_PW} rakstzīmes` } });
+    if (!(await store.getUserByUsername(u))) return res.status(404).json({ error: { message: 'Lietotājs nav atrasts' } });
+    await store.setPasswordByUsername(u, await hashPassword(String(password)));
+    res.json({ ok: true });
+  }));
+
+  app.delete('/api/users/:username', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const u = String(req.params.username ?? '').trim().toLowerCase();
+    const target = await store.getUserByUsername(u);
+    if (!target) return res.status(404).json({ error: { message: 'Lietotājs nav atrasts' } });
+    const me = (req as express.Request & { user?: { username: string } }).user;
+    if (me && me.username === u) return res.status(400).json({ error: { message: 'Nevar dzēst savu kontu' } });
+    if (target.role === 'admin') {
+      const admins = (await store.listUsers()).filter((x) => x.role === 'admin').length;
+      if (admins <= 1) return res.status(400).json({ error: { message: 'Nevar dzēst pēdējo administratoru' } });
+    }
+    await store.deleteUserByUsername(u);
+    res.json({ ok: true });
+  }));
+
+  app.post('/api/change-password', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const me = (req as express.Request & { user?: { username: string } }).user;
+    const { currentPassword, newPassword } = req.body ?? {};
+    if (String(newPassword ?? '').length < MIN_PW) return res.status(400).json({ error: { message: `Jaunajai parolei jābūt vismaz ${MIN_PW} rakstzīmes` } });
+    const user = me ? await store.getUserByUsername(String(me.username).toLowerCase()) : null;
+    if (!user || !(await verifyPassword(String(currentPassword ?? ''), user.passwordHash))) {
+      return res.status(401).json({ error: { message: 'Nepareiza pašreizējā parole' } });
+    }
+    await store.setPasswordByUsername(user.username, await hashPassword(String(newPassword)));
+    res.json({ ok: true });
   }));
 
   // Static UI (also served on Vercel via the catch-all rewrite).

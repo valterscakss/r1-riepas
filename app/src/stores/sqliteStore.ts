@@ -203,4 +203,18 @@ export class SqliteStore implements Store {
   async countUsers(): Promise<number> {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
   }
+
+  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff'; createdAt: string | null }>> {
+    const rows = this.db.prepare('SELECT id, username, name, role, created_at FROM users ORDER BY created_at ASC, id ASC')
+      .all() as Array<{ id: number; username: string; name: string; role: string; created_at: string | null }>;
+    return rows.map((r) => ({
+      id: String(r.id), username: r.username, name: r.name,
+      role: (r.role === 'admin' ? 'admin' : 'staff') as 'admin' | 'staff', createdAt: r.created_at ?? null,
+    }));
+  }
+
+  async deleteUserByUsername(username: string): Promise<boolean> {
+    const info = this.db.prepare('DELETE FROM users WHERE username = ?').run(username.toLowerCase());
+    return info.changes > 0;
+  }
 }

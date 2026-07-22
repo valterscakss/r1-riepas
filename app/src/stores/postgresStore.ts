@@ -198,4 +198,20 @@ export class PostgresStore implements Store {
     const res = await this.pool.query<{ n: string }>('SELECT COUNT(*) AS n FROM users');
     return Number(res.rows[0].n);
   }
+
+  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff'; createdAt: string | null }>> {
+    await this.init();
+    const res = await this.pool.query<{ id: number; username: string; name: string; role: string; created_at: string | null }>(
+      'SELECT id, username, name, role, created_at FROM users ORDER BY created_at ASC, id ASC');
+    return res.rows.map((r) => ({
+      id: String(r.id), username: r.username, name: r.name,
+      role: r.role === 'admin' ? 'admin' : 'staff', createdAt: r.created_at ? String(r.created_at) : null,
+    }));
+  }
+
+  async deleteUserByUsername(username: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('DELETE FROM users WHERE username = $1', [username.toLowerCase()]);
+    return (res.rowCount ?? 0) > 0;
+  }
 }
