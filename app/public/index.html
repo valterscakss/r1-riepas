@@ -54,6 +54,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 .r1-btn-danger{background:var(--danger);color:#fff;}
 .r1-toast{border-radius:12px!important;font-family:'IBM Plex Sans',sans-serif!important;}
 .swal2-container{z-index:2000!important;}
+.tabrow:hover{background:var(--surface-2);}
 /* ===== Responsive / mobile ===== */
 #hamburger{display:none;width:40px;height:40px;flex:none;align-items:center;justify-content:center;border:1px solid var(--border-2);background:var(--surface);border-radius:9px;cursor:pointer;font-size:19px;color:var(--ink-2);}
 #nav-backdrop{display:none;}
@@ -86,7 +87,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 27</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 28</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -175,7 +176,7 @@ const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:n
   smsOpen:false,smsRec:null,selSpot:null,presetSpot:null,spotHist:[],spotHistLoading:false,spotPickOpen:false,
   relQ:'',relResults:[],relLoading:false,relSearched:false,
   table:null,tableLoaded:false,tabQ:'',tabStatus:'active',tabSort:{col:'location',dir:'asc'},
-  pending:[],pendingLoaded:false,swapFromId:null};
+  pending:[],pendingLoaded:false,swapFromId:null,recOpen:false,recData:null};
 
 const ROLES={staff:{label:'Personāls',name:'Juris Kalniņš'},manager:{label:'Vadītājs',name:'Ilze Ozola'},owner:{label:'Īpašnieks',name:'Mārtiņš Bērze'}};
 const initialsOf=n=>String(n||'—').replace(/^SIA\s*/i,'').replace(/["']/g,'').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'—';
@@ -462,10 +463,15 @@ function updateCustContent(){const c=document.getElementById('cust-content');if(
 const TAB_COLS=[
   {k:'location',t:'Vieta',mono:1},{k:'plate',t:'Auto nr.',mono:1},{k:'makeModel',t:'Nosaukums'},
   {k:'customerName',t:'Vārds'},{k:'phone',t:'Telefons',mono:1},{k:'size1',t:'Izmērs',mono:1},
-  {k:'brand',t:'Ražotājs'},{k:'quantity',t:'Skaits'},{k:'diski',t:'Diski',mono:1},
+  {k:'size2',t:'2. izmērs',mono:1},{k:'brand',t:'Ražotājs'},{k:'quantity',t:'Skaits'},{k:'diski',t:'Diski',mono:1},
   {k:'notes',t:'Piezīmes'},{k:'intakeDate',t:'Saņemts',mono:1},{k:'releaseDate',t:'Izsniegts',mono:1},
   {k:'season',t:'Sezona'},{k:'status',t:'Statuss'}];
-const tabDiski=r=>r.size2||r.rimNote||'';
+// A size in the PIEZĪMES/notes column means the staggered set's 2nd size.
+function noteSize(n){const m=String(n||'').match(/\b(\d{3})\/(\d{1,2})[\/R]?(\d{2})\b/i);return m?`${m[1]}/${m[2]}/${m[3]}`:'';}
+function tabSize2(r){return r.size2||noteSize(r.notes)||'';}
+function tabNotes(r){const n=r.notes||'';return /^\s*\d{3}\/\d{1,2}[\/R]?\d{2}\s*$/i.test(n)?'':n;}
+function tabVal(r,k){return k==='diski'?(r.rimNote||''):k==='size2'?tabSize2(r):k==='notes'?tabNotes(r):r[k];}
+const STAT_BADGE={active:['Glabājas','var(--ok-soft)','var(--ok)'],prepared:['Rezervēts','var(--warn-soft)','var(--warn)'],blocked:['Bloķēts','var(--danger-soft)','var(--danger)'],released:['Izsniegts','var(--surface-2)','var(--ink-3)']};
 async function loadTable(){try{const d=await(await fetch('/api/storage')).json();S.table=d.records||[];}catch{S.table=[];}S.tableLoaded=true;}
 function tableHTML(){
   return `<div class="page" style="padding:var(--pad);margin:0 auto;">
@@ -486,17 +492,16 @@ function tabContentHTML(){
   let rows=(S.table||[]);
   if(S.tabStatus!=='all')rows=rows.filter(r=>r.status===S.tabStatus);
   const q=(S.tabQ||'').trim().toLowerCase();
-  if(q)rows=rows.filter(r=>[r.location,r.plate,r.makeModel,r.customerName,r.phone,r.size1,r.brand,r.quantity,tabDiski(r),r.notes,r.intakeDate,r.releaseDate,r.season].some(v=>String(v||'').toLowerCase().includes(q)));
+  if(q)rows=rows.filter(r=>[r.location,r.plate,r.makeModel,r.customerName,r.phone,r.size1,tabSize2(r),r.brand,r.quantity,r.rimNote,r.notes,r.intakeDate,r.releaseDate,r.season].some(v=>String(v||'').toLowerCase().includes(q)));
   const total=rows.length;
   const sc=S.tabSort.col,dir=S.tabSort.dir==='desc'?-1:1;
-  const val=r=>sc==='diski'?tabDiski(r):r[sc];
-  rows=rows.slice().sort((a,b)=>String(val(a)??'').localeCompare(String(val(b)??''),'lv',{numeric:true})*dir);
+  rows=rows.slice().sort((a,b)=>String(tabVal(a,sc)??'').localeCompare(String(tabVal(b,sc)??''),'lv',{numeric:true})*dir);
   const CAP=800;const shown=rows.slice(0,CAP);
   const head=TAB_COLS.map(c=>{const on=S.tabSort.col===c.k;const arrow=on?(S.tabSort.dir==='desc'?' ↓':' ↑'):'';
     return `<th data-sort="${c.k}" style="position:sticky;top:0;z-index:1;background:var(--surface-2);text-align:left;padding:9px 10px;font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:${on?'var(--accent-2)':'var(--ink-3)'};border-bottom:1px solid var(--border-2);cursor:pointer;white-space:nowrap;">${c.t}${arrow}</th>`;}).join('');
-  const body=shown.map(r=>`<tr style="border-bottom:1px solid var(--border);">${TAB_COLS.map(c=>{
-    if(c.k==='status')return `<td style="padding:8px 10px;"><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;white-space:nowrap;${r.status==='active'?'background:var(--ok-soft);color:var(--ok);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${r.status==='active'?'Glabājas':'Izsniegts'}</span></td>`;
-    const v=c.k==='diski'?tabDiski(r):r[c.k];
+  const body=shown.map(r=>`<tr class="tabrow" data-rec="${esc(r.id)}" style="border-bottom:1px solid var(--border);cursor:pointer;">${TAB_COLS.map(c=>{
+    if(c.k==='status'){const [lbl,bg,fg]=STAT_BADGE[r.status]||STAT_BADGE.released;return `<td style="padding:8px 10px;"><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;white-space:nowrap;background:${bg};color:${fg};${r.status==='released'?'border:1px solid var(--border);':''}">${lbl}</span></td>`;}
+    const v=tabVal(r,c.k);
     return `<td style="padding:8px 10px;font-size:13px;${c.mono?"font-family:'IBM Plex Mono',monospace;":''}white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;" title="${esc(v||'')}">${esc(v||'—')}</td>`;
   }).join('')}</tr>`).join('');
   return `<div style="color:var(--ink-3);font-size:12px;margin-bottom:8px;">Rādīti ${shown.length} no ${total}${total>CAP?' — precizē meklēšanu, lai redzētu vairāk':''}</div>
@@ -564,7 +569,21 @@ function tiresOf(x){const b=canonBrand(x.brand)||'—';const q=x.quantity?String
 async function loadPending(){try{S.pending=(await(await fetch('/api/pending')).json()).pending||[];}catch{S.pending=[];}S.pendingLoaded=true;paintPendingBadge();}
 function paintPendingBadge(){const b=document.getElementById('nav-pending-badge');if(!b)return;const n=(S.pending||[]).length;
   if(n>0){b.textContent=n;b.style.display='';}else b.style.display='none';}
-function startSwap(id,plate,loc){resetIntake();S.plate=plate||'';S.presetSpot=loc||null;S.swapFromId=id;S.screen='intake';S.selSpot=null;render();doLookup();}
+function startSwap(id,plate,loc){resetIntake();S.plate=plate||'';S.presetSpot=loc||null;S.swapFromId=id;S.screen='intake';S.selSpot=null;S.recOpen=false;render();doLookup();}
+async function recAction(kind){const r=S.recData;if(!r)return;
+  if(kind==='swap'){S.recOpen=false;renderModal();startSwap(r.id,r.plate,r.location);return;}
+  if(kind==='release'){const c=await ask({icon:'question',title:'Izsniegt riepas?',html:`<b class="mono">${esc(r.plate||'')}</b> · vieta ${esc(r.location||'')}`,confirmButtonText:'Izsniegt'});if(!c.isConfirmed)return;
+    await fetch('/api/storage/'+encodeURIComponent(r.id)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}
+  else if(kind==='prepare'){const c=await ask({icon:'question',title:'Sagatavot izsniegšanai?',html:`Vieta <b class="mono">${esc(r.location||'')}</b> paliks rezervēta`,confirmButtonText:'Sagatavot'});if(!c.isConfirmed)return;
+    await fetch('/api/storage/'+encodeURIComponent(r.id)+'/prepare',{method:'POST'});}
+  else if(kind==='terminate'){const c=await ask({icon:'warning',title:'Slēgt bez jaunām riepām?',html:`<b class="mono">${esc(r.plate||'')}</b> — vieta atbrīvosies.`,confirmButtonText:'Slēgt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});if(!c.isConfirmed)return;
+    await fetch('/api/storage/'+encodeURIComponent(r.id)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}
+  else if(kind==='unprep'){await fetch('/api/storage/'+encodeURIComponent(r.id)+'/unprepare',{method:'POST'});}
+  else if(kind==='unblock'){await fetch('/api/storage/'+encodeURIComponent(r.id)+'/unblock',{method:'POST'});}
+  const msgs={release:'Riepas izsniegtas',prepare:'Sagatavots · vieta rezervēta',terminate:'Pasūtījums slēgts',unprep:'Novietots atpakaļ',unblock:'Atbloķēts'};
+  S.recOpen=false;toast(msgs[kind]||'Izdarīts');
+  await Promise.all([loadTable(),loadStats(),loadPending()]);
+  renderModal();render();}
 function pendingHTML(){
   const list=S.pending||[];
   const cards=list.map(x=>`<div class="card" style="padding:var(--card);margin-bottom:12px;">
@@ -698,6 +717,42 @@ function renderModal(){const m=$('#modal');
         </div>
         <div style="padding:20px 24px;display:flex;flex-direction:column;gap:18px;">${groups||'<div style="color:var(--ink-3);font-size:14px;">Nav brīvu vietu.</div>'}</div>
       </div></div>`;
+  } else if(S.recOpen&&S.recData){const r=S.recData;
+    const [lbl,bg,fg]=STAT_BADGE[r.status]||STAT_BADGE.released;
+    const size2=tabSize2(r);
+    const fld=(label,val,mono)=>`<div><div class="label" style="margin-bottom:3px;">${label}</div><div class="${mono?'mono':''}" style="font-weight:500;font-size:14px;word-break:break-word;">${esc(val||'—')}</div></div>`;
+    const rimTxt=r.rimNote||(size2?'—':'Bez diskiem');
+    const acts=r.status==='active'?`
+        <button data-recact="release" style="height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Izsniegt riepas</button>
+        <button data-recact="prepare" style="height:42px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;">Sagatavot (maiņai)</button>`
+      :r.status==='prepared'?`
+        <button data-recact="swap" style="height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Pieņemt jaunās riepas</button>
+        <button data-recact="terminate" style="height:42px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--danger);">Slēgt (bez jaunām)</button>
+        <button data-recact="unprep" style="height:40px;background:transparent;border:0;color:var(--ink-3);font-weight:500;cursor:pointer;">Novietot atpakaļ vietā</button>`
+      :r.status==='blocked'?`
+        <button data-recact="unblock" style="height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Atbloķēt vietu</button>`
+      :`<div style="color:var(--ink-3);font-size:13px;text-align:center;padding:6px;">Izsniegts ${esc(r.releaseDate||'')} — aktīvu darbību nav.</div>`;
+    m.innerHTML=`<div data-close="rec" style="position:fixed;inset:0;background:oklch(0.2 0.02 260 / .45);z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;animation:r1fade .2s ease;">
+      <div data-stop="1" style="background:var(--surface);border-radius:18px;width:560px;max-width:100%;max-height:88vh;overflow:auto;box-shadow:0 24px 60px oklch(0.2 0.02 260 / .3);animation:r1pop .24s ease;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:20px 24px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:1;">
+          <div style="display:flex;align-items:center;gap:12px;min-width:0;">
+            <span class="mono" style="font-weight:600;font-size:20px;">${esc(r.plate||'—')}</span>
+            <span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;background:${bg};color:${fg};white-space:nowrap;">${lbl}</span>
+          </div>
+          <button data-close="rec" style="width:34px;height:34px;flex:none;border-radius:9px;border:1px solid var(--border-2);background:var(--surface);cursor:pointer;font-size:18px;color:var(--ink-2);">✕</button>
+        </div>
+        <div style="padding:22px 24px;display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+          ${fld('Vieta',r.location,1)}${fld('Sezona',r.season)}
+          ${fld('Klients',r.customerName)}${fld('Telefons',r.phone,1)}
+          ${fld('Izmērs',r.size1,1)}${fld('2. izmērs',size2,1)}
+          ${fld('Ražotājs',r.brand)}${fld('Daudzums',r.quantity)}
+          ${fld('Diski',rimTxt)}${fld('Protektors',r.threadDepth?r.threadDepth+' mm':'—',1)}
+          ${fld('SMS kods',r.smsCode,1)}${fld('Cena',r.feeEur?eur(r.feeEur):'—',1)}
+          ${fld('Saņemts',r.intakeDate,1)}${fld('Izsniegts',r.releaseDate,1)}
+          ${tabNotes(r)?`<div style="grid-column:1/3;">${fld('Piezīmes',tabNotes(r))}</div>`:''}
+        </div>
+        <div style="padding:0 24px 22px;display:flex;flex-direction:column;gap:8px;">${acts}</div>
+      </div></div>`;
   } else m.innerHTML='';
   bind(m);
 }
@@ -721,6 +776,9 @@ function bind(root){
   }));
   root.querySelectorAll('[data-pickspot]').forEach(el=>el.addEventListener('click',()=>{
     const code=el.dataset.pickspot;S.presetSpot=(code==='__auto__')?null:code;S.spotPickOpen=false;renderModal();render();}));
+  root.querySelectorAll('[data-rec]').forEach(el=>el.addEventListener('click',()=>{
+    const rec=(S.table||[]).find(x=>String(x.id)===el.dataset.rec);if(rec){S.recData=rec;S.recOpen=true;renderModal();}}));
+  root.querySelectorAll('[data-recact]').forEach(el=>el.addEventListener('click',()=>recAction(el.dataset.recact)));
   root.querySelectorAll('[data-tabstatus]').forEach(el=>el.addEventListener('click',()=>{S.tabStatus=el.dataset.tabstatus;render();}));
   root.querySelectorAll('[data-sort]').forEach(el=>el.addEventListener('click',()=>{const k=el.dataset.sort;
     if(S.tabSort.col===k)S.tabSort.dir=S.tabSort.dir==='asc'?'desc':'asc';else S.tabSort={col:k,dir:'asc'};updateTabContent();}));
@@ -762,6 +820,7 @@ function bind(root){
     const w=el.dataset.close;
     if(w==='sms'){S.smsOpen=false;S.smsRec=null;}
     else if(w==='pick'){S.spotPickOpen=false;}
+    else if(w==='rec'){S.recOpen=false;}
     else{S.selSpot=null;S.spotHist=[];S.spotHistLoading=false;}
     renderModal();render();
   }));
