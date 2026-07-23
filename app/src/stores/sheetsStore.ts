@@ -72,6 +72,7 @@ export class SheetsStore implements Store {
       intakeDate: g(10),
       releaseDate: release,
       status: release ? 'released' : 'active',
+      preparedDate: null,
       threadDepth: null, smsCode: null, feeEur: null,
     };
   }
@@ -86,7 +87,7 @@ export class SheetsStore implements Store {
     ];
   }
 
-  async list(opts?: { status?: 'active' | 'released'; q?: string }): Promise<StorageRecord[]> {
+  async list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string }): Promise<StorageRecord[]> {
     await this.init();
     const res = await this.sheets.spreadsheets.values.get({
       spreadsheetId: this.sheetId,
@@ -139,6 +140,7 @@ export class SheetsStore implements Store {
   private unsupported(): never {
     throw new Error('This operation requires the Postgres or SQLite backend, not Google Sheets.');
   }
+  async prepare(): Promise<StorageRecord | null> { return this.unsupported(); }
   async replaceAll(): Promise<{ imported: number }> { return this.unsupported(); }
   async ensureAuth(): Promise<void> { /* no-op */ }
   async getUserByUsername(): Promise<User | null> { return this.unsupported(); }

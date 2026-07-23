@@ -16,14 +16,17 @@ export interface StorageRecord {
   notes: string | null;      // PIEZĪMES
   intakeDate: string | null; // SAŅEMŠANAS DATUMS (ISO yyyy-mm-dd)
   releaseDate: string | null;// IZSNIEGŠANAS DATUMS
-  status: 'active' | 'released';
+  // 'active' = tires in the spot; 'prepared' = tires taken out but the spot stays
+  // reserved (waiting for a seasonal swap); 'released' = order closed, spot free.
+  status: 'active' | 'prepared' | 'released';
+  preparedDate: string | null; // when the set was staged for a swap
   // Phase-1 features (null for migrated history)
   threadDepth: string | null; // protektora dziļums, mm
   smsCode: string | null;     // unikālais izsniegšanas kods
   feeEur: string | null;      // aprēķinātā cena, EUR
 }
 
-export type IntakeInput = Omit<StorageRecord, 'id' | 'status' | 'releaseDate'> &
+export type IntakeInput = Omit<StorageRecord, 'id' | 'status' | 'releaseDate' | 'preparedDate'> &
   Partial<Pick<StorageRecord, 'intakeDate'>>;
 
 export interface User {
@@ -42,12 +45,14 @@ export interface ImportSummary {
 
 export interface Store {
   /** List records, optionally filtered by status and a free-text query. */
-  list(opts?: { status?: 'active' | 'released'; q?: string }): Promise<StorageRecord[]>;
+  list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string }): Promise<StorageRecord[]>;
   get(id: string): Promise<StorageRecord | null>;
   /** Create a new intake record. */
   create(input: IntakeInput): Promise<StorageRecord>;
   /** Mark a record released (retrieval). */
   release(id: string, opts: { releaseDate?: string }): Promise<StorageRecord | null>;
+  /** Stage a set for a swap: tires out, spot stays reserved ('prepared'). status back to 'active' via `active:true`. */
+  prepare(id: string, opts: { preparedDate?: string; active?: boolean }): Promise<StorageRecord | null>;
   /**
    * Replace ALL storage rows with the given records, transactionally.
    * Used by the Excel import pipeline (Excel = source of truth).

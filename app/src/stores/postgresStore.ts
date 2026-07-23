@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS storage (
 ALTER TABLE storage ADD COLUMN IF NOT EXISTS thread_depth TEXT;
 ALTER TABLE storage ADD COLUMN IF NOT EXISTS sms_code TEXT;
 ALTER TABLE storage ADD COLUMN IF NOT EXISTS fee_eur TEXT;
+ALTER TABLE storage ADD COLUMN IF NOT EXISTS prepared_date TEXT;
 CREATE INDEX IF NOT EXISTS idx_storage_plate ON storage(UPPER(plate));
 CREATE INDEX IF NOT EXISTS idx_storage_status ON storage(status);
 CREATE INDEX IF NOT EXISTS idx_storage_location ON storage(location);
@@ -51,8 +52,11 @@ interface Row {
   phone: string | null; size1: string | null; brand: string | null; quantity: string | null;
   size2: string | null; rim_note: string | null; notes: string | null;
   intake_date: string | null; release_date: string | null; status: string;
-  thread_depth?: string | null; sms_code?: string | null; fee_eur?: string | null;
+  thread_depth?: string | null; sms_code?: string | null; fee_eur?: string | null; prepared_date?: string | null;
 }
+
+const normStatus = (s: string): 'active' | 'prepared' | 'released' =>
+  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : 'active';
 
 const toRecord = (r: Row): StorageRecord => ({
   id: String(r.id), season: r.season, location: r.location, plate: r.plate,
@@ -60,7 +64,7 @@ const toRecord = (r: Row): StorageRecord => ({
   phone: r.phone, size1: r.size1, brand: r.brand, quantity: r.quantity,
   size2: r.size2, rimNote: r.rim_note, notes: r.notes,
   intakeDate: r.intake_date, releaseDate: r.release_date,
-  status: r.status === 'released' ? 'released' : 'active',
+  status: normStatus(r.status), preparedDate: r.prepared_date ?? null,
   threadDepth: r.thread_depth ?? null, smsCode: r.sms_code ?? null, feeEur: r.fee_eur ?? null,
 });
 
@@ -85,7 +89,7 @@ export class PostgresStore implements Store {
     return 'postgres (supabase)';
   }
 
-  async list(opts?: { status?: 'active' | 'released'; q?: string }): Promise<StorageRecord[]> {
+  async list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string }): Promise<StorageRecord[]> {
     await this.init();
     const where: string[] = [];
     const params: unknown[] = [];
@@ -130,6 +134,15 @@ export class PostgresStore implements Store {
       `UPDATE storage SET status = 'released', release_date = $1 WHERE id = $2 RETURNING *`,
       [date, Number(id)],
     );
+    return res.rows[0] ? toRecord(res.rows[0]) : null;
+  }
+
+  async prepare(id: string, opts: { preparedDate?: string; active?: boolean }): Promise<StorageRecord | null> {
+    await this.init();
+    const res = opts.active
+      ? await this.pool.query<Row>(`UPDATE storage SET status = 'active', prepared_date = NULL WHERE id = $1 RETURNING *`, [Number(id)])
+      : await this.pool.query<Row>(`UPDATE storage SET status = 'prepared', prepared_date = $1 WHERE id = $2 RETURNING *`,
+          [opts.preparedDate ?? new Date().toISOString().slice(0, 10), Number(id)]);
     return res.rows[0] ? toRecord(res.rows[0]) : null;
   }
 

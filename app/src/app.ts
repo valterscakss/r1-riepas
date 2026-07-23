@@ -120,7 +120,8 @@ export function createApp(): express.Express {
       const m = code.match(SPOT_RE);
       if (!m) continue;
       if (!seen.has(code)) seen.set(code, { code, c: m[1], n: Number(m[2]) });
-      if (r.status === 'active' && !occupied.has(code)) occupied.set(code, r);
+      // Both stored ('active') and staged-for-swap ('prepared') sets hold the spot.
+      if ((r.status === 'active' || r.status === 'prepared') && !occupied.has(code)) occupied.set(code, r);
     }
     const spots = [...seen.values()].sort((a, b) => a.c.localeCompare(b.c) || a.n - b.n);
     return { spots, occupied, all };
@@ -167,7 +168,7 @@ export function createApp(): express.Express {
       const r = occupied.get(s.code);
       if (r) g.occ++;
       g.spots.push(r
-        ? { code: s.code, occ: true, id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
+        ? { code: s.code, occ: true, reserved: r.status === 'prepared', id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
         : { code: s.code, occ: false });
     }
     const containers = [...byC.values()]
@@ -176,11 +177,12 @@ export function createApp(): express.Express {
       .slice(0, 8)
       .sort((a, b) => a.letter.localeCompare(b.letter));
     const occ = [...occupied.keys()].length;
+    const reserved = [...occupied.values()].filter((r) => r.status === 'prepared').length;
     const today = new Date().toISOString().slice(0, 10);
     const firstFree = spots.find((s) => !occupied.has(s.code));
     const revenue = all.filter((r) => r.status === 'active' && r.feeEur).reduce((a, r) => a + (parseFloat(r.feeEur!) || 0), 0);
     res.json({
-      occ, total: spots.length, free: spots.length - occ,
+      occ, total: spots.length, free: spots.length - occ, reserved,
       capPct: spots.length ? Math.round((occ / spots.length) * 100) : 0,
       todayIntakes: all.filter((r) => r.intakeDate === today).length,
       smsIssued: all.filter((r) => r.smsCode).length,
@@ -330,6 +332,9 @@ export function createApp(): express.Express {
       smsCode,
       feeEur: total ? String(total) : null,
     };
+    // Swap completion: close the prepared set that reserved this spot, then store
+    // the new season's tires in the same place.
+    if (b.releaseId) { try { await store.release(String(b.releaseId), {}); } catch { /* already closed */ } }
     const rec = await store.create(input);
     res.status(201).json(rec);
   }));
@@ -339,6 +344,35 @@ export function createApp(): express.Express {
     const rec = await store.release(req.params.id, { releaseDate: req.body?.releaseDate });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
     res.json(rec);
+  }));
+
+  // Stage a set for a seasonal swap: tires out, spot stays reserved ('prepared').
+  app.post('/api/storage/:id/prepare', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const rec = await store.prepare(req.params.id, {});
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    res.json(rec);
+  }));
+  // Undo a prepare — put the set back in its spot ('active').
+  app.post('/api/storage/:id/unprepare', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const rec = await store.prepare(req.params.id, { active: true });
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    res.json(rec);
+  }));
+
+  // Pending swaps: every 'prepared' set, newest first, shaped for the sidebar.
+  app.get('/api/pending', requireAuth, asyncH(async (_req, res) => {
+    const store = await getStore();
+    const recs = (await store.list({ status: 'prepared' }))
+      .sort((a, b) => (b.preparedDate ?? '').localeCompare(a.preparedDate ?? ''));
+    const items = recs.map((r) => ({
+      id: r.id, plate: r.plate, cust: r.customerName, phone: r.phone, loc: r.location,
+      size: r.size1, size2: r.size2, brand: r.brand, quantity: r.quantity, sms: r.smsCode,
+      thread: r.threadDepth ? `${r.threadDepth} mm` : '—', season: r.season,
+      preparedDate: r.preparedDate, intakeDate: r.intakeDate,
+    }));
+    res.json({ count: items.length, pending: items });
   }));
 
   // --- Excel import (admin only): parse the workbook and REPLACE the DB.

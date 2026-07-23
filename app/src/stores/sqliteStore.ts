@@ -52,8 +52,11 @@ interface Row {
   phone: string | null; size1: string | null; brand: string | null; quantity: string | null;
   size2: string | null; rimNote: string | null; notes: string | null;
   intakeDate: string | null; releaseDate: string | null; status: string;
-  threadDepth?: string | null; smsCode?: string | null; feeEur?: string | null;
+  threadDepth?: string | null; smsCode?: string | null; feeEur?: string | null; preparedDate?: string | null;
 }
+
+const normStatus = (s: string): 'active' | 'prepared' | 'released' =>
+  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : 'active';
 
 const toRecord = (r: Row): StorageRecord => ({
   id: String(r.id), season: r.season, location: r.location, plate: r.plate,
@@ -61,7 +64,7 @@ const toRecord = (r: Row): StorageRecord => ({
   phone: r.phone, size1: r.size1, brand: r.brand, quantity: r.quantity,
   size2: r.size2, rimNote: r.rimNote, notes: r.notes,
   intakeDate: r.intakeDate, releaseDate: r.releaseDate,
-  status: r.status === 'released' ? 'released' : 'active',
+  status: normStatus(r.status), preparedDate: r.preparedDate ?? null,
   threadDepth: r.threadDepth ?? null, smsCode: r.smsCode ?? null, feeEur: r.feeEur ?? null,
 });
 
@@ -74,7 +77,7 @@ export class SqliteStore implements Store {
     this.db = new Database(dbFile);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(DDL);
-    for (const col of ['threadDepth', 'smsCode', 'feeEur']) {
+    for (const col of ['threadDepth', 'smsCode', 'feeEur', 'preparedDate']) {
       try { this.db.exec(`ALTER TABLE storage ADD COLUMN ${col} TEXT`); } catch { /* exists */ }
     }
     const count = (this.db.prepare('SELECT COUNT(*) AS n FROM storage').get() as { n: number }).n;
@@ -118,7 +121,7 @@ export class SqliteStore implements Store {
     return `sqlite (${n} records${this.seededFrom ? `, seeded from ${this.seededFrom}` : ''})`;
   }
 
-  async list(opts?: { status?: 'active' | 'released'; q?: string }): Promise<StorageRecord[]> {
+  async list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string }): Promise<StorageRecord[]> {
     const where: string[] = [];
     const params: Record<string, unknown> = {};
     if (opts?.status) { where.push('status = @status'); params.status = opts.status; }
@@ -155,6 +158,15 @@ export class SqliteStore implements Store {
   async release(id: string, opts: { releaseDate?: string }): Promise<StorageRecord | null> {
     const date = opts.releaseDate ?? new Date().toISOString().slice(0, 10);
     const info = this.db.prepare(`UPDATE storage SET status = 'released', releaseDate = ? WHERE id = ?`).run(date, Number(id));
+    if (info.changes === 0) return null;
+    return this.get(id);
+  }
+
+  async prepare(id: string, opts: { preparedDate?: string; active?: boolean }): Promise<StorageRecord | null> {
+    const info = opts.active
+      ? this.db.prepare(`UPDATE storage SET status = 'active', preparedDate = NULL WHERE id = ?`).run(Number(id))
+      : this.db.prepare(`UPDATE storage SET status = 'prepared', preparedDate = ? WHERE id = ?`)
+          .run(opts.preparedDate ?? new Date().toISOString().slice(0, 10), Number(id));
     if (info.changes === 0) return null;
     return this.get(id);
   }
