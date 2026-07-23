@@ -108,6 +108,33 @@ export function createApp(): express.Express {
     });
   }));
 
+  // Live plate suggestions for the intake typeahead dropdown.
+  app.get('/api/plate-suggest', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
+    if (q.length < 2) return res.json({ suggestions: [] });
+    const all = await store.list({ q });
+    const seen = new Map<string, { plate: string; cust: string | null; active: boolean; date: string | null }>();
+    for (const r of all) {
+      const p = (r.plate ?? '').toUpperCase().replace(/\s+/g, '');
+      if (!p || !p.includes(q)) continue;
+      const e = seen.get(p);
+      if (!e) seen.set(p, { plate: r.plate!, cust: r.customerName, active: r.status === 'active' || r.status === 'prepared', date: r.intakeDate });
+      else {
+        if (r.status === 'active' || r.status === 'prepared') e.active = true;
+        if (!e.cust && r.customerName) e.cust = r.customerName;
+        if ((r.intakeDate ?? '') > (e.date ?? '')) e.date = r.intakeDate;
+      }
+    }
+    const suggestions = [...seen.values()]
+      .sort((a, b) => {
+        const ap = a.plate.toUpperCase().startsWith(q) ? 0 : 1, bp = b.plate.toUpperCase().startsWith(q) ? 0 : 1;
+        return ap - bp || (b.active ? 1 : 0) - (a.active ? 1 : 0) || (b.date ?? '').localeCompare(a.date ?? '') || a.plate.localeCompare(b.plate);
+      })
+      .slice(0, 8);
+    res.json({ suggestions });
+  }));
+
   // ---- Domain helpers (per design: pricing, spot assignment, SMS codes) ----
   const SPOT_RE = /^([A-ZĀ-Ž]{1,4})(\d{1,3})$/;
   async function spotUniverse() {

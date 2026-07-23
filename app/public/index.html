@@ -87,7 +87,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 28</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 29</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -326,7 +326,10 @@ function intakeHTML(){const p=price();
       <div class="card" style="padding:var(--card);">
         <div class="label" style="margin-bottom:6px;">1 · Numura zīme</div>
         <div style="display:flex;gap:10px;">
-          <input id="in-plate" value="${esc(S.plate)}" placeholder="AB1234" style="flex:1;min-width:0;height:52px;padding:0 16px;border:2px solid var(--border-2);border-radius:10px;background:var(--surface);font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:22px;letter-spacing:0.06em;text-transform:uppercase;">
+          <div style="position:relative;flex:1;min-width:0;">
+            <input id="in-plate" value="${esc(S.plate)}" placeholder="AB1234" autocomplete="off" style="width:100%;height:52px;padding:0 16px;border:2px solid var(--border-2);border-radius:10px;background:var(--surface);font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:22px;letter-spacing:0.06em;text-transform:uppercase;">
+            <div id="plate-suggest" style="position:absolute;left:0;right:0;top:calc(100% + 5px);z-index:30;display:none;"></div>
+          </div>
           <button data-act="lookup" style="height:52px;padding:0 22px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;font-size:15px;cursor:pointer;">⌕ Meklēt</button>
         </div>${banner}
       </div>
@@ -857,7 +860,13 @@ function bind(root){
     await offerReintake(el.dataset.plate,el.dataset.loc);}));
   root.querySelectorAll('[data-cust]').forEach(el=>el.addEventListener('click',()=>{S.selCustomer=Number(el.dataset.cust);updateCustContent();}));
   const pl=root.querySelector('#in-plate');
-  if(pl)pl.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doLookup();}});
+  if(pl){
+    pl.addEventListener('keydown',e=>{
+      if(e.key==='ArrowDown'&&_plateItems.length){e.preventDefault();_plateHi=Math.min(_plateHi+1,_plateItems.length-1);renderPlateSuggest();}
+      else if(e.key==='ArrowUp'&&_plateItems.length){e.preventDefault();_plateHi=Math.max(_plateHi-1,0);renderPlateSuggest();}
+      else if(e.key==='Enter'){e.preventDefault();if(_plateHi>=0&&_plateItems[_plateHi])pickPlate(_plateHi);else doLookup();}
+      else if(e.key==='Escape')hidePlateSuggest();});
+    pl.addEventListener('blur',()=>setTimeout(hidePlateSuggest,160));}
   const cq=root.querySelector('#cust-q');
   if(cq){let t;cq.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(async()=>{S.custQ=cq.value;S.selCustomer=0;await loadCustomers();updateCustContent();},350);});}
   const rq=root.querySelector('#rel-q');
@@ -903,6 +912,7 @@ function typeAhead(el,ev){if(ev&&ev.inputType&&ev.inputType.startsWith('delete')
 document.addEventListener('input',e=>{const id=e.target.id;
   if(id==='in-size'||id==='in-size2'){const m=maskSize(e.target.value);if(m!==e.target.value){e.target.value=m;e.target.setSelectionRange(m.length,m.length);}}
   if(id==='in-brand'||id==='in-brand2')typeAhead(e.target,e);
+  if(id==='in-plate'){const v=e.target.value;clearTimeout(_plateT);_plateT=setTimeout(()=>plateSuggest(v),140);}
   if(['in-plate','in-size','in-brand','in-thread','in-cust','in-phone','in-size2','in-brand2','in-qty'].includes(id)){grab();updateSummary();}});
 document.addEventListener('change',e=>{if(e.target.id==='in-qty'){grab();render();}});
 
@@ -916,7 +926,28 @@ async function offerReintake(plate,loc){
   else render();
 }
 
-async function doLookup(){grab();
+// ---- Live plate suggestions dropdown (intake) ----
+let _plateT,_plateItems=[],_plateHi=-1;
+function renderPlateSuggest(){
+  const box=document.getElementById('plate-suggest');if(!box)return;
+  if(!_plateItems.length){box.style.display='none';box.innerHTML='';return;}
+  box.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 12px 30px oklch(0.2 0.02 260 / .2);overflow:hidden;max-height:300px;overflow-y:auto;">`+
+    _plateItems.map((s,i)=>`<div data-psi="${i}" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;border-bottom:1px solid var(--border);${i===_plateHi?'background:var(--accent-soft);':''}">
+      <span class="mono" style="font-weight:600;font-size:15px;">${esc(s.plate)}</span>
+      <span style="font-size:12px;color:var(--ink-3);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%;">${esc(s.cust||'—')}${s.active?'':' · arhīvs'}</span>
+    </div>`).join('')+`</div>`;
+  box.style.display='';
+  box.querySelectorAll('[data-psi]').forEach(el=>el.addEventListener('mousedown',ev=>{ev.preventDefault();pickPlate(Number(el.dataset.psi));}));}
+function pickPlate(i){const s=_plateItems[i];if(!s)return;const inp=document.getElementById('in-plate');if(inp)inp.value=s.plate;S.plate=s.plate;_plateItems=[];_plateHi=-1;renderPlateSuggest();doLookup();}
+async function plateSuggest(q){
+  q=(q||'').trim();
+  if(q.replace(/\s/g,'').length<2){_plateItems=[];_plateHi=-1;renderPlateSuggest();return;}
+  try{const d=await(await fetch('/api/plate-suggest?q='+encodeURIComponent(q))).json();
+    if((document.getElementById('in-plate')||{}).value!==undefined){_plateItems=d.suggestions||[];_plateHi=-1;renderPlateSuggest();}
+  }catch{_plateItems=[];renderPlateSuggest();}}
+function hidePlateSuggest(){_plateItems=[];_plateHi=-1;renderPlateSuggest();}
+
+async function doLookup(){grab();hidePlateSuggest();
   const plate=(S.plate||'').toUpperCase().replace(/\s/g,'');
   if(!plate)return;
   S.plate=plate;
