@@ -17,8 +17,9 @@ export interface StorageRecord {
   intakeDate: string | null; // SAŅEMŠANAS DATUMS (ISO yyyy-mm-dd)
   releaseDate: string | null;// IZSNIEGŠANAS DATUMS
   // 'active' = tires in the spot; 'prepared' = tires taken out but the spot stays
-  // reserved (waiting for a seasonal swap); 'released' = order closed, spot free.
-  status: 'active' | 'prepared' | 'released';
+  // reserved (waiting for a seasonal swap); 'blocked' = spot manually held with no
+  // tires (unavailable); 'released' = order closed, spot free.
+  status: 'active' | 'prepared' | 'blocked' | 'released';
   preparedDate: string | null; // when the set was staged for a swap
   // Phase-1 features (null for migrated history)
   threadDepth: string | null; // protektora dziļums, mm
@@ -53,6 +54,10 @@ export interface Store {
   release(id: string, opts: { releaseDate?: string }): Promise<StorageRecord | null>;
   /** Stage a set for a swap: tires out, spot stays reserved ('prepared'). status back to 'active' via `active:true`. */
   prepare(id: string, opts: { preparedDate?: string; active?: boolean }): Promise<StorageRecord | null>;
+  /** Reserve an empty spot with a placeholder 'blocked' record (no tires). */
+  blockSpot(location: string): Promise<StorageRecord>;
+  /** Hard-delete a record (used to unblock a spot). */
+  deleteRecord(id: string): Promise<boolean>;
   /**
    * Replace ALL storage rows with the given records, transactionally.
    * Used by the Excel import pipeline (Excel = source of truth).

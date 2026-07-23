@@ -86,7 +86,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 26</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 27</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -287,6 +287,7 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
         <div style="display:flex;flex-direction:column;gap:8px;">
           <button data-act="new-intake" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">↓&nbsp; Pieņemt riepas</button>
           <button data-act="go-release" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">↑&nbsp; Izsniegt riepas (kods/numurs)</button>
+          <button data-act="go-release" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">◔&nbsp; Sagatavot riepas (maiņai)</button>
           <button data-act="go-customers" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">◉&nbsp; Klienti</button>
         </div>
       </div>
@@ -376,11 +377,12 @@ function intakeHTML(){const p=price();
 function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capPct:0};
   const spotBtn=s=>{const sel=S.selSpot&&S.selSpot.code===s.code;const ring=sel?'outline:2px solid var(--accent);outline-offset:1px;':'';
     const base='display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;height:var(--spot);border-radius:9px;cursor:pointer;border:1px solid;padding:0;';
-    const fill=s.occ?(s.reserved?'background:var(--warn-soft);border-color:oklch(0.82 0.08 82);color:var(--warn);':'background:var(--surface-2);border-color:var(--border-2);color:var(--ink-2);'):'background:var(--ok-soft);border-color:oklch(0.8 0.08 155);color:var(--ok);';
+    const fill=s.occ?(s.blocked?'background:var(--danger-soft);border-color:oklch(0.8 0.06 25);color:var(--danger);':s.reserved?'background:var(--warn-soft);border-color:oklch(0.82 0.08 82);color:var(--warn);':'background:var(--surface-2);border-color:var(--border-2);color:var(--ink-2);'):'background:var(--ok-soft);border-color:oklch(0.8 0.08 155);color:var(--ok);';
     const style=base+fill+ring;
-    return `<button data-spot="${esc(s.code)}" title="${esc(s.occ?(s.plate+' · '+(s.cust||'')+(s.reserved?' · rezervēts':'')):'Brīvs')}" style="${style}">
+    const title=s.occ?(s.blocked?'Bloķēts':(s.plate+' · '+(s.cust||'')+(s.reserved?' · rezervēts':''))):'Brīvs';
+    return `<button data-spot="${esc(s.code)}" title="${esc(title)}" style="${style}">
       <span class="mono" style="font-weight:600;font-size:11px;">${esc(s.code)}</span>
-      ${s.occ?`<span class="mono" style="font-size:9px;opacity:.8;">${esc(s.plate||'')}</span>`:'<span style="font-size:9px;opacity:.75;">brīvs</span>'}</button>`;};
+      ${s.occ?(s.blocked?'<span style="font-size:9px;opacity:.8;">bloķēts</span>':`<span class="mono" style="font-size:9px;opacity:.8;">${esc(s.plate||'')}</span>`):'<span style="font-size:9px;opacity:.75;">brīvs</span>'}</button>`;};
   return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
   <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--pad);flex-wrap:wrap;gap:12px;">
     <div><h1 style="margin:0;font-size:24px;font-weight:600;">Novietnes</h1>
@@ -389,6 +391,7 @@ function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capP
       <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--ok-soft);border:1px solid oklch(0.8 0.08 155);"></span>Brīvs</span>
       <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border-2);"></span>Aizņemta</span>
       <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--warn-soft);border:1px solid oklch(0.82 0.08 82);"></span>Rezervēts</span>
+      <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--danger-soft);border:1px solid oklch(0.8 0.06 25);"></span>Bloķēts</span>
     </div></div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--gap);">
     ${(st.containers||[]).map(c=>`<div class="card" style="padding:var(--card);">
@@ -652,8 +655,11 @@ function renderModal(){const m=$('#modal');
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <span class="mono" style="font-weight:600;font-size:24px;">${esc(s.code)}</span>
         <button data-close="spot" style="width:34px;height:34px;border-radius:9px;border:1px solid var(--border-2);background:var(--surface);cursor:pointer;font-size:18px;color:var(--ink-2);">✕</button></div>
-      <span style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;padding:4px 10px;border-radius:7px;${s.occ?(s.reserved?'background:var(--warn-soft);color:var(--warn);':'background:var(--surface-2);border:1px solid var(--border-2);color:var(--ink-2);'):'background:var(--ok-soft);color:var(--ok);'}">${s.occ?(s.reserved?'Rezervēts · gaida maiņu':'Aizņemta'):'Brīvs'}</span>
-      ${s.occ?`<div style="margin-top:22px;display:flex;flex-direction:column;gap:14px;">
+      <span style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;padding:4px 10px;border-radius:7px;${s.blocked?'background:var(--danger-soft);color:var(--danger);':s.occ?(s.reserved?'background:var(--warn-soft);color:var(--warn);':'background:var(--surface-2);border:1px solid var(--border-2);color:var(--ink-2);'):'background:var(--ok-soft);color:var(--ok);'}">${s.blocked?'Bloķēts':s.occ?(s.reserved?'Rezervēts · gaida maiņu':'Aizņemta'):'Brīvs'}</span>
+      ${s.blocked?`<div style="margin-top:22px;">
+        <p style="color:var(--ink-2);font-size:14px;line-height:1.6;margin:0 0 18px;">Šī vieta ir manuāli bloķēta un nav pieejama pieņemšanai.</p>
+        <button data-unblock="${esc(s.id)}" style="width:100%;height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Atbloķēt vietu</button>
+      </div>`:s.occ?`<div style="margin-top:22px;display:flex;flex-direction:column;gap:14px;">
         <div><div class="label" style="margin-bottom:4px;">Klients</div><div style="font-weight:600;font-size:16px;">${esc(s.cust||'—')}</div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
           <div><div class="label" style="margin-bottom:4px;">Numurs</div><div class="mono" style="font-weight:600;">${esc(s.plate||'—')}</div></div>
@@ -673,6 +679,7 @@ function renderModal(){const m=$('#modal');
       </div>`:`<div style="margin-top:22px;">
         <p style="color:var(--ink-2);font-size:14px;line-height:1.6;margin:0 0 18px;">Šī vieta ir brīvs un gatava jaunai pieņemšanai.</p>
         <button data-assign="${esc(s.code)}" style="width:100%;height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Piešķirt šo vietu</button>
+        <button data-block="${esc(s.code)}" title="Rezervēt vietu bez riepām" style="width:100%;height:42px;margin-top:8px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--ink-2);">Bloķēt vietu</button>
       </div>`}
     </div></div>`;
   } else if(S.spotPickOpen){
@@ -766,6 +773,16 @@ function bind(root){
     if(found&&found.occ&&found.plate)loadVehicle(found.plate);}));
   root.querySelectorAll('[data-assign]').forEach(el=>el.addEventListener('click',()=>{
     resetIntake();S.presetSpot=el.dataset.assign;S.selSpot=null;nav('intake');}));
+  root.querySelectorAll('[data-block]').forEach(el=>el.addEventListener('click',async()=>{
+    const code=el.dataset.block;
+    const r=await ask({icon:'question',title:'Bloķēt vietu?',html:`Vieta <b class="mono">${esc(code)}</b> tiks atzīmēta kā aizņemta (bez riepām) un netiks piešķirta jaunām pieņemšanām.`,confirmButtonText:'Bloķēt'});
+    if(!r.isConfirmed)return;
+    const res=await fetch('/api/spots/'+encodeURIComponent(code)+'/block',{method:'POST'});
+    if(!res.ok){alertErr((await res.json().catch(()=>({}))).error?.message||'Neizdevās bloķēt');return;}
+    S.selSpot=null;toast('Vieta '+code+' bloķēta');await loadStats();renderModal();render();}));
+  root.querySelectorAll('[data-unblock]').forEach(el=>el.addEventListener('click',async()=>{
+    await fetch('/api/storage/'+encodeURIComponent(el.dataset.unblock)+'/unblock',{method:'POST'});
+    S.selSpot=null;toast('Vieta atbloķēta');await loadStats();renderModal();render();}));
   root.querySelectorAll('[data-release-spot]').forEach(el=>el.addEventListener('click',async()=>{
     const sp=S.selSpot||{};
     const r=await ask({icon:'question',title:'Izsniegt riepas?',html:`Vieta <b class="mono">${esc(sp.code||'')}</b> · ${esc(sp.plate||'')}`,confirmButtonText:'Izsniegt'});

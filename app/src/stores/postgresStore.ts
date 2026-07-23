@@ -55,8 +55,8 @@ interface Row {
   thread_depth?: string | null; sms_code?: string | null; fee_eur?: string | null; prepared_date?: string | null;
 }
 
-const normStatus = (s: string): 'active' | 'prepared' | 'released' =>
-  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : 'active';
+const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' =>
+  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : s === 'blocked' ? 'blocked' : 'active';
 
 const toRecord = (r: Row): StorageRecord => ({
   id: String(r.id), season: r.season, location: r.location, plate: r.plate,
@@ -144,6 +144,20 @@ export class PostgresStore implements Store {
       : await this.pool.query<Row>(`UPDATE storage SET status = 'prepared', prepared_date = $1 WHERE id = $2 RETURNING *`,
           [opts.preparedDate ?? new Date().toISOString().slice(0, 10), Number(id)]);
     return res.rows[0] ? toRecord(res.rows[0]) : null;
+  }
+
+  async blockSpot(location: string): Promise<StorageRecord> {
+    await this.init();
+    const res = await this.pool.query<Row>(
+      `INSERT INTO storage (location, status, intake_date, notes) VALUES ($1,'blocked',$2,'Bloķēts') RETURNING *`,
+      [location, new Date().toISOString().slice(0, 10)]);
+    return toRecord(res.rows[0]);
+  }
+
+  async deleteRecord(id: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('DELETE FROM storage WHERE id = $1', [Number(id)]);
+    return (res.rowCount ?? 0) > 0;
   }
 
   async replaceAll(records: IntakeInput[]): Promise<{ imported: number }> {

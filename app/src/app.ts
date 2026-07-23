@@ -120,8 +120,8 @@ export function createApp(): express.Express {
       const m = code.match(SPOT_RE);
       if (!m) continue;
       if (!seen.has(code)) seen.set(code, { code, c: m[1], n: Number(m[2]) });
-      // Both stored ('active') and staged-for-swap ('prepared') sets hold the spot.
-      if ((r.status === 'active' || r.status === 'prepared') && !occupied.has(code)) occupied.set(code, r);
+      // Stored ('active'), staged-for-swap ('prepared') and manually 'blocked' spots all hold the spot.
+      if ((r.status === 'active' || r.status === 'prepared' || r.status === 'blocked') && !occupied.has(code)) occupied.set(code, r);
     }
     const spots = [...seen.values()].sort((a, b) => a.c.localeCompare(b.c) || a.n - b.n);
     return { spots, occupied, all };
@@ -168,7 +168,7 @@ export function createApp(): express.Express {
       const r = occupied.get(s.code);
       if (r) g.occ++;
       g.spots.push(r
-        ? { code: s.code, occ: true, reserved: r.status === 'prepared', id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
+        ? { code: s.code, occ: true, reserved: r.status === 'prepared', blocked: r.status === 'blocked', id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
         : { code: s.code, occ: false });
     }
     const containers = [...byC.values()]
@@ -359,6 +359,27 @@ export function createApp(): express.Express {
     const rec = await store.prepare(req.params.id, { active: true });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
     res.json(rec);
+  }));
+
+  // Manually block/reserve an empty spot (no tires) so it's unavailable.
+  app.post('/api/spots/:code/block', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const code = String(req.params.code).toUpperCase().replace(/\s+/g, '');
+    if (!SPOT_RE.test(code)) return res.status(400).json({ error: { message: 'Nederīga vietas norāde' } });
+    const { spots, occupied } = await spotUniverse();
+    if (!spots.some((s) => s.code === code)) return res.status(404).json({ error: { message: 'Nezināma vieta' } });
+    if (occupied.has(code)) return res.status(409).json({ error: { message: 'Vieta jau ir aizņemta' } });
+    const rec = await store.blockSpot(code);
+    res.status(201).json(rec);
+  }));
+  // Unblock: remove the placeholder that was holding the spot.
+  app.post('/api/storage/:id/unblock', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const rec = await store.get(req.params.id);
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    if (rec.status !== 'blocked') return res.status(400).json({ error: { message: 'Šī vieta nav bloķēta' } });
+    await store.deleteRecord(req.params.id);
+    res.json({ ok: true });
   }));
 
   // Pending swaps: every 'prepared' set, newest first, shaped for the sidebar.

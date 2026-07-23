@@ -55,8 +55,8 @@ interface Row {
   threadDepth?: string | null; smsCode?: string | null; feeEur?: string | null; preparedDate?: string | null;
 }
 
-const normStatus = (s: string): 'active' | 'prepared' | 'released' =>
-  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : 'active';
+const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' =>
+  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : s === 'blocked' ? 'blocked' : 'active';
 
 const toRecord = (r: Row): StorageRecord => ({
   id: String(r.id), season: r.season, location: r.location, plate: r.plate,
@@ -169,6 +169,16 @@ export class SqliteStore implements Store {
           .run(opts.preparedDate ?? new Date().toISOString().slice(0, 10), Number(id));
     if (info.changes === 0) return null;
     return this.get(id);
+  }
+
+  async blockSpot(location: string): Promise<StorageRecord> {
+    const info = this.db.prepare(`INSERT INTO storage (location, status, intakeDate, notes) VALUES (?, 'blocked', ?, 'Bloķēts')`)
+      .run(location, new Date().toISOString().slice(0, 10));
+    return (await this.get(String(info.lastInsertRowid)))!;
+  }
+
+  async deleteRecord(id: string): Promise<boolean> {
+    return this.db.prepare('DELETE FROM storage WHERE id = ?').run(Number(id)).changes > 0;
   }
 
   async replaceAll(records: IntakeInput[]): Promise<{ imported: number }> {
