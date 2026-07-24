@@ -87,7 +87,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 31</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 32</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -435,7 +435,7 @@ function custContentHTML(){const list=S.customers;const sel=list[S.selCustomer]|
     ${h.status==='active'?`<button data-release="${esc(h.id)}" data-plate="${esc(h.plate||'')}" data-loc="${esc(h.loc||'')}" title="Izsniegt" style="border:1px solid var(--border-2);background:var(--surface);border-radius:6px;font-size:11px;padding:3px 8px;cursor:pointer;">Izsniegt</button>`:''}</span></div>`).join('');
   return `<div class="rgridside" style="display:grid;grid-template-columns:320px 1fr;gap:var(--gap);align-items:start;">
     <div class="card cust-list" style="overflow:hidden;max-height:70vh;overflow-y:auto;">${rows||'<div style="padding:18px;color:var(--ink-3);font-size:13px;">Nav rezultātu</div>'}</div>
-    ${sel?`<div style="display:flex;flex-direction:column;gap:var(--gap);">
+    ${sel?`<div style="display:flex;flex-direction:column;gap:var(--gap);min-width:0;">
       <div class="card" style="padding:var(--card);">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
           <div style="display:flex;gap:14px;align-items:center;">
