@@ -435,7 +435,16 @@ export function createApp(): express.Express {
       return res.status(400).json({ error: { message: 'Could not read the file as an .xlsx workbook' } });
     }
     if (parsed.records.length === 0) {
-      return res.status(400).json({ error: { message: 'No recognizable seasonal sheets found in the workbook' } });
+      return res.status(400).json({ error: { message: 'Neatpazina nevienu derīgu lapu. Pārbaudi, vai fails ir tajā pašā formātā (VIETA, AUTO NR., IZMĒRS…).' } });
+    }
+    // Dry run: return what WOULD be imported (summary + a sample) without touching the DB.
+    if (req.query.dryRun === '1' || req.query.preview === '1') {
+      const sample = parsed.records.slice(0, 8).map((r) => ({
+        season: r.season, location: r.location, plate: r.plate, makeModel: r.makeModel,
+        customerName: r.customerName, size1: r.size1, size2: r.size2, brand: r.brand,
+        quantity: r.quantity, status: r.status,
+      }));
+      return res.json({ ok: true, dryRun: true, sample, ...parsed.summary });
     }
     const store = await getStore();
     const { imported } = await store.replaceAll(parsed.records);

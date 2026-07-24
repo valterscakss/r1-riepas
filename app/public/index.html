@@ -87,7 +87,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 29</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 30</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -266,7 +266,10 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
   <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--pad);flex-wrap:wrap;gap:12px;">
     <div><h1 style="margin:0;font-size:26px;font-weight:600;letter-spacing:-0.01em;">Pārskats</h1>
     <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${dateStr} · ${season}</div></div>
-    <button data-act="new-intake" style="height:44px;padding:0 20px;background:var(--accent);color:#fff;border:0;border-radius:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:9px;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">＋ Jauna pieņemšana</button>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <button data-act="go-release" style="height:44px;padding:0 18px;background:var(--surface);color:var(--ink);border:1px solid var(--border-2);border-radius:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:9px;">◔ Sagatavot riepas</button>
+      <button data-act="new-intake" style="height:44px;padding:0 20px;background:var(--accent);color:#fff;border:0;border-radius:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:9px;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">＋ Jauna pieņemšana</button>
+    </div>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--gap);margin-bottom:var(--gap);">
     <div class="card" style="padding:var(--card);"><div class="label">Aizņemtas vietas</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;">${st.occ}<span style="font-size:16px;color:var(--ink-3);">/${st.total}</span></div></div>
@@ -476,6 +479,42 @@ function tabNotes(r){const n=r.notes||'';return /^\s*\d{3}\/\d{1,2}[\/R]?\d{2}\s
 function tabVal(r,k){return k==='diski'?(r.rimNote||''):k==='size2'?tabSize2(r):k==='notes'?tabNotes(r):r[k];}
 const STAT_BADGE={active:['Glabājas','var(--ok-soft)','var(--ok)'],prepared:['Rezervēts','var(--warn-soft)','var(--warn)'],blocked:['Bloķēts','var(--danger-soft)','var(--danger)'],released:['Izsniegts','var(--surface-2)','var(--ink-3)']};
 async function loadTable(){try{const d=await(await fetch('/api/storage')).json();S.table=d.records||[];}catch{S.table=[];}S.tableLoaded=true;}
+// Admin Excel import: dry-run preview (does NOT touch DB) → confirm → real import that REPLACES all data.
+function impErr(o,res){return (o&&o.error&&(o.error.message||o.error))||('HTTP '+(res?res.status:'?'));}
+async function doImport(file){
+  const mkFd=()=>{const fd=new FormData();fd.append('file',file);return fd;};
+  let prev,res;
+  try{
+    R1&&R1.fire({title:'Analizē failu…',html:esc(file.name),allowOutsideClick:false,didOpen:()=>R1.showLoading()});
+    res=await fetch('/api/import?dryRun=1',{method:'POST',body:mkFd()});
+    prev=await res.json().catch(()=>({}));
+    if(!res.ok||!prev.ok)throw new Error(impErr(prev,res));
+  }catch(e){R1&&R1.close();alertErr('Neizdevās nolasīt failu: '+(e.message||e));return;}
+  const sample=prev.sample||[];
+  const cols=[['location','Vieta'],['plate','Nr.'],['makeModel','Auto'],['customerName','Klients'],['size1','Izmērs'],['size2','2.izm.'],['brand','Ražotājs'],['quantity','Sk.'],['season','Sezona']];
+  const th=cols.map(c=>`<th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd;font-weight:600;white-space:nowrap;">${c[1]}</th>`).join('');
+  const trs=sample.map(r=>`<tr>${cols.map(c=>`<td style="padding:3px 8px;border-bottom:1px solid #f0f0f0;white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis;">${esc(r[c[0]]==null?'':r[c[0]])}</td>`).join('')}</tr>`).join('');
+  const html=`<div style="text-align:left;font-size:13px;">
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;">
+      <div><b style="font-size:18px;">${prev.parsed}</b> ieraksti</div>
+      <div style="color:#666;"><b>${prev.sheets}</b> sezonu lapas · ${prev.rows} rindas · ${prev.skipped} tukšas</div>
+    </div>
+    <div style="max-height:260px;overflow:auto;border:1px solid #eee;border-radius:8px;"><table style="border-collapse:collapse;width:100%;font-size:12px;"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></div>
+    <div style="margin-top:8px;color:#999;font-size:11px;">Rāda pirmos ${sample.length} ierakstus priekšskatam.</div>
+    <div style="margin-top:10px;padding:9px 11px;background:#fdecec;color:#b91c1c;border-radius:8px;font-weight:600;">⚠ Šis aizvietos VISUS pašreizējos datus ar šī faila saturu.</div>
+  </div>`;
+  const r=await ask({icon:'warning',title:'Apstiprināt importu?',html,width:760,confirmButtonText:`Importēt (${prev.parsed})`,confirmButtonColor:'#b91c1c',cancelButtonText:'Atcelt'});
+  if(!r.isConfirmed)return;
+  try{
+    R1&&R1.fire({title:'Importē…',html:'Aizvieto datus',allowOutsideClick:false,didOpen:()=>R1.showLoading()});
+    const res2=await fetch('/api/import',{method:'POST',body:mkFd()});
+    const out=await res2.json().catch(()=>({}));
+    if(!res2.ok||!out.ok)throw new Error(impErr(out,res2));
+    R1&&R1.close();
+    toast('Importēts: '+(out.imported!=null?out.imported:prev.parsed)+' ieraksti');
+    await Promise.all([loadTable(),loadStats()]);updateTabContent();
+  }catch(e){R1&&R1.close();alertErr('Imports neizdevās: '+(e.message||e));}
+}
 function tableHTML(){
   return `<div class="page" style="padding:var(--pad);margin:0 auto;">
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
@@ -486,6 +525,7 @@ function tableHTML(){
           ${['active','released','all'].map(k=>`<button class="chip${S.tabStatus===k?' on':''}" data-tabstatus="${k}">${k==='active'?'Glabājas':k==='released'?'Izsniegti':'Visi'}</button>`).join('')}
         </div>
         <input id="tab-q" value="${esc(S.tabQ)}" placeholder="Meklēt…" autocomplete="off" style="height:38px;width:240px;max-width:100%;padding:0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);">
+        ${(S.auth&&S.auth.role==='admin')?`<button class="btn" data-act="import-xlsx" title="Augšupielādēt jaunu Excel tabulu (aizvietos visus datus)" style="height:38px;">⭱ Importēt Excel</button><input type="file" id="imp-file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none;">`:''}
       </div>
     </div>
     <div id="tab-content">${tabContentHTML()}</div>
@@ -776,7 +816,10 @@ function bind(root){
     else if(a==='rel-search'){const q=document.getElementById('rel-q');S.relQ=q?q.value:S.relQ;await loadRelease();updateReleaseContent();}
     else if(a==='pick-spot'){grab();S.spotPickOpen=true;renderModal();}
     else if(a==='sms-done'){S.smsOpen=false;S.smsRec=null;resetIntake();await Promise.all([loadStats(),loadActivity()]);nav('home');}
+    else if(a==='import-xlsx'){const f=document.getElementById('imp-file');if(f)f.click();}
   }));
+  const impf=root.querySelector('#imp-file');
+  if(impf)impf.addEventListener('change',async()=>{const file=impf.files&&impf.files[0];impf.value='';if(file)await doImport(file);});
   root.querySelectorAll('[data-pickspot]').forEach(el=>el.addEventListener('click',()=>{
     const code=el.dataset.pickspot;S.presetSpot=(code==='__auto__')?null:code;S.spotPickOpen=false;renderModal();render();}));
   root.querySelectorAll('[data-rec]').forEach(el=>el.addEventListener('click',()=>{
