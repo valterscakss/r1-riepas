@@ -3,11 +3,11 @@ import cookieParser from 'cookie-parser';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import type { IntakeInput } from './types.js';
+import type { IntakeInput, StorageRecord, Store } from './types.js';
 import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
 import {
-  COOKIE, signToken, verifyPassword, currentUser, requireAuth, requireAdmin, toSession,
+  COOKIE, signToken, verifyPassword, hashPassword, currentUser, requireAuth, requireAdmin, toSession,
   AUTH_DISABLED, DEMO_USER,
 } from './auth.js';
 
@@ -85,6 +85,30 @@ export function createApp(): express.Express {
     res.json(rec);
   }));
 
+  // Manual edit of a record's data fields (Tabula). Only allowlisted keys are applied.
+  app.patch('/api/storage/:id', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const EDITABLE = ['season', 'location', 'plate', 'makeModel', 'customerName', 'phone',
+      'size1', 'brand', 'quantity', 'size2', 'rimNote', 'notes', 'intakeDate', 'releaseDate',
+      'threadDepth', 'smsCode', 'feeEur', 'isCompany'] as const;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const patch: Record<string, unknown> = {};
+    for (const k of EDITABLE) {
+      if (Object.prototype.hasOwnProperty.call(body, k)) {
+        let v = body[k];
+        if (typeof v === 'string') { v = v.trim(); if (v === '') v = null; }
+        if (k === 'plate' && typeof v === 'string') v = v.toUpperCase().replace(/\s+/g, '');
+        if (k === 'location' && typeof v === 'string') v = v.toUpperCase().replace(/\s+/g, '');
+        patch[k] = v;
+      }
+    }
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: { message: 'No editable fields provided' } });
+    const rec = await store.updateRecord(req.params.id, patch);
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    await logEvent(store, rec.id, 'edited', body.comment, req);
+    res.json({ ok: true, record: rec });
+  }));
+
   app.get('/api/lookup', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
     const raw = typeof req.query.plate === 'string' ? req.query.plate : '';
@@ -108,11 +132,39 @@ export function createApp(): express.Express {
     });
   }));
 
+  // Live plate suggestions for the intake typeahead dropdown.
+  app.get('/api/plate-suggest', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
+    if (q.length < 2) return res.json({ suggestions: [] });
+    const all = await store.list({ q });
+    const seen = new Map<string, { plate: string; cust: string | null; active: boolean; date: string | null }>();
+    for (const r of all) {
+      const p = (r.plate ?? '').toUpperCase().replace(/\s+/g, '');
+      if (!p || !p.includes(q)) continue;
+      const e = seen.get(p);
+      if (!e) seen.set(p, { plate: r.plate!, cust: r.customerName, active: r.status === 'active' || r.status === 'prepared', date: r.intakeDate });
+      else {
+        if (r.status === 'active' || r.status === 'prepared') e.active = true;
+        if (!e.cust && r.customerName) e.cust = r.customerName;
+        if ((r.intakeDate ?? '') > (e.date ?? '')) e.date = r.intakeDate;
+      }
+    }
+    const suggestions = [...seen.values()]
+      .sort((a, b) => {
+        const ap = a.plate.toUpperCase().startsWith(q) ? 0 : 1, bp = b.plate.toUpperCase().startsWith(q) ? 0 : 1;
+        return ap - bp || (b.active ? 1 : 0) - (a.active ? 1 : 0) || (b.date ?? '').localeCompare(a.date ?? '') || a.plate.localeCompare(b.plate);
+      })
+      .slice(0, 8);
+    res.json({ suggestions });
+  }));
+
   // ---- Domain helpers (per design: pricing, spot assignment, SMS codes) ----
   const SPOT_RE = /^([A-ZĀ-Ž]{1,4})(\d{1,3})$/;
   async function spotUniverse() {
     const store = await getStore();
     const all = await store.list();
+    const defs = await store.listContainers();
     const seen = new Map<string, { code: string; c: string; n: number }>();
     const occupied = new Map<string, (typeof all)[number]>();
     for (const r of all) {
@@ -120,10 +172,19 @@ export function createApp(): express.Express {
       const m = code.match(SPOT_RE);
       if (!m) continue;
       if (!seen.has(code)) seen.set(code, { code, c: m[1], n: Number(m[2]) });
-      if (r.status === 'active' && !occupied.has(code)) occupied.set(code, r);
+      // Stored ('active'), staged-for-swap ('prepared') and manually 'blocked' spots all hold the spot.
+      if ((r.status === 'active' || r.status === 'prepared' || r.status === 'blocked') && !occupied.has(code)) occupied.set(code, r);
+    }
+    // Add every place from user-defined containers, so empty containers appear too.
+    for (const d of defs) {
+      const cap = Math.max(0, (d.rows || 1) * (d.cols || 1));
+      for (let n = 1; n <= cap; n++) {
+        const code = `${d.prefix}${n}`;
+        if (!seen.has(code)) seen.set(code, { code, c: d.prefix, n });
+      }
     }
     const spots = [...seen.values()].sort((a, b) => a.c.localeCompare(b.c) || a.n - b.n);
-    return { spots, occupied, all };
+    return { spots, occupied, all, defs };
   }
   const priceFor = (size: string | null, rim: string | null) => {
     const width = parseInt((size ?? '').slice(0, 3)) || 0;
@@ -136,10 +197,39 @@ export function createApp(): express.Express {
     const d = new Date();
     return `${d.getFullYear()} ${d.getMonth() + 1 >= 3 && d.getMonth() + 1 < 9 ? 'PAVASARIS' : 'RUDENS'}`;
   };
+  // One storage row → a display-ready history item (shared by /customers and /vehicle).
+  // Staggered sets (2+2, 3+1…) are split so both pairs are visible; the old Excel
+  // sometimes kept the 2nd size in notes, so fall back to it.
+  const histItem = (r: StorageRecord) => {
+    const noteSize = !r.size2 && r.notes ? (r.notes.match(/\b(\d{3}\/\d{1,2}\/\d{2})\b/)?.[1] ?? null) : null;
+    const size2 = r.size2 ?? noteSize;
+    const stag = !!(r.quantity && r.quantity.includes('+') && size2);
+    const parts = stag ? r.quantity!.split('+') : [];
+    return {
+      season: r.season, plate: r.plate ?? '—',
+      tires: stag
+        ? [`${parts[0]}×`, r.brand, r.size1].filter(Boolean).join(' ')
+        : ([r.quantity ? `${r.quantity}×` : '', r.brand, r.size1].filter(Boolean).join(' ') + (r.size2 ? ` + ${r.size2}` : '') || '—'),
+      tires2: stag ? `${parts[1] || '2'}× ${size2}` : null,
+      loc: r.location ?? '—', thread: r.threadDepth ? `${r.threadDepth} mm` : '—',
+      fee: r.feeEur ? `€${Number(r.feeEur).toFixed(2).replace('.', ',')}` : '—',
+      status: r.status, id: r.id,
+      intakeDate: r.intakeDate, releaseDate: r.releaseDate,
+    };
+  };
+
+  // Who performed an action (for the record history), and a fire-and-forget logger.
+  const actorOf = (req: express.Request): string | null =>
+    (req as express.Request & { user?: { username?: string } }).user?.username ?? null;
+  const logEvent = async (store: Store, recordId: string, action: string, comment: unknown, req: express.Request) => {
+    const c = typeof comment === 'string' && comment.trim() ? comment.trim().slice(0, 500) : null;
+    try { await store.addEvent({ recordId, action, comment: c, actor: actorOf(req) }); } catch { /* history is non-critical */ }
+  };
 
   // Stats for dashboard + spots grid (design: containers, capacity, activity).
   app.get('/api/stats', requireAuth, asyncH(async (_req, res) => {
-    const { spots, occupied, all } = await spotUniverse();
+    const { spots, occupied, all, defs } = await spotUniverse();
+    const defByPrefix = new Map(defs.map((d) => [d.prefix, d]));
     const byC = new Map<string, { letter: string; spots: unknown[]; occ: number }>();
     for (const s of spots) {
       if (!byC.has(s.c)) byC.set(s.c, { letter: s.c, spots: [], occ: 0 });
@@ -147,26 +237,127 @@ export function createApp(): express.Express {
       const r = occupied.get(s.code);
       if (r) g.occ++;
       g.spots.push(r
-        ? { code: s.code, occ: true, id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
+        ? { code: s.code, occ: true, reserved: r.status === 'prepared', blocked: r.status === 'blocked', hasRims: !!r.rimNote, id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
         : { code: s.code, occ: false });
     }
     const containers = [...byC.values()]
-      .map((g) => ({ ...g, total: g.spots.length }))
-      .sort((a, b) => b.total - a.total || a.letter.localeCompare(b.letter))
-      .slice(0, 8)
+      .map((g) => {
+        const d = defByPrefix.get(g.letter);
+        return { ...g, total: g.spots.length, cols: d?.cols ?? 4, label: d?.label ?? null, defId: d?.id ?? null };
+      })
       .sort((a, b) => a.letter.localeCompare(b.letter));
     const occ = [...occupied.keys()].length;
+    const reserved = [...occupied.values()].filter((r) => r.status === 'prepared').length;
     const today = new Date().toISOString().slice(0, 10);
     const firstFree = spots.find((s) => !occupied.has(s.code));
     const revenue = all.filter((r) => r.status === 'active' && r.feeEur).reduce((a, r) => a + (parseFloat(r.feeEur!) || 0), 0);
     res.json({
-      occ, total: spots.length, free: spots.length - occ,
+      occ, total: spots.length, free: spots.length - occ, reserved,
       capPct: spots.length ? Math.round((occ / spots.length) * 100) : 0,
       todayIntakes: all.filter((r) => r.intakeDate === today).length,
       smsIssued: all.filter((r) => r.smsCode).length,
       revenueActive: Math.round(revenue * 100) / 100,
       assignNext: firstFree?.code ?? null,
       containers,
+    });
+  }));
+
+  // Canonical tire-brand names — collapses the shop's shorthand into full brand
+  // names so analytics don't split one brand across spellings (e.g. GY = Goodyear,
+  // Conti = Continental). Unknown brands keep their original text.
+  const BRAND_ALIASES: Record<string, string> = {
+    GY: 'Goodyear', GOODYEAR: 'Goodyear', 'GOOD YEAR': 'Goodyear',
+    CONTI: 'Continental', CONTINENTAL: 'Continental',
+    BS: 'Bridgestone', BRIDGESTONE: 'Bridgestone', BRIDG: 'Bridgestone',
+    MICH: 'Michelin', MICHELIN: 'Michelin',
+    PIRELLI: 'Pirelli', NOKIAN: 'Nokian', HANKOOK: 'Hankook',
+    YOKOHAMA: 'Yokohama', DUNLOP: 'Dunlop', SAVA: 'Sava',
+    KUMHO: 'Kumho', NEXEN: 'Nexen', SAILUN: 'Sailun', TOYO: 'Toyo',
+    MARSHAL: 'Marshal', MARSHALL: 'Marshal',
+  };
+  const canonBrand = (b: string | null | undefined): string | null => {
+    const t = (b ?? '').trim();
+    if (!t) return null;
+    return BRAND_ALIASES[t.toUpperCase()] ?? t;
+  };
+
+  // Analytics: aggregate car makes/models, tire sizes, brands, seasons, quantity
+  // types (excludes 'blocked' placeholder spots). Optional ?season= filters to one
+  // source sheet. The 2nd size is pulled from size2 or a size in the notes column.
+  app.get('/api/analytics', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const everything = (await store.list()).filter((r) => r.status !== 'blocked');
+    // Distinct source seasons (from the full set, so the dropdown is stable when
+    // filtered). Year-prefixed seasons come first, newest first; oddly-named sheets last.
+    const seasonOptions = [...new Set(everything.map((r) => (r.season ?? '').trim()).filter(Boolean))]
+      .sort((a, b) => {
+        const ya = /^\d{4}/.test(a), yb = /^\d{4}/.test(b);
+        if (ya && yb) return b.localeCompare(a, 'lv');
+        if (ya !== yb) return ya ? -1 : 1;
+        return a.localeCompare(b, 'lv');
+      });
+    const selectedSeason = typeof req.query.season === 'string' ? req.query.season.trim() : '';
+    const fStatus = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+    const fCustomer = typeof req.query.customer === 'string' ? req.query.customer.trim() : '';
+    const fRims = typeof req.query.rims === 'string' ? req.query.rims.trim() : '';
+    let all = everything;
+    if (selectedSeason) all = all.filter((r) => (r.season ?? '').trim() === selectedSeason);
+    if (fStatus === 'active' || fStatus === 'released' || fStatus === 'prepared') all = all.filter((r) => r.status === fStatus);
+    if (fCustomer === 'company') all = all.filter((r) => r.isCompany);
+    else if (fCustomer === 'private') all = all.filter((r) => !r.isCompany);
+    if (fRims === 'with') all = all.filter((r) => !!r.rimNote);
+    else if (fRims === 'without') all = all.filter((r) => !r.rimNote);
+    const NOTE_SIZE = /\b(\d{3})\/(\d{1,2})[/R]?(\d{2})\b/i;
+    const normSz = (s: string | null): string | null => {
+      if (!s) return null;
+      const m = s.replace(/\s/g, '').match(/^(\d{3})\/(\d{1,2})[/R]?(\d{2})$/i);
+      return m ? `${m[1]}/${m[2]}/${m[3]}` : null;
+    };
+    const second = (r: { size2: string | null; notes: string | null }): string | null => {
+      if (r.size2) return normSz(r.size2);
+      const nm = (r.notes || '').match(NOTE_SIZE);
+      return nm ? `${nm[1]}/${nm[2]}/${nm[3]}` : null;
+    };
+    const tally = (map: Map<string, number>, key: string | null | undefined) => {
+      const k = (key ?? '').trim();
+      if (!k) return;
+      map.set(k, (map.get(k) ?? 0) + 1);
+    };
+    const top = (map: Map<string, number>, n = 15) =>
+      [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, n).map(([label, count]) => ({ label, count }));
+
+    const makes = new Map<string, number>();      // first word of makeModel
+    const models = new Map<string, number>();      // full make+model
+    const sizes = new Map<string, number>();       // size1 + 2nd sizes
+    const brands = new Map<string, number>();
+    const seasons = new Map<string, number>();
+    const quantities = new Map<string, number>();
+    let withSecond = 0;
+
+    for (const r of all) {
+      if (r.makeModel) {
+        tally(models, r.makeModel);
+        tally(makes, r.makeModel.trim().split(/\s+/)[0].toUpperCase());
+      }
+      const s1 = normSz(r.size1);
+      if (s1) tally(sizes, s1);
+      const s2 = second(r);
+      if (s2) { tally(sizes, s2); withSecond++; }
+      tally(brands, canonBrand(r.brand));
+      tally(seasons, r.season);
+      if (r.quantity) tally(quantities, r.quantity.trim());
+    }
+    res.json({
+      total: all.length,
+      active: all.filter((r) => r.status === 'active').length,
+      prepared: all.filter((r) => r.status === 'prepared').length,
+      released: all.filter((r) => r.status === 'released').length,
+      withSecondSize: withSecond,
+      seasonOptions, selectedSeason,
+      filters: { status: fStatus, customer: fCustomer, rims: fRims },
+      makes: top(makes), models: top(models), sizes: top(sizes),
+      brands: top(brands), seasons: top(seasons, 30), quantities: top(quantities),
     });
   }));
 
@@ -190,8 +381,15 @@ export function createApp(): express.Express {
     const all = await store.list(q ? { q } : undefined);
     // Grouping: a company = one card for ALL its vehicles; an individual with a
     // real phone = one card across plates; otherwise fall back to name+plate.
-    const DUMMY = /^0+1?(01)+$/;
-    const realPhone = (p: string | null) => !!p && p.replace(/\D/g, '').length >= 7 && !DUMMY.test(p.replace(/\D/g, ''));
+    // A phone only groups if it's a genuine number — NOT the anonymized placeholder
+    // (e.g. 01010101010) or any low-entropy filler. Placeholders have very few
+    // distinct digits; without this guard every anonymized record collapses into
+    // one giant "customer".
+    const DUMMY_PHONE = (process.env.DUMMY_PHONE || '01010101010').replace(/\D/g, '');
+    const realPhone = (p: string | null) => {
+      const d = (p ?? '').replace(/\D/g, '');
+      return d.length >= 7 && d !== DUMMY_PHONE && new Set(d).size >= 3;
+    };
     const groups = new Map<string, { name: string; plates: Set<string>; phone: string | null; isCompany: boolean; makeModel: string | null; recs: typeof all }>();
     for (const r of all) {
       if (!r.plate && !r.customerName) continue;
@@ -216,27 +414,49 @@ export function createApp(): express.Express {
         history: g.recs
           .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''))
           .slice(0, 30)
-          .map((r) => {
-            // Staggered sets (2+2, 3+1…): split the pairs so both are visible.
-            // The old Excel sometimes put the 2nd size in notes — use it as fallback.
-            const noteSize = !r.size2 && r.notes ? (r.notes.match(/\b(\d{3}\/\d{1,2}\/\d{2})\b/)?.[1] ?? null) : null;
-            const size2 = r.size2 ?? noteSize;
-            const stag = !!(r.quantity && r.quantity.includes('+') && size2);
-            const parts = stag ? r.quantity!.split('+') : [];
-            return ({
-            season: r.season, plate: r.plate ?? '—',
-            tires: stag
-              ? [`${parts[0]}×`, r.brand, r.size1].filter(Boolean).join(' ')
-              : ([r.quantity ? `${r.quantity}×` : '', r.brand, r.size1].filter(Boolean).join(' ') + (r.size2 ? ` + ${r.size2}` : '') || '—'),
-            tires2: stag ? `${parts[1] || '2'}× ${size2}` : null,
-            loc: r.location ?? '—', thread: r.threadDepth ? `${r.threadDepth} mm` : '—',
-            fee: r.feeEur ? `€${Number(r.feeEur).toFixed(2).replace('.', ',')}` : '—',
-            status: r.status, id: r.id,
-          }); }),
+          .map(histItem),
       }))
       .sort((a, b) => b.latest.localeCompare(a.latest))
       .slice(0, 30);
     res.json({ customers: list });
+  }));
+
+  // Full storage history for a single vehicle (all seasons), for the spot panel.
+  app.get('/api/vehicle', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const plate = String(req.query.plate ?? '').toUpperCase().replace(/\s+/g, '');
+    if (!plate) return res.status(400).json({ error: { message: 'plate is required' } });
+    const recs = (await store.list({ q: plate }))
+      .filter((r) => (r.plate ?? '').toUpperCase().replace(/\s+/g, '') === plate)
+      .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''));
+    if (recs.length === 0) return res.json({ plate, found: false, count: 0, customer: null, history: [] });
+    const cur = recs.find((r) => r.status === 'active') ?? recs[0];
+    res.json({
+      plate, found: true, count: recs.length,
+      customer: { name: cur.customerName, phone: cur.phone, isCompany: cur.isCompany, makeModel: cur.makeModel },
+      history: recs.map(histItem),
+    });
+  }));
+
+  // Release lookup: find ACTIVE stored sets by SMS code, plate, or location.
+  app.get('/api/release-lookup', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
+    if (!q) return res.json({ q: '', results: [] });
+    const active = await store.list({ status: 'active' });
+    const norm = (s: string | null) => String(s ?? '').toUpperCase().replace(/\s+/g, '');
+    const exact = active.filter((r) => norm(r.smsCode) === q || norm(r.plate) === q || norm(r.location) === q);
+    const chosen = exact.length
+      ? exact
+      : active.filter((r) => norm(r.plate).includes(q) || norm(r.smsCode).includes(q)).slice(0, 20);
+    const results = chosen.map((r) => ({
+      id: r.id, plate: r.plate, cust: r.customerName, phone: r.phone, loc: r.location,
+      size: r.size1, size2: r.size2, brand: r.brand, quantity: r.quantity, sms: r.smsCode,
+      thread: r.threadDepth ? `${r.threadDepth} mm` : '—',
+      fee: r.feeEur ? `€${Number(r.feeEur).toFixed(2).replace('.', ',')}` : '—',
+      intakeDate: r.intakeDate, season: r.season,
+    }));
+    res.json({ q, results });
   }));
 
   app.post('/api/intake', requireAuth, asyncH(async (req, res) => {
@@ -281,7 +501,11 @@ export function createApp(): express.Express {
       smsCode,
       feeEur: total ? String(total) : null,
     };
+    // Swap completion: close the prepared set that reserved this spot, then store
+    // the new season's tires in the same place.
+    if (b.releaseId) { try { await store.release(String(b.releaseId), {}); await logEvent(store, String(b.releaseId), 'swapped', 'Aizvietots ar jaunām riepām', req); } catch { /* already closed */ } }
     const rec = await store.create(input);
+    await logEvent(store, rec.id, 'created', b.notes, req);
     res.status(201).json(rec);
   }));
 
@@ -289,7 +513,121 @@ export function createApp(): express.Express {
     const store = await getStore();
     const rec = await store.release(req.params.id, { releaseDate: req.body?.releaseDate });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    await logEvent(store, rec.id, 'released', req.body?.comment, req);
     res.json(rec);
+  }));
+
+  // Stage a set for a seasonal swap: tires out, spot stays reserved ('prepared').
+  app.post('/api/storage/:id/prepare', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const rec = await store.prepare(req.params.id, {});
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    await logEvent(store, rec.id, 'prepared', req.body?.comment, req);
+    res.json(rec);
+  }));
+  // Undo a prepare — put the set back in its spot ('active').
+  app.post('/api/storage/:id/unprepare', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const rec = await store.prepare(req.params.id, { active: true });
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    await logEvent(store, rec.id, 'unprepared', req.body?.comment, req);
+    res.json(rec);
+  }));
+
+  // Manually block/reserve an empty spot (no tires) so it's unavailable.
+  app.post('/api/spots/:code/block', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const code = String(req.params.code).toUpperCase().replace(/\s+/g, '');
+    if (!SPOT_RE.test(code)) return res.status(400).json({ error: { message: 'Nederīga vietas norāde' } });
+    const { spots, occupied } = await spotUniverse();
+    if (!spots.some((s) => s.code === code)) return res.status(404).json({ error: { message: 'Nezināma vieta' } });
+    if (occupied.has(code)) return res.status(409).json({ error: { message: 'Vieta jau ir aizņemta' } });
+    const rec = await store.blockSpot(code);
+    await logEvent(store, rec.id, 'blocked', req.body?.comment, req);
+    res.status(201).json(rec);
+  }));
+  // Unblock: remove the placeholder that was holding the spot.
+  app.post('/api/storage/:id/unblock', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const rec = await store.get(req.params.id);
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    if (rec.status !== 'blocked') return res.status(400).json({ error: { message: 'Šī vieta nav bloķēta' } });
+    await store.deleteRecord(req.params.id);
+    res.json({ ok: true });
+  }));
+
+  // --- Record history / comments (audit trail per record) ---
+  app.get('/api/storage/:id/events', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    res.json({ events: await store.listEvents(req.params.id) });
+  }));
+  app.post('/api/storage/:id/events', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const rec = await store.get(req.params.id);
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    const comment = typeof req.body?.comment === 'string' ? req.body.comment.trim() : '';
+    if (!comment) return res.status(400).json({ error: { message: 'Komentārs ir tukšs' } });
+    const ev = await store.addEvent({ recordId: req.params.id, action: 'comment', comment: comment.slice(0, 500), actor: actorOf(req) });
+    res.status(201).json({ ok: true, event: ev });
+  }));
+  app.patch('/api/events/:id', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const comment = typeof req.body?.comment === 'string' ? req.body.comment.trim().slice(0, 500) : '';
+    const ev = await store.updateEvent(req.params.id, comment || null);
+    if (!ev) return res.status(404).json({ error: { message: 'Not found' } });
+    res.json({ ok: true, event: ev });
+  }));
+  app.delete('/api/events/:id', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const ok = await store.deleteEvent(req.params.id);
+    if (!ok) return res.status(404).json({ error: { message: 'Not found' } });
+    res.json({ ok: true });
+  }));
+
+  // --- Storage containers (user-defined shelves/racks) ---
+  app.get('/api/containers', requireAuth, asyncH(async (_req, res) => {
+    const store = await getStore();
+    res.json({ containers: await store.listContainers() });
+  }));
+  app.post('/api/containers', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const b = (req.body ?? {}) as { prefix?: unknown; label?: unknown; rows?: unknown; cols?: unknown };
+    const prefix = String(b.prefix ?? '').toUpperCase().replace(/\s+/g, '');
+    if (!/^[A-ZĀ-Ž]{1,4}$/.test(prefix)) return res.status(400).json({ error: { message: 'Prefikss: 1–4 burti (piem. D)' } });
+    const rows = Math.trunc(Number(b.rows));
+    const cols = Math.trunc(Number(b.cols));
+    if (!Number.isFinite(rows) || rows < 1 || rows > 99 || !Number.isFinite(cols) || cols < 1 || cols > 99)
+      return res.status(400).json({ error: { message: 'Rindas un kolonnas: 1–99' } });
+    if (rows * cols > 600) return res.status(400).json({ error: { message: 'Pārāk daudz vietu (maks. 600)' } });
+    const label = typeof b.label === 'string' && b.label.trim() ? b.label.trim() : null;
+    const existing = await store.listContainers();
+    if (existing.some((c) => c.prefix === prefix)) return res.status(409).json({ error: { message: `Konteiners "${prefix}" jau eksistē` } });
+    try {
+      const created = await store.createContainer({ prefix, label, rows, cols });
+      res.status(201).json({ ok: true, container: created });
+    } catch {
+      res.status(409).json({ error: { message: `Konteiners "${prefix}" jau eksistē` } });
+    }
+  }));
+  app.delete('/api/containers/:id', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const ok = await store.deleteContainer(req.params.id);
+    if (!ok) return res.status(404).json({ error: { message: 'Konteiners nav atrasts' } });
+    res.json({ ok: true });
+  }));
+
+  // Pending swaps: every 'prepared' set, newest first, shaped for the sidebar.
+  app.get('/api/pending', requireAuth, asyncH(async (_req, res) => {
+    const store = await getStore();
+    const recs = (await store.list({ status: 'prepared' }))
+      .sort((a, b) => (b.preparedDate ?? '').localeCompare(a.preparedDate ?? ''));
+    const items = recs.map((r) => ({
+      id: r.id, plate: r.plate, cust: r.customerName, phone: r.phone, loc: r.location,
+      size: r.size1, size2: r.size2, brand: r.brand, quantity: r.quantity, sms: r.smsCode,
+      thread: r.threadDepth ? `${r.threadDepth} mm` : '—', season: r.season,
+      preparedDate: r.preparedDate, intakeDate: r.intakeDate,
+    }));
+    res.json({ count: items.length, pending: items });
   }));
 
   // --- Excel import (admin only): parse the workbook and REPLACE the DB.
@@ -304,11 +642,81 @@ export function createApp(): express.Express {
       return res.status(400).json({ error: { message: 'Could not read the file as an .xlsx workbook' } });
     }
     if (parsed.records.length === 0) {
-      return res.status(400).json({ error: { message: 'No recognizable seasonal sheets found in the workbook' } });
+      return res.status(400).json({ error: { message: 'Neatpazina nevienu derīgu lapu. Pārbaudi, vai fails ir tajā pašā formātā (VIETA, AUTO NR., IZMĒRS…).' } });
+    }
+    // Dry run: return what WOULD be imported (summary + a sample) without touching the DB.
+    if (req.query.dryRun === '1' || req.query.preview === '1') {
+      const sample = parsed.records.slice(0, 8).map((r) => ({
+        season: r.season, location: r.location, plate: r.plate, makeModel: r.makeModel,
+        customerName: r.customerName, size1: r.size1, size2: r.size2, brand: r.brand,
+        quantity: r.quantity, status: r.status,
+      }));
+      return res.json({ ok: true, dryRun: true, sample, ...parsed.summary });
     }
     const store = await getStore();
     const { imported } = await store.replaceAll(parsed.records);
     res.json({ ok: true, imported, ...parsed.summary });
+  }));
+
+  // --- User management (admin only) — the in-app "login & password generator". ---
+  const USERNAME_RE = /^[a-z0-9._-]{3,32}$/;
+  const MIN_PW = 8;
+
+  app.get('/api/users', requireAdmin, asyncH(async (_req, res) => {
+    const store = await getStore();
+    res.json({ users: await store.listUsers() });
+  }));
+
+  app.post('/api/users', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const { username, name, role, password } = req.body ?? {};
+    const u = String(username ?? '').trim().toLowerCase();
+    const nm = String(name ?? '').trim();
+    const rl: 'admin' | 'staff' = role === 'admin' ? 'admin' : 'staff';
+    if (!USERNAME_RE.test(u)) return res.status(400).json({ error: { message: 'Lietotājvārds: 3–32 rakstzīmes (a–z, 0–9, . _ -)' } });
+    if (!nm) return res.status(400).json({ error: { message: 'Vārds ir obligāts' } });
+    if (String(password ?? '').length < MIN_PW) return res.status(400).json({ error: { message: `Parolei jābūt vismaz ${MIN_PW} rakstzīmes` } });
+    if (await store.getUserByUsername(u)) return res.status(409).json({ error: { message: 'Lietotājs ar šādu vārdu jau eksistē' } });
+    await store.createUser({ username: u, name: nm, passwordHash: await hashPassword(String(password)), role: rl });
+    res.json({ ok: true, user: { username: u, name: nm, role: rl } });
+  }));
+
+  app.post('/api/users/:username/reset', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const u = String(req.params.username ?? '').trim().toLowerCase();
+    const { password } = req.body ?? {};
+    if (String(password ?? '').length < MIN_PW) return res.status(400).json({ error: { message: `Parolei jābūt vismaz ${MIN_PW} rakstzīmes` } });
+    if (!(await store.getUserByUsername(u))) return res.status(404).json({ error: { message: 'Lietotājs nav atrasts' } });
+    await store.setPasswordByUsername(u, await hashPassword(String(password)));
+    res.json({ ok: true });
+  }));
+
+  app.delete('/api/users/:username', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const u = String(req.params.username ?? '').trim().toLowerCase();
+    const target = await store.getUserByUsername(u);
+    if (!target) return res.status(404).json({ error: { message: 'Lietotājs nav atrasts' } });
+    const me = (req as express.Request & { user?: { username: string } }).user;
+    if (me && me.username === u) return res.status(400).json({ error: { message: 'Nevar dzēst savu kontu' } });
+    if (target.role === 'admin') {
+      const admins = (await store.listUsers()).filter((x) => x.role === 'admin').length;
+      if (admins <= 1) return res.status(400).json({ error: { message: 'Nevar dzēst pēdējo administratoru' } });
+    }
+    await store.deleteUserByUsername(u);
+    res.json({ ok: true });
+  }));
+
+  app.post('/api/change-password', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const me = (req as express.Request & { user?: { username: string } }).user;
+    const { currentPassword, newPassword } = req.body ?? {};
+    if (String(newPassword ?? '').length < MIN_PW) return res.status(400).json({ error: { message: `Jaunajai parolei jābūt vismaz ${MIN_PW} rakstzīmes` } });
+    const user = me ? await store.getUserByUsername(String(me.username).toLowerCase()) : null;
+    if (!user || !(await verifyPassword(String(currentPassword ?? ''), user.passwordHash))) {
+      return res.status(401).json({ error: { message: 'Nepareiza pašreizējā parole' } });
+    }
+    await store.setPasswordByUsername(user.username, await hashPassword(String(newPassword)));
+    res.json({ ok: true });
   }));
 
   // Static UI (also served on Vercel via the catch-all rewrite).

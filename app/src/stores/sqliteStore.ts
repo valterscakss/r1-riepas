@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Store, StorageRecord, IntakeInput, User } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent } from '../types.js';
 
 /**
  * SQLite datastore — the self-contained default backend. A real, durable, local
@@ -44,6 +44,25 @@ CREATE TABLE IF NOT EXISTS users (
   role          TEXT NOT NULL DEFAULT 'staff',
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS containers (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  prefix     TEXT UNIQUE NOT NULL,
+  label      TEXT,
+  rows       INTEGER NOT NULL DEFAULT 1,
+  cols       INTEGER NOT NULL DEFAULT 4,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS record_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  record_id  TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  comment    TEXT,
+  actor      TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_events_record ON record_events(record_id);
 `;
 
 interface Row {
@@ -52,8 +71,11 @@ interface Row {
   phone: string | null; size1: string | null; brand: string | null; quantity: string | null;
   size2: string | null; rimNote: string | null; notes: string | null;
   intakeDate: string | null; releaseDate: string | null; status: string;
-  threadDepth?: string | null; smsCode?: string | null; feeEur?: string | null;
+  threadDepth?: string | null; smsCode?: string | null; feeEur?: string | null; preparedDate?: string | null;
 }
+
+const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' =>
+  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : s === 'blocked' ? 'blocked' : 'active';
 
 const toRecord = (r: Row): StorageRecord => ({
   id: String(r.id), season: r.season, location: r.location, plate: r.plate,
@@ -61,7 +83,7 @@ const toRecord = (r: Row): StorageRecord => ({
   phone: r.phone, size1: r.size1, brand: r.brand, quantity: r.quantity,
   size2: r.size2, rimNote: r.rimNote, notes: r.notes,
   intakeDate: r.intakeDate, releaseDate: r.releaseDate,
-  status: r.status === 'released' ? 'released' : 'active',
+  status: normStatus(r.status), preparedDate: r.preparedDate ?? null,
   threadDepth: r.threadDepth ?? null, smsCode: r.smsCode ?? null, feeEur: r.feeEur ?? null,
 });
 
@@ -74,7 +96,7 @@ export class SqliteStore implements Store {
     this.db = new Database(dbFile);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(DDL);
-    for (const col of ['threadDepth', 'smsCode', 'feeEur']) {
+    for (const col of ['threadDepth', 'smsCode', 'feeEur', 'preparedDate']) {
       try { this.db.exec(`ALTER TABLE storage ADD COLUMN ${col} TEXT`); } catch { /* exists */ }
     }
     const count = (this.db.prepare('SELECT COUNT(*) AS n FROM storage').get() as { n: number }).n;
@@ -118,7 +140,7 @@ export class SqliteStore implements Store {
     return `sqlite (${n} records${this.seededFrom ? `, seeded from ${this.seededFrom}` : ''})`;
   }
 
-  async list(opts?: { status?: 'active' | 'released'; q?: string }): Promise<StorageRecord[]> {
+  async list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string }): Promise<StorageRecord[]> {
     const where: string[] = [];
     const params: Record<string, unknown> = {};
     if (opts?.status) { where.push('status = @status'); params.status = opts.status; }
@@ -155,6 +177,46 @@ export class SqliteStore implements Store {
   async release(id: string, opts: { releaseDate?: string }): Promise<StorageRecord | null> {
     const date = opts.releaseDate ?? new Date().toISOString().slice(0, 10);
     const info = this.db.prepare(`UPDATE storage SET status = 'released', releaseDate = ? WHERE id = ?`).run(date, Number(id));
+    if (info.changes === 0) return null;
+    return this.get(id);
+  }
+
+  async prepare(id: string, opts: { preparedDate?: string; active?: boolean }): Promise<StorageRecord | null> {
+    const info = opts.active
+      ? this.db.prepare(`UPDATE storage SET status = 'active', preparedDate = NULL WHERE id = ?`).run(Number(id))
+      : this.db.prepare(`UPDATE storage SET status = 'prepared', preparedDate = ? WHERE id = ?`)
+          .run(opts.preparedDate ?? new Date().toISOString().slice(0, 10), Number(id));
+    if (info.changes === 0) return null;
+    return this.get(id);
+  }
+
+  async blockSpot(location: string): Promise<StorageRecord> {
+    const info = this.db.prepare(`INSERT INTO storage (location, status, intakeDate, notes) VALUES (?, 'blocked', ?, 'Bloķēts')`)
+      .run(location, new Date().toISOString().slice(0, 10));
+    return (await this.get(String(info.lastInsertRowid)))!;
+  }
+
+  async deleteRecord(id: string): Promise<boolean> {
+    return this.db.prepare('DELETE FROM storage WHERE id = ?').run(Number(id)).changes > 0;
+  }
+
+  async updateRecord(id: string, patch: Partial<StorageRecord>): Promise<StorageRecord | null> {
+    const editable = ['season', 'location', 'plate', 'makeModel', 'customerName', 'phone',
+      'size1', 'brand', 'quantity', 'size2', 'rimNote', 'notes', 'intakeDate', 'releaseDate',
+      'threadDepth', 'smsCode', 'feeEur'] as const;
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    for (const k of editable) {
+      if (Object.prototype.hasOwnProperty.call(patch, k)) {
+        sets.push(`${k} = ?`);
+        const v = (patch as Record<string, unknown>)[k];
+        vals.push(v === '' || v === undefined ? null : v);
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'isCompany')) { sets.push('isCompany = ?'); vals.push(patch.isCompany ? 1 : 0); }
+    if (!sets.length) return this.get(id);
+    vals.push(Number(id));
+    const info = this.db.prepare(`UPDATE storage SET ${sets.join(', ')} WHERE id = ?`).run(...(vals as never[]));
     if (info.changes === 0) return null;
     return this.get(id);
   }
@@ -202,5 +264,62 @@ export class SqliteStore implements Store {
 
   async countUsers(): Promise<number> {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
+  }
+
+  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff'; createdAt: string | null }>> {
+    const rows = this.db.prepare('SELECT id, username, name, role, created_at FROM users ORDER BY created_at ASC, id ASC')
+      .all() as Array<{ id: number; username: string; name: string; role: string; created_at: string | null }>;
+    return rows.map((r) => ({
+      id: String(r.id), username: r.username, name: r.name,
+      role: (r.role === 'admin' ? 'admin' : 'staff') as 'admin' | 'staff', createdAt: r.created_at ?? null,
+    }));
+  }
+
+  async deleteUserByUsername(username: string): Promise<boolean> {
+    const info = this.db.prepare('DELETE FROM users WHERE username = ?').run(username.toLowerCase());
+    return info.changes > 0;
+  }
+
+  // --- Containers ---
+  async listContainers(): Promise<Container[]> {
+    const rows = this.db.prepare('SELECT id, prefix, label, rows, cols, created_at FROM containers ORDER BY prefix ASC')
+      .all() as Array<{ id: number; prefix: string; label: string | null; rows: number; cols: number; created_at: string | null }>;
+    return rows.map((r) => ({ id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols, createdAt: r.created_at ?? null }));
+  }
+
+  async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number }): Promise<Container> {
+    const info = this.db.prepare('INSERT INTO containers (prefix, label, rows, cols) VALUES (?,?,?,?)')
+      .run(c.prefix, c.label, c.rows, c.cols);
+    const r = this.db.prepare('SELECT id, prefix, label, rows, cols, created_at FROM containers WHERE id = ?')
+      .get(info.lastInsertRowid) as { id: number; prefix: string; label: string | null; rows: number; cols: number; created_at: string | null };
+    return { id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols, createdAt: r.created_at ?? null };
+  }
+
+  async deleteContainer(id: string): Promise<boolean> {
+    return this.db.prepare('DELETE FROM containers WHERE id = ?').run(Number(id)).changes > 0;
+  }
+
+  // --- Record events ---
+  private eventRow(r: { id: number; record_id: string; action: string; comment: string | null; actor: string | null; created_at: string | null }): RecordEvent {
+    return { id: String(r.id), recordId: r.record_id, action: r.action, comment: r.comment, actor: r.actor, createdAt: r.created_at ?? null };
+  }
+  async addEvent(e: { recordId: string; action: string; comment: string | null; actor: string | null }): Promise<RecordEvent> {
+    const info = this.db.prepare('INSERT INTO record_events (record_id, action, comment, actor) VALUES (?,?,?,?)')
+      .run(e.recordId, e.action, e.comment, e.actor);
+    const r = this.db.prepare('SELECT * FROM record_events WHERE id = ?').get(info.lastInsertRowid) as never;
+    return this.eventRow(r);
+  }
+  async listEvents(recordId: string): Promise<RecordEvent[]> {
+    const rows = this.db.prepare('SELECT * FROM record_events WHERE record_id = ? ORDER BY id ASC').all(recordId) as never[];
+    return rows.map((r) => this.eventRow(r));
+  }
+  async updateEvent(id: string, comment: string | null): Promise<RecordEvent | null> {
+    const info = this.db.prepare('UPDATE record_events SET comment = ? WHERE id = ?').run(comment, Number(id));
+    if (info.changes === 0) return null;
+    const r = this.db.prepare('SELECT * FROM record_events WHERE id = ?').get(Number(id)) as never;
+    return this.eventRow(r);
+  }
+  async deleteEvent(id: string): Promise<boolean> {
+    return this.db.prepare('DELETE FROM record_events WHERE id = ?').run(Number(id)).changes > 0;
   }
 }

@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { Store, StorageRecord, IntakeInput, User } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent } from '../types.js';
 
 /**
  * Postgres datastore — the production backend for Supabase (or any Postgres).
@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS storage (
 ALTER TABLE storage ADD COLUMN IF NOT EXISTS thread_depth TEXT;
 ALTER TABLE storage ADD COLUMN IF NOT EXISTS sms_code TEXT;
 ALTER TABLE storage ADD COLUMN IF NOT EXISTS fee_eur TEXT;
+ALTER TABLE storage ADD COLUMN IF NOT EXISTS prepared_date TEXT;
 CREATE INDEX IF NOT EXISTS idx_storage_plate ON storage(UPPER(plate));
 CREATE INDEX IF NOT EXISTS idx_storage_status ON storage(status);
 CREATE INDEX IF NOT EXISTS idx_storage_location ON storage(location);
@@ -43,6 +44,25 @@ CREATE TABLE IF NOT EXISTS users (
   role          TEXT NOT NULL DEFAULT 'staff',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS containers (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  prefix     TEXT UNIQUE NOT NULL,
+  label      TEXT,
+  rows       INTEGER NOT NULL DEFAULT 1,
+  cols       INTEGER NOT NULL DEFAULT 4,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS record_events (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  record_id  TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  comment    TEXT,
+  actor      TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_events_record ON record_events(record_id);
 `;
 
 interface Row {
@@ -51,8 +71,11 @@ interface Row {
   phone: string | null; size1: string | null; brand: string | null; quantity: string | null;
   size2: string | null; rim_note: string | null; notes: string | null;
   intake_date: string | null; release_date: string | null; status: string;
-  thread_depth?: string | null; sms_code?: string | null; fee_eur?: string | null;
+  thread_depth?: string | null; sms_code?: string | null; fee_eur?: string | null; prepared_date?: string | null;
 }
+
+const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' =>
+  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : s === 'blocked' ? 'blocked' : 'active';
 
 const toRecord = (r: Row): StorageRecord => ({
   id: String(r.id), season: r.season, location: r.location, plate: r.plate,
@@ -60,7 +83,7 @@ const toRecord = (r: Row): StorageRecord => ({
   phone: r.phone, size1: r.size1, brand: r.brand, quantity: r.quantity,
   size2: r.size2, rimNote: r.rim_note, notes: r.notes,
   intakeDate: r.intake_date, releaseDate: r.release_date,
-  status: r.status === 'released' ? 'released' : 'active',
+  status: normStatus(r.status), preparedDate: r.prepared_date ?? null,
   threadDepth: r.thread_depth ?? null, smsCode: r.sms_code ?? null, feeEur: r.fee_eur ?? null,
 });
 
@@ -85,7 +108,7 @@ export class PostgresStore implements Store {
     return 'postgres (supabase)';
   }
 
-  async list(opts?: { status?: 'active' | 'released'; q?: string }): Promise<StorageRecord[]> {
+  async list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string }): Promise<StorageRecord[]> {
     await this.init();
     const where: string[] = [];
     const params: unknown[] = [];
@@ -130,6 +153,55 @@ export class PostgresStore implements Store {
       `UPDATE storage SET status = 'released', release_date = $1 WHERE id = $2 RETURNING *`,
       [date, Number(id)],
     );
+    return res.rows[0] ? toRecord(res.rows[0]) : null;
+  }
+
+  async prepare(id: string, opts: { preparedDate?: string; active?: boolean }): Promise<StorageRecord | null> {
+    await this.init();
+    const res = opts.active
+      ? await this.pool.query<Row>(`UPDATE storage SET status = 'active', prepared_date = NULL WHERE id = $1 RETURNING *`, [Number(id)])
+      : await this.pool.query<Row>(`UPDATE storage SET status = 'prepared', prepared_date = $1 WHERE id = $2 RETURNING *`,
+          [opts.preparedDate ?? new Date().toISOString().slice(0, 10), Number(id)]);
+    return res.rows[0] ? toRecord(res.rows[0]) : null;
+  }
+
+  async blockSpot(location: string): Promise<StorageRecord> {
+    await this.init();
+    const res = await this.pool.query<Row>(
+      `INSERT INTO storage (location, status, intake_date, notes) VALUES ($1,'blocked',$2,'Bloķēts') RETURNING *`,
+      [location, new Date().toISOString().slice(0, 10)]);
+    return toRecord(res.rows[0]);
+  }
+
+  async deleteRecord(id: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('DELETE FROM storage WHERE id = $1', [Number(id)]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async updateRecord(id: string, patch: Partial<StorageRecord>): Promise<StorageRecord | null> {
+    await this.init();
+    // field → column allowlist (snake_case). Only these keys are writable via edit.
+    const MAP: Record<string, string> = {
+      season: 'season', location: 'location', plate: 'plate', makeModel: 'make_model',
+      customerName: 'customer_name', phone: 'phone', size1: 'size1', brand: 'brand',
+      quantity: 'quantity', size2: 'size2', rimNote: 'rim_note', notes: 'notes',
+      intakeDate: 'intake_date', releaseDate: 'release_date', threadDepth: 'thread_depth',
+      smsCode: 'sms_code', feeEur: 'fee_eur',
+    };
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    for (const [key, col] of Object.entries(MAP)) {
+      if (Object.prototype.hasOwnProperty.call(patch, key)) {
+        const v = (patch as Record<string, unknown>)[key];
+        vals.push(v === '' || v === undefined ? null : v);
+        sets.push(`${col} = $${vals.length}`);
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'isCompany')) { vals.push(!!patch.isCompany); sets.push(`is_company = $${vals.length}`); }
+    if (!sets.length) return this.get(id);
+    vals.push(Number(id));
+    const res = await this.pool.query<Row>(`UPDATE storage SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals);
     return res.rows[0] ? toRecord(res.rows[0]) : null;
   }
 
@@ -197,5 +269,71 @@ export class PostgresStore implements Store {
     await this.init();
     const res = await this.pool.query<{ n: string }>('SELECT COUNT(*) AS n FROM users');
     return Number(res.rows[0].n);
+  }
+
+  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff'; createdAt: string | null }>> {
+    await this.init();
+    const res = await this.pool.query<{ id: number; username: string; name: string; role: string; created_at: string | null }>(
+      'SELECT id, username, name, role, created_at FROM users ORDER BY created_at ASC, id ASC');
+    return res.rows.map((r) => ({
+      id: String(r.id), username: r.username, name: r.name,
+      role: r.role === 'admin' ? 'admin' : 'staff', createdAt: r.created_at ? String(r.created_at) : null,
+    }));
+  }
+
+  async deleteUserByUsername(username: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('DELETE FROM users WHERE username = $1', [username.toLowerCase()]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  // --- Containers ---
+  async listContainers(): Promise<Container[]> {
+    await this.init();
+    const res = await this.pool.query<{ id: number; prefix: string; label: string | null; rows: number; cols: number; created_at: string | null }>(
+      'SELECT id, prefix, label, rows, cols, created_at FROM containers ORDER BY prefix ASC');
+    return res.rows.map((r) => ({ id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols, createdAt: r.created_at ? String(r.created_at) : null }));
+  }
+
+  async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number }): Promise<Container> {
+    await this.init();
+    const res = await this.pool.query<{ id: number; prefix: string; label: string | null; rows: number; cols: number; created_at: string | null }>(
+      'INSERT INTO containers (prefix, label, rows, cols) VALUES ($1,$2,$3,$4) RETURNING id, prefix, label, rows, cols, created_at',
+      [c.prefix, c.label, c.rows, c.cols]);
+    const r = res.rows[0];
+    return { id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols, createdAt: r.created_at ? String(r.created_at) : null };
+  }
+
+  async deleteContainer(id: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('DELETE FROM containers WHERE id = $1', [Number(id)]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  // --- Record events ---
+  private eventRow(r: { id: number; record_id: string; action: string; comment: string | null; actor: string | null; created_at: string | null }): RecordEvent {
+    return { id: String(r.id), recordId: r.record_id, action: r.action, comment: r.comment, actor: r.actor, createdAt: r.created_at ? String(r.created_at) : null };
+  }
+  async addEvent(e: { recordId: string; action: string; comment: string | null; actor: string | null }): Promise<RecordEvent> {
+    await this.init();
+    const res = await this.pool.query<never>(
+      'INSERT INTO record_events (record_id, action, comment, actor) VALUES ($1,$2,$3,$4) RETURNING *',
+      [e.recordId, e.action, e.comment, e.actor]);
+    return this.eventRow(res.rows[0]);
+  }
+  async listEvents(recordId: string): Promise<RecordEvent[]> {
+    await this.init();
+    const res = await this.pool.query<never>('SELECT * FROM record_events WHERE record_id = $1 ORDER BY id ASC', [recordId]);
+    return res.rows.map((r) => this.eventRow(r));
+  }
+  async updateEvent(id: string, comment: string | null): Promise<RecordEvent | null> {
+    await this.init();
+    const res = await this.pool.query<never>('UPDATE record_events SET comment = $1 WHERE id = $2 RETURNING *', [comment, Number(id)]);
+    return res.rows[0] ? this.eventRow(res.rows[0]) : null;
+  }
+  async deleteEvent(id: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('DELETE FROM record_events WHERE id = $1', [Number(id)]);
+    return (res.rowCount ?? 0) > 0;
   }
 }
