@@ -313,6 +313,10 @@ export class SqliteStore implements Store {
     const rows = this.db.prepare('SELECT * FROM record_events WHERE record_id = ? ORDER BY id ASC').all(recordId) as never[];
     return rows.map((r) => this.eventRow(r));
   }
+  async recentEvents(limit: number): Promise<RecordEvent[]> {
+    const rows = this.db.prepare('SELECT * FROM record_events ORDER BY id DESC LIMIT ?').all(Math.max(1, Math.min(100, limit))) as never[];
+    return rows.map((r) => this.eventRow(r));
+  }
   async updateEvent(id: string, comment: string | null): Promise<RecordEvent | null> {
     const info = this.db.prepare('UPDATE record_events SET comment = ? WHERE id = ?').run(comment, Number(id));
     if (info.changes === 0) return null;

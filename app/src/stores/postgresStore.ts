@@ -326,6 +326,11 @@ export class PostgresStore implements Store {
     const res = await this.pool.query<never>('SELECT * FROM record_events WHERE record_id = $1 ORDER BY id ASC', [recordId]);
     return res.rows.map((r) => this.eventRow(r));
   }
+  async recentEvents(limit: number): Promise<RecordEvent[]> {
+    await this.init();
+    const res = await this.pool.query<never>('SELECT * FROM record_events ORDER BY id DESC LIMIT $1', [Math.max(1, Math.min(100, limit))]);
+    return res.rows.map((r) => this.eventRow(r));
+  }
   async updateEvent(id: string, comment: string | null): Promise<RecordEvent | null> {
     await this.init();
     const res = await this.pool.query<never>('UPDATE record_events SET comment = $1 WHERE id = $2 RETURNING *', [comment, Number(id)]);

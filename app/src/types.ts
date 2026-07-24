@@ -113,6 +113,8 @@ export interface Store {
   addEvent(e: { recordId: string; action: string; comment: string | null; actor: string | null }): Promise<RecordEvent>;
   /** List a record's events, oldest first. */
   listEvents(recordId: string): Promise<RecordEvent[]>;
+  /** Most recent events across all records, newest first (for the activity feed). */
+  recentEvents(limit: number): Promise<RecordEvent[]>;
   /** Edit an event's comment. Returns the updated event or null. */
   updateEvent(id: string, comment: string | null): Promise<RecordEvent | null>;
   /** Delete an event. Returns true if removed. */

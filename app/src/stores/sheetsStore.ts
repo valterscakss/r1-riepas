@@ -159,6 +159,7 @@ export class SheetsStore implements Store {
     return { id: '0', recordId: e.recordId, action: e.action, comment: e.comment, actor: e.actor, createdAt: null };
   }
   async listEvents(): Promise<[]> { return []; }
+  async recentEvents(): Promise<[]> { return []; }
   async updateEvent(): Promise<null> { return null; }
   async deleteEvent(): Promise<boolean> { return false; }
 }

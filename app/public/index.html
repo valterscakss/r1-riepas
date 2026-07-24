@@ -87,7 +87,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 35</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 36</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -230,6 +230,7 @@ function nav(screen){S.screen=screen;S.selSpot=null;
   if(screen==='table'){render();if(!S.tableLoaded)loadTable().then(()=>{if(S.screen==='table')render();});return;}
   if(screen==='pending'){render();loadPending().then(()=>{if(S.screen==='pending')render();});return;}
   if(screen==='analytics'){render();loadAnalytics().then(()=>{if(S.screen==='analytics')render();});return;}
+  if(screen==='home'){render();Promise.all([loadActivity(),loadStats()]).then(()=>{if(S.screen==='home')render();});return;}
   render();}
 document.querySelectorAll('[data-nav]').forEach(b=>b.addEventListener('click',()=>{document.body.classList.remove('nav-open');if(b.dataset.nav==='intake')resetIntake();nav(b.dataset.nav);}));
 
@@ -253,12 +254,16 @@ function render(){
   if(S.screen==='intake')updateSummary();
 }
 
-const actRow=a=>{const isIn=a.type==='in';
-  return `<div style="display:grid;grid-template-columns:84px 110px 1fr auto;gap:12px;align-items:center;padding:12px var(--card);border-bottom:1px solid var(--border);">
-  <span class="mono" style="font-size:12px;color:var(--ink-3);">${esc((a.t||'').slice(5))}</span>
-  <span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;text-align:center;${isIn?'background:var(--ok-soft);color:var(--ok);':'background:var(--accent-soft);color:var(--accent-2);'}">${isIn?'Pieņemšana':'Izsniegšana'}</span>
-  <span style="display:flex;align-items:center;gap:10px;min-width:0;"><span class="mono" style="font-weight:600;font-size:13px;">${esc(a.plate||'—')}</span><span style="color:var(--ink-3);font-size:12px;">→ ${esc(a.loc||'—')}</span></span>
-  <span style="font-size:12px;color:var(--ink-2);">R1</span></div>`;};
+const ACT_FEED={in:['Pieņemšana','var(--ok-soft)','var(--ok)'],created:['Pieņemšana','var(--ok-soft)','var(--ok)'],out:['Izsniegšana','var(--accent-soft)','var(--accent-2)'],released:['Izsniegšana','var(--accent-soft)','var(--accent-2)'],prepared:['Sagatavots','var(--warn-soft)','var(--warn)'],unprepared:['Atpakaļ vietā','var(--surface-2)','var(--ink-2)'],swapped:['Maiņa','var(--accent-soft)','var(--accent-2)'],blocked:['Bloķēts','var(--danger-soft)','var(--danger)'],unblocked:['Atbloķēts','var(--ok-soft)','var(--ok)'],edited:['Rediģēts','var(--surface-2)','var(--ink-2)'],comment:['Komentārs','oklch(0.95 0.03 285)','oklch(0.5 0.15 285)']};
+const actRow=a=>{const m=ACT_FEED[a.type]||['Darbība','var(--surface-2)','var(--ink-2)'];
+  const when=String(a.d||a.t||'').replace('T',' ').slice(5,16);
+  const isLoc=(a.type==='in'||a.type==='out'||a.type==='created'||a.type==='released'||a.type==='swapped');
+  const detail=a.comment?`<span style="color:var(--ink-2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">“${esc(a.comment)}”</span>`:(isLoc&&a.loc?`<span style="color:var(--ink-3);font-size:12px;">→ ${esc(a.loc)}</span>`:'');
+  return `<div style="display:grid;grid-template-columns:74px 104px 1fr auto;gap:10px;align-items:center;padding:12px var(--card);border-bottom:1px solid var(--border);">
+  <span class="mono" style="font-size:12px;color:var(--ink-3);">${esc(when)}</span>
+  <span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;text-align:center;background:${m[1]};color:${m[2]};white-space:nowrap;">${m[0]}</span>
+  <span style="display:flex;align-items:center;gap:9px;min-width:0;"><span class="mono" style="font-weight:600;font-size:13px;flex:none;">${esc(a.plate||'—')}</span>${detail}</span>
+  <span style="font-size:12px;color:var(--ink-3);white-space:nowrap;">${esc(a.actor||'R1')}</span></div>`;};
 
 const contBar=c=>{const pct=c.total?Math.round(c.occ/c.total*100):0;
   const bc=pct>=90?'var(--danger)':pct>=75?'var(--warn)':'var(--accent)';
@@ -728,7 +733,7 @@ async function recAction(kind){const r=S.recData;if(!r)return;
   else if(kind==='unblock'){await fetch('/api/storage/'+encodeURIComponent(r.id)+'/unblock',{method:'POST'});}
   const msgs={release:'Riepas izsniegtas',prepare:'Sagatavots · vieta rezervēta',terminate:'Pasūtījums slēgts',unprep:'Novietots atpakaļ',unblock:'Atbloķēts'};
   S.recOpen=false;toast(msgs[kind]||'Izdarīts');
-  await Promise.all([loadTable(),loadStats(),loadPending()]);
+  await Promise.all([loadTable(),loadStats(),loadPending(),loadActivity()]);
   renderModal();render();}
 
 // Manual record edit — a form of the data fields; PATCHes only the changed values.
@@ -791,7 +796,7 @@ function recEventsHTML(){
 async function addRecComment(){const r=S.recData;if(!r)return;const el=document.getElementById('rec-comment');const c=(el&&el.value||'').trim();if(!c)return;
   const res=await fetch('/api/storage/'+encodeURIComponent(r.id)+'/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({comment:c})});
   const data=await res.json().catch(()=>({}));if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās pievienot');return;}
-  await loadRecEvents(r.id);}
+  await loadRecEvents(r.id);loadActivity();}
 async function editEventDialog(id){const ev=(S.recEvents||[]).find(e=>String(e.id)===String(id));if(!ev)return;
   const {value:txt}=await R1.fire({title:'Labot komentāru',input:'textarea',inputValue:ev.comment||'',showCancelButton:true,confirmButtonText:'Saglabāt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'}});
   if(txt===undefined)return;

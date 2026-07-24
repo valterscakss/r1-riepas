@@ -365,13 +365,26 @@ export function createApp(): express.Express {
   app.get('/api/activity', requireAuth, asyncH(async (_req, res) => {
     const store = await getStore();
     const all = await store.list();
-    const ev: { t: string; type: 'in' | 'out'; plate: string | null; loc: string | null; d: string }[] = [];
-    for (const r of all) {
-      if (r.intakeDate) ev.push({ t: r.intakeDate, type: 'in', plate: r.plate, loc: r.location, d: r.intakeDate });
-      if (r.releaseDate) ev.push({ t: r.releaseDate, type: 'out', plate: r.plate, loc: r.location, d: r.releaseDate });
+    const byId = new Map(all.map((r) => [String(r.id), r]));
+    type Feed = { type: string; plate: string | null; loc: string | null; d: string; comment?: string | null; actor?: string | null };
+    const ev: Feed[] = [];
+    // Rich, timestamped events (comments + every action) — newest first.
+    const events = await store.recentEvents(40);
+    const hasCreated = new Set<string>();
+    const hasReleased = new Set<string>();
+    for (const e of events) {
+      const r = byId.get(String(e.recordId));
+      if (e.action === 'created') hasCreated.add(String(e.recordId));
+      if (e.action === 'released' || e.action === 'swapped') hasReleased.add(String(e.recordId));
+      ev.push({ type: e.action, plate: r?.plate ?? null, loc: r?.location ?? null, d: e.createdAt ?? '', comment: e.comment, actor: e.actor });
     }
-    ev.sort((a, b) => b.d.localeCompare(a.d));
-    res.json({ events: ev.slice(0, 8) });
+    // Date-derived intake/release for coverage of records with no logged event yet.
+    for (const r of all) {
+      if (r.intakeDate && !hasCreated.has(String(r.id))) ev.push({ type: 'in', plate: r.plate, loc: r.location, d: r.intakeDate });
+      if (r.releaseDate && !hasReleased.has(String(r.id))) ev.push({ type: 'out', plate: r.plate, loc: r.location, d: r.releaseDate });
+    }
+    ev.sort((a, b) => (b.d || '').localeCompare(a.d || ''));
+    res.json({ events: ev.slice(0, 12) });
   }));
 
   // Customers view: grouped by name+plate with storage history.
