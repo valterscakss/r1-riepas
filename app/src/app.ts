@@ -242,12 +242,42 @@ export function createApp(): express.Express {
     });
   }));
 
+  // Canonical tire-brand names — collapses the shop's shorthand into full brand
+  // names so analytics don't split one brand across spellings (e.g. GY = Goodyear,
+  // Conti = Continental). Unknown brands keep their original text.
+  const BRAND_ALIASES: Record<string, string> = {
+    GY: 'Goodyear', GOODYEAR: 'Goodyear', 'GOOD YEAR': 'Goodyear',
+    CONTI: 'Continental', CONTINENTAL: 'Continental',
+    BS: 'Bridgestone', BRIDGESTONE: 'Bridgestone', BRIDG: 'Bridgestone',
+    MICH: 'Michelin', MICHELIN: 'Michelin',
+    PIRELLI: 'Pirelli', NOKIAN: 'Nokian', HANKOOK: 'Hankook',
+    YOKOHAMA: 'Yokohama', DUNLOP: 'Dunlop', SAVA: 'Sava',
+    KUMHO: 'Kumho', NEXEN: 'Nexen', SAILUN: 'Sailun', TOYO: 'Toyo',
+    MARSHAL: 'Marshal', MARSHALL: 'Marshal',
+  };
+  const canonBrand = (b: string | null | undefined): string | null => {
+    const t = (b ?? '').trim();
+    if (!t) return null;
+    return BRAND_ALIASES[t.toUpperCase()] ?? t;
+  };
+
   // Analytics: aggregate car makes/models, tire sizes, brands, seasons, quantity
-  // types across ALL records (excludes 'blocked' placeholder spots). The 2nd size
-  // is pulled from size2 or, failing that, a size written into the notes column.
-  app.get('/api/analytics', requireAuth, asyncH(async (_req, res) => {
+  // types (excludes 'blocked' placeholder spots). Optional ?season= filters to one
+  // source sheet. The 2nd size is pulled from size2 or a size in the notes column.
+  app.get('/api/analytics', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
-    const all = (await store.list()).filter((r) => r.status !== 'blocked');
+    const everything = (await store.list()).filter((r) => r.status !== 'blocked');
+    // Distinct source seasons (from the full set, so the dropdown is stable when
+    // filtered). Year-prefixed seasons come first, newest first; oddly-named sheets last.
+    const seasonOptions = [...new Set(everything.map((r) => (r.season ?? '').trim()).filter(Boolean))]
+      .sort((a, b) => {
+        const ya = /^\d{4}/.test(a), yb = /^\d{4}/.test(b);
+        if (ya && yb) return b.localeCompare(a, 'lv');
+        if (ya !== yb) return ya ? -1 : 1;
+        return a.localeCompare(b, 'lv');
+      });
+    const selectedSeason = typeof req.query.season === 'string' ? req.query.season.trim() : '';
+    const all = selectedSeason ? everything.filter((r) => (r.season ?? '').trim() === selectedSeason) : everything;
     const NOTE_SIZE = /\b(\d{3})\/(\d{1,2})[/R]?(\d{2})\b/i;
     const normSz = (s: string | null): string | null => {
       if (!s) return null;
@@ -285,7 +315,7 @@ export function createApp(): express.Express {
       if (s1) tally(sizes, s1);
       const s2 = second(r);
       if (s2) { tally(sizes, s2); withSecond++; }
-      tally(brands, r.brand);
+      tally(brands, canonBrand(r.brand));
       tally(seasons, r.season);
       if (r.quantity) tally(quantities, r.quantity.trim());
     }
@@ -295,6 +325,7 @@ export function createApp(): express.Express {
       prepared: all.filter((r) => r.status === 'prepared').length,
       released: all.filter((r) => r.status === 'released').length,
       withSecondSize: withSecond,
+      seasonOptions, selectedSeason,
       makes: top(makes), models: top(models), sizes: top(sizes),
       brands: top(brands), seasons: top(seasons, 30), quantities: top(quantities),
     });

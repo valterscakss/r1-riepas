@@ -87,7 +87,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 32</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 33</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -177,7 +177,8 @@ const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:n
   smsOpen:false,smsRec:null,selSpot:null,presetSpot:null,spotHist:[],spotHistLoading:false,spotPickOpen:false,
   relQ:'',relResults:[],relLoading:false,relSearched:false,
   table:null,tableLoaded:false,tabQ:'',tabStatus:'active',tabSort:{col:'location',dir:'asc'},
-  pending:[],pendingLoaded:false,swapFromId:null,recOpen:false,recData:null};
+  pending:[],pendingLoaded:false,swapFromId:null,recOpen:false,recData:null,
+  analytics:null,analyticsLoaded:false,anaSeason:''};
 
 const ROLES={staff:{label:'Personāls',name:'Juris Kalniņš'},manager:{label:'Vadītājs',name:'Ilze Ozola'},owner:{label:'Īpašnieks',name:'Mārtiņš Bērze'}};
 const initialsOf=n=>String(n||'—').replace(/^SIA\s*/i,'').replace(/["']/g,'').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'—';
@@ -482,7 +483,7 @@ function tabNotes(r){const n=r.notes||'';return /^\s*\d{3}\/\d{1,2}[\/R]?\d{2}\s
 function tabVal(r,k){return k==='diski'?(r.rimNote||''):k==='size2'?tabSize2(r):k==='notes'?tabNotes(r):r[k];}
 const STAT_BADGE={active:['Glabājas','var(--ok-soft)','var(--ok)'],prepared:['Rezervēts','var(--warn-soft)','var(--warn)'],blocked:['Bloķēts','var(--danger-soft)','var(--danger)'],released:['Izsniegts','var(--surface-2)','var(--ink-3)']};
 async function loadTable(){try{const d=await(await fetch('/api/storage')).json();S.table=d.records||[];}catch{S.table=[];}S.tableLoaded=true;}
-async function loadAnalytics(){try{S.analytics=await(await fetch('/api/analytics')).json();}catch{S.analytics=null;}S.analyticsLoaded=true;}
+async function loadAnalytics(){const qs=S.anaSeason?('?season='+encodeURIComponent(S.anaSeason)):'';try{S.analytics=await(await fetch('/api/analytics'+qs)).json();}catch{S.analytics=null;}S.analyticsLoaded=true;}
 // A card with a horizontal bar list of {label,count}, bars proportional to the max.
 function barCard(title,items,accent){
   items=items||[];const max=items.reduce((m,x)=>Math.max(m,x.count),0)||1;
@@ -497,9 +498,17 @@ function barCard(title,items,accent){
 function analyticsHTML(){
   const a=S.analytics;
   const statCard=(label,val,color)=>`<div class="card" style="padding:var(--card);"><div class="label">${label}</div><div class="mono" style="font-size:28px;font-weight:600;margin-top:8px;${color?'color:'+color+';':''}">${val}</div></div>`;
+  const seasonOpts=(a&&a.seasonOptions)||[];
+  const seasonSel=`<select id="ana-season" style="height:38px;max-width:100%;padding:0 34px 0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);font-size:13px;font-weight:500;cursor:pointer;color:var(--ink);appearance:none;background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22gray%22 stroke-width=%223%22><path d=%22M6 9l6 6 6-6%22/></svg>');background-repeat:no-repeat;background-position:right 12px center;">
+    <option value=""${S.anaSeason?'':' selected'}>Visas sezonas</option>
+    ${seasonOpts.map(s=>`<option value="${esc(s)}"${S.anaSeason===s?' selected':''}>${esc(s)}</option>`).join('')}
+  </select>`;
   return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
-    <div style="margin-bottom:var(--pad);"><h1 style="margin:0;font-size:24px;font-weight:600;">Analītika</h1>
-    <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Auto markas, izmēri, ražotāji un sezonu sadalījums</div></div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
+      <div><h1 style="margin:0;font-size:24px;font-weight:600;">Analītika</h1>
+      <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${S.anaSeason?'Avots: <b>'+esc(S.anaSeason)+'</b>':'Auto markas, izmēri, ražotāji un sezonu sadalījums'}</div></div>
+      ${a?seasonSel:''}
+    </div>
     ${!S.analyticsLoaded?'<div class="card" style="padding:24px;color:var(--ink-3);">Ielādē…</div>':!a?'<div class="card" style="padding:24px;color:var(--danger);">Neizdevās ielādēt datus.</div>':`
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--gap);margin-bottom:var(--gap);">
       ${statCard('Ieraksti kopā',a.total)}
@@ -991,6 +1000,8 @@ function bind(root){
     rq.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();clearTimeout(t);S.relQ=rq.value;loadRelease().then(updateReleaseContent);}});}
   const tq=root.querySelector('#tab-q');
   if(tq){let t;tq.addEventListener('input',()=>{clearTimeout(t);S.tabQ=tq.value;t=setTimeout(updateTabContent,250);});}
+  const asel=root.querySelector('#ana-season');
+  if(asel)asel.addEventListener('change',async()=>{S.anaSeason=asel.value;S.analyticsLoaded=false;render();await loadAnalytics();if(S.screen==='analytics')render();});
 }
 function grab(){const g=(id,k)=>{const el=$(id);if(el)S[k]=el.value;};
   g('#in-plate','plate');g('#in-size','t1size');g('#in-brand','t1brand');g('#in-qty','t1qty');g('#in-thread','thread');
