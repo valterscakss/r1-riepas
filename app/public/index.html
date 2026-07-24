@@ -88,7 +88,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 37</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 38</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -256,12 +256,24 @@ function render(){
 }
 
 const ACT_FEED={in:['Pieņemšana','var(--ok-soft)','var(--ok)'],created:['Pieņemšana','var(--ok-soft)','var(--ok)'],out:['Izsniegšana','var(--accent-soft)','var(--accent-2)'],released:['Izsniegšana','var(--accent-soft)','var(--accent-2)'],prepared:['Sagatavots','var(--warn-soft)','var(--warn)'],unprepared:['Atpakaļ vietā','var(--surface-2)','var(--ink-2)'],swapped:['Maiņa','var(--accent-soft)','var(--accent-2)'],blocked:['Bloķēts','var(--danger-soft)','var(--danger)'],unblocked:['Atbloķēts','var(--ok-soft)','var(--ok)'],edited:['Rediģēts','var(--surface-2)','var(--ink-2)'],comment:['Komentārs','oklch(0.95 0.03 285)','oklch(0.5 0.15 285)']};
+// Format a stored UTC timestamp into the viewer's LOCAL date + time (DD.MM.YYYY / HH:MM).
+// Date-only values (intake/release derived from a date column) show just the date.
+function evWhen(s){
+  if(!s)return {d:'',t:''};
+  s=String(s);
+  const md=s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(md)return {d:`${md[3]}.${md[2]}.${md[1]}`,t:''};
+  const dt=new Date(s.indexOf('T')<0&&s.indexOf('Z')<0?s.replace(' ','T')+'Z':s); // treat naive UTC strings as UTC
+  if(isNaN(dt.getTime()))return {d:s,t:''};
+  const p=n=>String(n).padStart(2,'0');
+  return {d:`${p(dt.getDate())}.${p(dt.getMonth()+1)}.${dt.getFullYear()}`,t:`${p(dt.getHours())}:${p(dt.getMinutes())}`};
+}
 const actRow=a=>{const m=ACT_FEED[a.type]||['Darbība','var(--surface-2)','var(--ink-2)'];
-  const when=String(a.d||a.t||'').replace('T',' ').slice(5,16);
+  const w=evWhen(a.d||a.t);
   const isLoc=(a.type==='in'||a.type==='out'||a.type==='created'||a.type==='released'||a.type==='swapped');
   const detail=a.comment?`<span style="color:var(--ink-2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">“${esc(a.comment)}”</span>`:(isLoc&&a.loc?`<span style="color:var(--ink-3);font-size:12px;">→ ${esc(a.loc)}</span>`:'');
-  return `<div style="display:grid;grid-template-columns:74px 104px 1fr auto;gap:10px;align-items:center;padding:12px var(--card);border-bottom:1px solid var(--border);">
-  <span class="mono" style="font-size:12px;color:var(--ink-3);">${esc(when)}</span>
+  return `<div style="display:grid;grid-template-columns:92px 104px 1fr auto;gap:10px;align-items:center;padding:12px var(--card);border-bottom:1px solid var(--border);">
+  <span class="mono" style="font-size:11px;color:var(--ink-3);line-height:1.4;">${esc(w.d)}${w.t?`<br><span style="color:var(--ink-2);font-weight:600;">${esc(w.t)}</span>`:''}</span>
   <span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;text-align:center;background:${m[1]};color:${m[2]};white-space:nowrap;">${m[0]}</span>
   <span style="display:flex;align-items:center;gap:9px;min-width:0;"><span class="mono" style="font-weight:600;font-size:13px;flex:none;">${esc(a.plate||'—')}</span>${detail}</span>
   <span style="font-size:12px;color:var(--ink-3);white-space:nowrap;">${esc(a.actor||'R1')}</span></div>`;};

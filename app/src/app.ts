@@ -400,11 +400,17 @@ export function createApp(): express.Express {
       ev.push({ type: e.action, plate: r?.plate ?? null, loc: r?.location ?? null, d: e.createdAt ?? '', comment: e.comment, actor: e.actor });
     }
     // Date-derived intake/release for coverage of records with no logged event yet.
+    // Skip FUTURE dates (data-entry typos like a 2026-12 release when it's July) so
+    // "recent actions" reflects things that actually happened, not future placeholders.
+    const today = new Date().toISOString().slice(0, 10);
     for (const r of all) {
-      if (r.intakeDate && !hasCreated.has(String(r.id))) ev.push({ type: 'in', plate: r.plate, loc: r.location, d: r.intakeDate });
-      if (r.releaseDate && !hasReleased.has(String(r.id))) ev.push({ type: 'out', plate: r.plate, loc: r.location, d: r.releaseDate });
+      if (r.intakeDate && r.intakeDate <= today && !hasCreated.has(String(r.id))) ev.push({ type: 'in', plate: r.plate, loc: r.location, d: r.intakeDate });
+      if (r.releaseDate && r.releaseDate <= today && !hasReleased.has(String(r.id))) ev.push({ type: 'out', plate: r.plate, loc: r.location, d: r.releaseDate });
     }
-    ev.sort((a, b) => (b.d || '').localeCompare(a.d || ''));
+    // Unified chronological sort by a real timestamp (ms). Date-only values are read
+    // as UTC midnight; full ISO timestamps keep their time — so ordering is consistent.
+    const tms = (d: string) => { const t = Date.parse(/[TZ]/.test(d) ? d : `${d}T00:00:00Z`); return Number.isNaN(t) ? 0 : t; };
+    ev.sort((a, b) => tms(b.d || '') - tms(a.d || ''));
     res.json({ events: ev.slice(0, 12) });
   }));
 
