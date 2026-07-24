@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { Store, StorageRecord, IntakeInput, User } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container } from '../types.js';
 
 /**
  * Postgres datastore — the production backend for Supabase (or any Postgres).
@@ -43,6 +43,15 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   role          TEXT NOT NULL DEFAULT 'staff',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS containers (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  prefix     TEXT UNIQUE NOT NULL,
+  label      TEXT,
+  rows       INTEGER NOT NULL DEFAULT 1,
+  cols       INTEGER NOT NULL DEFAULT 4,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 `;
 
@@ -265,6 +274,29 @@ export class PostgresStore implements Store {
   async deleteUserByUsername(username: string): Promise<boolean> {
     await this.init();
     const res = await this.pool.query('DELETE FROM users WHERE username = $1', [username.toLowerCase()]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  // --- Containers ---
+  async listContainers(): Promise<Container[]> {
+    await this.init();
+    const res = await this.pool.query<{ id: number; prefix: string; label: string | null; rows: number; cols: number; created_at: string | null }>(
+      'SELECT id, prefix, label, rows, cols, created_at FROM containers ORDER BY prefix ASC');
+    return res.rows.map((r) => ({ id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols, createdAt: r.created_at ? String(r.created_at) : null }));
+  }
+
+  async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number }): Promise<Container> {
+    await this.init();
+    const res = await this.pool.query<{ id: number; prefix: string; label: string | null; rows: number; cols: number; created_at: string | null }>(
+      'INSERT INTO containers (prefix, label, rows, cols) VALUES ($1,$2,$3,$4) RETURNING id, prefix, label, rows, cols, created_at',
+      [c.prefix, c.label, c.rows, c.cols]);
+    const r = res.rows[0];
+    return { id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols, createdAt: r.created_at ? String(r.created_at) : null };
+  }
+
+  async deleteContainer(id: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('DELETE FROM containers WHERE id = $1', [Number(id)]);
     return (res.rowCount ?? 0) > 0;
   }
 }

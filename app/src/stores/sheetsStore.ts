@@ -152,6 +152,9 @@ export class SheetsStore implements Store {
   async countUsers(): Promise<number> { return 0; }
   async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff'; createdAt: string | null }>> { return this.unsupported(); }
   async deleteUserByUsername(): Promise<boolean> { return this.unsupported(); }
+  async listContainers(): Promise<[]> { return []; }
+  async createContainer(): Promise<never> { return this.unsupported(); }
+  async deleteContainer(): Promise<boolean> { return this.unsupported(); }
 }
 
 // (COL_COUNT kept for reference/validation of the layout width.)

@@ -163,6 +163,7 @@ export function createApp(): express.Express {
   async function spotUniverse() {
     const store = await getStore();
     const all = await store.list();
+    const defs = await store.listContainers();
     const seen = new Map<string, { code: string; c: string; n: number }>();
     const occupied = new Map<string, (typeof all)[number]>();
     for (const r of all) {
@@ -173,8 +174,16 @@ export function createApp(): express.Express {
       // Stored ('active'), staged-for-swap ('prepared') and manually 'blocked' spots all hold the spot.
       if ((r.status === 'active' || r.status === 'prepared' || r.status === 'blocked') && !occupied.has(code)) occupied.set(code, r);
     }
+    // Add every place from user-defined containers, so empty containers appear too.
+    for (const d of defs) {
+      const cap = Math.max(0, (d.rows || 1) * (d.cols || 1));
+      for (let n = 1; n <= cap; n++) {
+        const code = `${d.prefix}${n}`;
+        if (!seen.has(code)) seen.set(code, { code, c: d.prefix, n });
+      }
+    }
     const spots = [...seen.values()].sort((a, b) => a.c.localeCompare(b.c) || a.n - b.n);
-    return { spots, occupied, all };
+    return { spots, occupied, all, defs };
   }
   const priceFor = (size: string | null, rim: string | null) => {
     const width = parseInt((size ?? '').slice(0, 3)) || 0;
@@ -210,7 +219,8 @@ export function createApp(): express.Express {
 
   // Stats for dashboard + spots grid (design: containers, capacity, activity).
   app.get('/api/stats', requireAuth, asyncH(async (_req, res) => {
-    const { spots, occupied, all } = await spotUniverse();
+    const { spots, occupied, all, defs } = await spotUniverse();
+    const defByPrefix = new Map(defs.map((d) => [d.prefix, d]));
     const byC = new Map<string, { letter: string; spots: unknown[]; occ: number }>();
     for (const s of spots) {
       if (!byC.has(s.c)) byC.set(s.c, { letter: s.c, spots: [], occ: 0 });
@@ -218,13 +228,14 @@ export function createApp(): express.Express {
       const r = occupied.get(s.code);
       if (r) g.occ++;
       g.spots.push(r
-        ? { code: s.code, occ: true, reserved: r.status === 'prepared', blocked: r.status === 'blocked', id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
+        ? { code: s.code, occ: true, reserved: r.status === 'prepared', blocked: r.status === 'blocked', hasRims: !!r.rimNote, id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
         : { code: s.code, occ: false });
     }
     const containers = [...byC.values()]
-      .map((g) => ({ ...g, total: g.spots.length }))
-      .sort((a, b) => b.total - a.total || a.letter.localeCompare(b.letter))
-      .slice(0, 8)
+      .map((g) => {
+        const d = defByPrefix.get(g.letter);
+        return { ...g, total: g.spots.length, cols: d?.cols ?? 4, label: d?.label ?? null, defId: d?.id ?? null };
+      })
       .sort((a, b) => a.letter.localeCompare(b.letter));
     const occ = [...occupied.keys()].length;
     const reserved = [...occupied.values()].filter((r) => r.status === 'prepared').length;
@@ -277,7 +288,16 @@ export function createApp(): express.Express {
         return a.localeCompare(b, 'lv');
       });
     const selectedSeason = typeof req.query.season === 'string' ? req.query.season.trim() : '';
-    const all = selectedSeason ? everything.filter((r) => (r.season ?? '').trim() === selectedSeason) : everything;
+    const fStatus = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+    const fCustomer = typeof req.query.customer === 'string' ? req.query.customer.trim() : '';
+    const fRims = typeof req.query.rims === 'string' ? req.query.rims.trim() : '';
+    let all = everything;
+    if (selectedSeason) all = all.filter((r) => (r.season ?? '').trim() === selectedSeason);
+    if (fStatus === 'active' || fStatus === 'released' || fStatus === 'prepared') all = all.filter((r) => r.status === fStatus);
+    if (fCustomer === 'company') all = all.filter((r) => r.isCompany);
+    else if (fCustomer === 'private') all = all.filter((r) => !r.isCompany);
+    if (fRims === 'with') all = all.filter((r) => !!r.rimNote);
+    else if (fRims === 'without') all = all.filter((r) => !r.rimNote);
     const NOTE_SIZE = /\b(\d{3})\/(\d{1,2})[/R]?(\d{2})\b/i;
     const normSz = (s: string | null): string | null => {
       if (!s) return null;
@@ -326,6 +346,7 @@ export function createApp(): express.Express {
       released: all.filter((r) => r.status === 'released').length,
       withSecondSize: withSecond,
       seasonOptions, selectedSeason,
+      filters: { status: fStatus, customer: fCustomer, rims: fRims },
       makes: top(makes), models: top(models), sizes: top(sizes),
       brands: top(brands), seasons: top(seasons, 30), quantities: top(quantities),
     });
@@ -518,6 +539,38 @@ export function createApp(): express.Express {
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
     if (rec.status !== 'blocked') return res.status(400).json({ error: { message: 'Šī vieta nav bloķēta' } });
     await store.deleteRecord(req.params.id);
+    res.json({ ok: true });
+  }));
+
+  // --- Storage containers (user-defined shelves/racks) ---
+  app.get('/api/containers', requireAuth, asyncH(async (_req, res) => {
+    const store = await getStore();
+    res.json({ containers: await store.listContainers() });
+  }));
+  app.post('/api/containers', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const b = (req.body ?? {}) as { prefix?: unknown; label?: unknown; rows?: unknown; cols?: unknown };
+    const prefix = String(b.prefix ?? '').toUpperCase().replace(/\s+/g, '');
+    if (!/^[A-ZĀ-Ž]{1,4}$/.test(prefix)) return res.status(400).json({ error: { message: 'Prefikss: 1–4 burti (piem. D)' } });
+    const rows = Math.trunc(Number(b.rows));
+    const cols = Math.trunc(Number(b.cols));
+    if (!Number.isFinite(rows) || rows < 1 || rows > 99 || !Number.isFinite(cols) || cols < 1 || cols > 99)
+      return res.status(400).json({ error: { message: 'Rindas un kolonnas: 1–99' } });
+    if (rows * cols > 600) return res.status(400).json({ error: { message: 'Pārāk daudz vietu (maks. 600)' } });
+    const label = typeof b.label === 'string' && b.label.trim() ? b.label.trim() : null;
+    const existing = await store.listContainers();
+    if (existing.some((c) => c.prefix === prefix)) return res.status(409).json({ error: { message: `Konteiners "${prefix}" jau eksistē` } });
+    try {
+      const created = await store.createContainer({ prefix, label, rows, cols });
+      res.status(201).json({ ok: true, container: created });
+    } catch {
+      res.status(409).json({ error: { message: `Konteiners "${prefix}" jau eksistē` } });
+    }
+  }));
+  app.delete('/api/containers/:id', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const ok = await store.deleteContainer(req.params.id);
+    if (!ok) return res.status(404).json({ error: { message: 'Konteiners nav atrasts' } });
     res.json({ ok: true });
   }));
 

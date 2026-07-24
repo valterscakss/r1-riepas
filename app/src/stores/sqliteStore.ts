@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Store, StorageRecord, IntakeInput, User } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container } from '../types.js';
 
 /**
  * SQLite datastore — the self-contained default backend. A real, durable, local
@@ -43,6 +43,15 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   role          TEXT NOT NULL DEFAULT 'staff',
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS containers (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  prefix     TEXT UNIQUE NOT NULL,
+  label      TEXT,
+  rows       INTEGER NOT NULL DEFAULT 1,
+  cols       INTEGER NOT NULL DEFAULT 4,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `;
 
@@ -259,5 +268,24 @@ export class SqliteStore implements Store {
   async deleteUserByUsername(username: string): Promise<boolean> {
     const info = this.db.prepare('DELETE FROM users WHERE username = ?').run(username.toLowerCase());
     return info.changes > 0;
+  }
+
+  // --- Containers ---
+  async listContainers(): Promise<Container[]> {
+    const rows = this.db.prepare('SELECT id, prefix, label, rows, cols, created_at FROM containers ORDER BY prefix ASC')
+      .all() as Array<{ id: number; prefix: string; label: string | null; rows: number; cols: number; created_at: string | null }>;
+    return rows.map((r) => ({ id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols, createdAt: r.created_at ?? null }));
+  }
+
+  async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number }): Promise<Container> {
+    const info = this.db.prepare('INSERT INTO containers (prefix, label, rows, cols) VALUES (?,?,?,?)')
+      .run(c.prefix, c.label, c.rows, c.cols);
+    const r = this.db.prepare('SELECT id, prefix, label, rows, cols, created_at FROM containers WHERE id = ?')
+      .get(info.lastInsertRowid) as { id: number; prefix: string; label: string | null; rows: number; cols: number; created_at: string | null };
+    return { id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols, createdAt: r.created_at ?? null };
+  }
+
+  async deleteContainer(id: string): Promise<boolean> {
+    return this.db.prepare('DELETE FROM containers WHERE id = ?').run(Number(id)).changes > 0;
   }
 }

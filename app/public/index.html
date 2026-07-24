@@ -87,7 +87,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 33</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 34</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -178,7 +178,7 @@ const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:n
   relQ:'',relResults:[],relLoading:false,relSearched:false,
   table:null,tableLoaded:false,tabQ:'',tabStatus:'active',tabSort:{col:'location',dir:'asc'},
   pending:[],pendingLoaded:false,swapFromId:null,recOpen:false,recData:null,
-  analytics:null,analyticsLoaded:false,anaSeason:''};
+  analytics:null,analyticsLoaded:false,anaSeason:'',anaStatus:'',anaCustomer:'',anaRims:''};
 
 const ROLES={staff:{label:'Personāls',name:'Juris Kalniņš'},manager:{label:'Vadītājs',name:'Ilze Ozola'},owner:{label:'Īpašnieks',name:'Mārtiņš Bērze'}};
 const initialsOf=n=>String(n||'—').replace(/^SIA\s*/i,'').replace(/["']/g,'').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'—';
@@ -386,32 +386,75 @@ function intakeHTML(){const p=price();
   </div></div>`;}
 
 function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capPct:0};
+  const isAdmin=S.auth&&S.auth.role==='admin';
   const spotBtn=s=>{const sel=S.selSpot&&S.selSpot.code===s.code;const ring=sel?'outline:2px solid var(--accent);outline-offset:1px;':'';
-    const base='display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;height:var(--spot);border-radius:9px;cursor:pointer;border:1px solid;padding:0;';
-    const fill=s.occ?(s.blocked?'background:var(--danger-soft);border-color:oklch(0.8 0.06 25);color:var(--danger);':s.reserved?'background:var(--warn-soft);border-color:oklch(0.82 0.08 82);color:var(--warn);':'background:var(--surface-2);border-color:var(--border-2);color:var(--ink-2);'):'background:var(--ok-soft);border-color:oklch(0.8 0.08 155);color:var(--ok);';
+    const base='position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;height:var(--spot);border-radius:9px;cursor:pointer;border:1px solid;padding:0;';
+    const fill=s.occ?(s.blocked?'background:var(--danger-soft);border-color:oklch(0.8 0.06 25);color:var(--danger);':s.reserved?'background:var(--warn-soft);border-color:oklch(0.82 0.08 82);color:var(--warn);':s.hasRims?'background:oklch(0.95 0.04 285);border-color:oklch(0.75 0.12 285);color:oklch(0.45 0.15 285);':'background:var(--surface-2);border-color:var(--border-2);color:var(--ink-2);'):'background:var(--ok-soft);border-color:oklch(0.8 0.08 155);color:var(--ok);';
     const style=base+fill+ring;
-    const title=s.occ?(s.blocked?'Bloķēts':(s.plate+' · '+(s.cust||'')+(s.reserved?' · rezervēts':''))):'Brīvs';
+    const title=s.occ?(s.blocked?'Bloķēts':(s.plate+' · '+(s.cust||'')+(s.reserved?' · rezervēts':'')+(s.hasRims?' · ar diskiem':''))):'Brīvs';
     return `<button data-spot="${esc(s.code)}" title="${esc(title)}" style="${style}">
+      ${s.hasRims&&!s.blocked?'<span title="Ar diskiem" style="position:absolute;top:3px;right:4px;font-size:9px;line-height:1;color:oklch(0.55 0.16 285);">◉</span>':''}
       <span class="mono" style="font-weight:600;font-size:11px;">${esc(s.code)}</span>
       ${s.occ?(s.blocked?'<span style="font-size:9px;opacity:.8;">bloķēts</span>':`<span class="mono" style="font-size:9px;opacity:.8;">${esc(s.plate||'')}</span>`):'<span style="font-size:9px;opacity:.75;">brīvs</span>'}</button>`;};
   return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
   <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--pad);flex-wrap:wrap;gap:12px;">
     <div><h1 style="margin:0;font-size:24px;font-weight:600;">Novietnes</h1>
     <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${st.occ} / ${st.total} aizņemtas · ${st.capPct}% noslodze</div></div>
-    <div style="display:flex;gap:16px;font-size:12px;">
+    ${isAdmin?`<button data-act="add-container" style="height:40px;padding:0 16px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">＋ Pievienot konteineru</button>`:''}
+  </div>
+  <div style="display:flex;gap:14px;font-size:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
       <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--ok-soft);border:1px solid oklch(0.8 0.08 155);"></span>Brīvs</span>
       <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border-2);"></span>Aizņemta</span>
+      <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:oklch(0.95 0.04 285);border:1px solid oklch(0.75 0.12 285);"></span>Ar diskiem</span>
       <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--warn-soft);border:1px solid oklch(0.82 0.08 82);"></span>Rezervēts</span>
       <span style="display:flex;align-items:center;gap:7px;"><span style="width:14px;height:14px;border-radius:4px;background:var(--danger-soft);border:1px solid oklch(0.8 0.06 25);"></span>Bloķēts</span>
-    </div></div>
+  </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--gap);">
     ${(st.containers||[]).map(c=>`<div class="card" style="padding:var(--card);">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <h2 style="margin:0;font-size:15px;font-weight:600;">Konteiners ${esc(c.letter)}</h2>
-        <span class="mono" style="font-size:12px;color:var(--ink-3);">${c.occ}/${c.total}</span></div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">${c.spots.map(spotBtn).join('')}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;">
+        <h2 style="margin:0;font-size:15px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Konteiners ${esc(c.letter)}${c.label?` · <span style="font-weight:400;color:var(--ink-3);">${esc(c.label)}</span>`:''}</h2>
+        <span style="display:flex;align-items:center;gap:8px;flex:none;"><span class="mono" style="font-size:12px;color:var(--ink-3);">${c.occ}/${c.total}</span>${(isAdmin&&c.defId)?`<button data-delcont="${esc(c.defId)}" data-prefix="${esc(c.letter)}" title="Dzēst konteineru" style="width:22px;height:22px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:12px;line-height:1;">✕</button>`:''}</span></div>
+      <div style="display:grid;grid-template-columns:repeat(${c.cols||4},1fr);gap:6px;">${c.spots.map(spotBtn).join('')}</div>
     </div>`).join('')}
   </div></div>`;}
+
+// Add a storage container: prefix + rows×cols → generated empty places (prefix1…prefixN).
+async function addContainerDialog(){
+  if(!R1)return;
+  const {value:form}=await R1.fire({title:'Pievienot konteineru',width:470,
+    html:`<div style="text-align:left;display:flex;flex-direction:column;gap:12px;">
+      <div><label class="label" style="display:block;margin-bottom:5px;">Prefikss (burts)</label><input id="ac-prefix" class="swal2-input mono" placeholder="D" maxlength="4" style="margin:0;width:100%;text-transform:uppercase;"></div>
+      <div style="display:flex;gap:12px;">
+        <div style="flex:1;"><label class="label" style="display:block;margin-bottom:5px;">Rindas</label><input id="ac-rows" type="number" min="1" max="99" value="4" class="swal2-input mono" style="margin:0;width:100%;"></div>
+        <div style="flex:1;"><label class="label" style="display:block;margin-bottom:5px;">Kolonnas</label><input id="ac-cols" type="number" min="1" max="99" value="20" class="swal2-input mono" style="margin:0;width:100%;"></div>
+      </div>
+      <div style="color:var(--ink-3);font-size:12px;" id="ac-cap">&nbsp;</div>
+      <div><label class="label" style="display:block;margin-bottom:5px;">Nosaukums (neobligāts)</label><input id="ac-label" class="swal2-input" placeholder="piem. Ziemas plaukts" style="margin:0;width:100%;"></div>
+    </div>`,
+    showCancelButton:true,confirmButtonText:'Izveidot',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'},
+    didOpen:()=>{const upd=()=>{const p=(document.getElementById('ac-prefix').value||'D').toUpperCase();const r=+document.getElementById('ac-rows').value||0;const c=+document.getElementById('ac-cols').value||0;const cap=r*c;document.getElementById('ac-cap').textContent=cap?`Vietas: ${cap} (${p}1…${p}${cap})`:'Vietas: —';};
+      ['ac-prefix','ac-rows','ac-cols'].forEach(id=>document.getElementById(id).addEventListener('input',upd));upd();},
+    preConfirm:()=>{const prefix=(document.getElementById('ac-prefix').value||'').trim().toUpperCase();
+      const rows=parseInt(document.getElementById('ac-rows').value,10);const cols=parseInt(document.getElementById('ac-cols').value,10);
+      const label=document.getElementById('ac-label').value.trim();
+      if(!/^[A-ZĀČĒĢĪĶĻŅŠŪŽ]{1,4}$/.test(prefix)){Swal.showValidationMessage('Prefikss: 1–4 burti (piem. D)');return false;}
+      if(!(rows>=1&&rows<=99&&cols>=1&&cols<=99)){Swal.showValidationMessage('Rindas/kolonnas: 1–99');return false;}
+      if(rows*cols>600){Swal.showValidationMessage('Pārāk daudz vietu (maks. 600)');return false;}
+      return {prefix,rows,cols,label:label||null};}});
+  if(!form)return;
+  const res=await fetch('/api/containers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās izveidot konteineru');return;}
+  toast('Konteiners '+form.prefix+' izveidots');
+  await loadStats();render();}
+async function deleteContainerDialog(id,prefix){
+  const r=await ask({icon:'warning',title:'Dzēst konteineru?',html:`Konteiners <b class="mono">${esc(prefix||'')}</b> tiks izņemts. Ieraksti, kas jau atrodas šajās vietās, <b>netiks dzēsti</b> — tikai tukšās vietas vairs nerādīsies.`,confirmButtonText:'Dzēst',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});
+  if(!r.isConfirmed)return;
+  const res=await fetch('/api/containers/'+encodeURIComponent(id),{method:'DELETE'});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){alertErr(data.error?.message||'Neizdevās dzēst');return;}
+  toast('Konteiners dzēsts');
+  await loadStats();render();}
 
 function customersHTML(){
   return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
@@ -483,7 +526,10 @@ function tabNotes(r){const n=r.notes||'';return /^\s*\d{3}\/\d{1,2}[\/R]?\d{2}\s
 function tabVal(r,k){return k==='diski'?(r.rimNote||''):k==='size2'?tabSize2(r):k==='notes'?tabNotes(r):r[k];}
 const STAT_BADGE={active:['Glabājas','var(--ok-soft)','var(--ok)'],prepared:['Rezervēts','var(--warn-soft)','var(--warn)'],blocked:['Bloķēts','var(--danger-soft)','var(--danger)'],released:['Izsniegts','var(--surface-2)','var(--ink-3)']};
 async function loadTable(){try{const d=await(await fetch('/api/storage')).json();S.table=d.records||[];}catch{S.table=[];}S.tableLoaded=true;}
-async function loadAnalytics(){const qs=S.anaSeason?('?season='+encodeURIComponent(S.anaSeason)):'';try{S.analytics=await(await fetch('/api/analytics'+qs)).json();}catch{S.analytics=null;}S.analyticsLoaded=true;}
+async function loadAnalytics(){const p=new URLSearchParams();
+  if(S.anaSeason)p.set('season',S.anaSeason);if(S.anaStatus)p.set('status',S.anaStatus);
+  if(S.anaCustomer)p.set('customer',S.anaCustomer);if(S.anaRims)p.set('rims',S.anaRims);
+  const qs=p.toString()?('?'+p.toString()):'';try{S.analytics=await(await fetch('/api/analytics'+qs)).json();}catch{S.analytics=null;}S.analyticsLoaded=true;}
 // A card with a horizontal bar list of {label,count}, bars proportional to the max.
 function barCard(title,items,accent){
   items=items||[];const max=items.reduce((m,x)=>Math.max(m,x.count),0)||1;
@@ -499,15 +545,23 @@ function analyticsHTML(){
   const a=S.analytics;
   const statCard=(label,val,color)=>`<div class="card" style="padding:var(--card);"><div class="label">${label}</div><div class="mono" style="font-size:28px;font-weight:600;margin-top:8px;${color?'color:'+color+';':''}">${val}</div></div>`;
   const seasonOpts=(a&&a.seasonOptions)||[];
-  const seasonSel=`<select id="ana-season" style="height:38px;max-width:100%;padding:0 34px 0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);font-size:13px;font-weight:500;cursor:pointer;color:var(--ink);appearance:none;background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22gray%22 stroke-width=%223%22><path d=%22M6 9l6 6 6-6%22/></svg>');background-repeat:no-repeat;background-position:right 12px center;">
-    <option value=""${S.anaSeason?'':' selected'}>Visas sezonas</option>
-    ${seasonOpts.map(s=>`<option value="${esc(s)}"${S.anaSeason===s?' selected':''}>${esc(s)}</option>`).join('')}
-  </select>`;
+  const selCss=`height:38px;max-width:100%;padding:0 32px 0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);font-size:13px;font-weight:500;cursor:pointer;color:var(--ink);appearance:none;background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22gray%22 stroke-width=%223%22><path d=%22M6 9l6 6 6-6%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;`;
+  const sel=(id,cur,opts)=>`<select id="${id}" style="${selCss}">${opts.map(o=>`<option value="${esc(o[0])}"${String(cur)===String(o[0])?' selected':''}>${esc(o[1])}</option>`).join('')}</select>`;
+  const seasonSel=sel('ana-season',S.anaSeason,[['','Visas sezonas'],...seasonOpts.map(s=>[s,s])]);
+  const statusSel=sel('ana-status',S.anaStatus,[['','Visi statusi'],['active','Glabājas'],['released','Izsniegti'],['prepared','Rezervēti']]);
+  const custSel=sel('ana-customer',S.anaCustomer,[['','Visi klienti'],['company','Uzņēmumi'],['private','Privātpersonas']]);
+  const rimsSel=sel('ana-rims',S.anaRims,[['','Diski: visi'],['with','Ar diskiem'],['without','Bez diskiem']]);
+  const anyFilter=S.anaSeason||S.anaStatus||S.anaCustomer||S.anaRims;
   return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
-      <div><h1 style="margin:0;font-size:24px;font-weight:600;">Analītika</h1>
-      <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${S.anaSeason?'Avots: <b>'+esc(S.anaSeason)+'</b>':'Auto markas, izmēri, ražotāji un sezonu sadalījums'}</div></div>
-      ${a?seasonSel:''}
+    <div style="margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+        <div><h1 style="margin:0;font-size:24px;font-weight:600;">Analītika</h1>
+        <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${S.anaSeason?'Avots: <b>'+esc(S.anaSeason)+'</b>':'Auto markas, izmēri, ražotāji un sezonu sadalījums'}</div></div>
+      </div>
+      ${a?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center;">
+        ${seasonSel}${statusSel}${custSel}${rimsSel}
+        ${anyFilter?`<button data-act="ana-clear" style="height:38px;padding:0 12px;background:transparent;border:1px solid var(--border-2);border-radius:9px;font-size:13px;font-weight:500;cursor:pointer;color:var(--ink-3);">✕ Notīrīt</button>`:''}
+      </div>`:''}
     </div>
     ${!S.analyticsLoaded?'<div class="card" style="padding:24px;color:var(--ink-3);">Ielādē…</div>':!a?'<div class="card" style="padding:24px;color:var(--danger);">Neizdevās ielādēt datus.</div>':`
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--gap);margin-bottom:var(--gap);">
@@ -899,7 +953,10 @@ function bind(root){
     else if(a==='pick-spot'){grab();S.spotPickOpen=true;renderModal();}
     else if(a==='sms-done'){S.smsOpen=false;S.smsRec=null;resetIntake();await Promise.all([loadStats(),loadActivity()]);nav('home');}
     else if(a==='import-xlsx'){const f=document.getElementById('imp-file');if(f)f.click();}
+    else if(a==='add-container')await addContainerDialog();
+    else if(a==='ana-clear'){S.anaSeason='';S.anaStatus='';S.anaCustomer='';S.anaRims='';S.analyticsLoaded=false;render();await loadAnalytics();if(S.screen==='analytics')render();}
   }));
+  root.querySelectorAll('[data-delcont]').forEach(el=>el.addEventListener('click',(e)=>{e.stopPropagation();deleteContainerDialog(el.dataset.delcont,el.dataset.prefix);}));
   const impf=root.querySelector('#imp-file');
   if(impf)impf.addEventListener('change',async()=>{const file=impf.files&&impf.files[0];impf.value='';if(file)await doImport(file);});
   root.querySelectorAll('[data-pickspot]').forEach(el=>el.addEventListener('click',()=>{
@@ -1000,8 +1057,9 @@ function bind(root){
     rq.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();clearTimeout(t);S.relQ=rq.value;loadRelease().then(updateReleaseContent);}});}
   const tq=root.querySelector('#tab-q');
   if(tq){let t;tq.addEventListener('input',()=>{clearTimeout(t);S.tabQ=tq.value;t=setTimeout(updateTabContent,250);});}
-  const asel=root.querySelector('#ana-season');
-  if(asel)asel.addEventListener('change',async()=>{S.anaSeason=asel.value;S.analyticsLoaded=false;render();await loadAnalytics();if(S.screen==='analytics')render();});
+  const anaReload=async()=>{S.analyticsLoaded=false;render();await loadAnalytics();if(S.screen==='analytics')render();};
+  [['#ana-season','anaSeason'],['#ana-status','anaStatus'],['#ana-customer','anaCustomer'],['#ana-rims','anaRims']].forEach(([sel,key])=>{
+    const el=root.querySelector(sel);if(el)el.addEventListener('change',()=>{S[key]=el.value;anaReload();});});
 }
 function grab(){const g=(id,k)=>{const el=$(id);if(el)S[k]=el.value;};
   g('#in-plate','plate');g('#in-size','t1size');g('#in-brand','t1brand');g('#in-qty','t1qty');g('#in-thread','thread');

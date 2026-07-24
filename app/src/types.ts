@@ -38,6 +38,16 @@ export interface User {
   role: 'admin' | 'staff';
 }
 
+/** A user-defined storage container (a shelf/rack/box of numbered places). */
+export interface Container {
+  id: string;
+  prefix: string;   // spot code prefix, e.g. "D" → D1, D2, …
+  label: string | null; // optional display name
+  rows: number;     // physical rows
+  cols: number;     // places per row; capacity = rows × cols
+  createdAt: string | null;
+}
+
 export interface ImportSummary {
   parsed: number;
   imported: number;
@@ -79,6 +89,14 @@ export interface Store {
   listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff'; createdAt: string | null }>>;
   /** Delete a user by username. Returns true if a row was removed. */
   deleteUserByUsername(username: string): Promise<boolean>;
+
+  // --- Storage containers (user-defined shelves/racks) ---
+  /** List all defined containers, ordered by prefix. */
+  listContainers(): Promise<Container[]>;
+  /** Create a container. Returns the created row. */
+  createContainer(c: { prefix: string; label: string | null; rows: number; cols: number }): Promise<Container>;
+  /** Delete a container definition by id. Returns true if removed. */
+  deleteContainer(id: string): Promise<boolean>;
 }
 
 /** Case-insensitive match of a query against the fields staff search by. */
