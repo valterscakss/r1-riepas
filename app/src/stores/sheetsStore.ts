@@ -143,6 +143,7 @@ export class SheetsStore implements Store {
   async prepare(): Promise<StorageRecord | null> { return this.unsupported(); }
   async blockSpot(): Promise<StorageRecord> { return this.unsupported(); }
   async deleteRecord(): Promise<boolean> { return this.unsupported(); }
+  async updateRecord(): Promise<StorageRecord | null> { return this.unsupported(); }
   async replaceAll(): Promise<{ imported: number }> { return this.unsupported(); }
   async ensureAuth(): Promise<void> { /* no-op */ }
   async getUserByUsername(): Promise<User | null> { return this.unsupported(); }

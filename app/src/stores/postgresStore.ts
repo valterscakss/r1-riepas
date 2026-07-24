@@ -160,6 +160,32 @@ export class PostgresStore implements Store {
     return (res.rowCount ?? 0) > 0;
   }
 
+  async updateRecord(id: string, patch: Partial<StorageRecord>): Promise<StorageRecord | null> {
+    await this.init();
+    // field → column allowlist (snake_case). Only these keys are writable via edit.
+    const MAP: Record<string, string> = {
+      season: 'season', location: 'location', plate: 'plate', makeModel: 'make_model',
+      customerName: 'customer_name', phone: 'phone', size1: 'size1', brand: 'brand',
+      quantity: 'quantity', size2: 'size2', rimNote: 'rim_note', notes: 'notes',
+      intakeDate: 'intake_date', releaseDate: 'release_date', threadDepth: 'thread_depth',
+      smsCode: 'sms_code', feeEur: 'fee_eur',
+    };
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    for (const [key, col] of Object.entries(MAP)) {
+      if (Object.prototype.hasOwnProperty.call(patch, key)) {
+        const v = (patch as Record<string, unknown>)[key];
+        vals.push(v === '' || v === undefined ? null : v);
+        sets.push(`${col} = $${vals.length}`);
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'isCompany')) { vals.push(!!patch.isCompany); sets.push(`is_company = $${vals.length}`); }
+    if (!sets.length) return this.get(id);
+    vals.push(Number(id));
+    const res = await this.pool.query<Row>(`UPDATE storage SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals);
+    return res.rows[0] ? toRecord(res.rows[0]) : null;
+  }
+
   async replaceAll(records: IntakeInput[]): Promise<{ imported: number }> {
     await this.init();
     const client = await this.pool.connect();

@@ -58,6 +58,8 @@ export interface Store {
   blockSpot(location: string): Promise<StorageRecord>;
   /** Hard-delete a record (used to unblock a spot). */
   deleteRecord(id: string): Promise<boolean>;
+  /** Patch editable fields of a record (Tabula manual edit). Only allowlisted keys apply. */
+  updateRecord(id: string, patch: Partial<StorageRecord>): Promise<StorageRecord | null>;
   /**
    * Replace ALL storage rows with the given records, transactionally.
    * Used by the Excel import pipeline (Excel = source of truth).

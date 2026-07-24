@@ -85,6 +85,29 @@ export function createApp(): express.Express {
     res.json(rec);
   }));
 
+  // Manual edit of a record's data fields (Tabula). Only allowlisted keys are applied.
+  app.patch('/api/storage/:id', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const EDITABLE = ['season', 'location', 'plate', 'makeModel', 'customerName', 'phone',
+      'size1', 'brand', 'quantity', 'size2', 'rimNote', 'notes', 'intakeDate', 'releaseDate',
+      'threadDepth', 'smsCode', 'feeEur', 'isCompany'] as const;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const patch: Record<string, unknown> = {};
+    for (const k of EDITABLE) {
+      if (Object.prototype.hasOwnProperty.call(body, k)) {
+        let v = body[k];
+        if (typeof v === 'string') { v = v.trim(); if (v === '') v = null; }
+        if (k === 'plate' && typeof v === 'string') v = v.toUpperCase().replace(/\s+/g, '');
+        if (k === 'location' && typeof v === 'string') v = v.toUpperCase().replace(/\s+/g, '');
+        patch[k] = v;
+      }
+    }
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: { message: 'No editable fields provided' } });
+    const rec = await store.updateRecord(req.params.id, patch);
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    res.json({ ok: true, record: rec });
+  }));
+
   app.get('/api/lookup', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
     const raw = typeof req.query.plate === 'string' ? req.query.plate : '';
@@ -216,6 +239,64 @@ export function createApp(): express.Express {
       revenueActive: Math.round(revenue * 100) / 100,
       assignNext: firstFree?.code ?? null,
       containers,
+    });
+  }));
+
+  // Analytics: aggregate car makes/models, tire sizes, brands, seasons, quantity
+  // types across ALL records (excludes 'blocked' placeholder spots). The 2nd size
+  // is pulled from size2 or, failing that, a size written into the notes column.
+  app.get('/api/analytics', requireAuth, asyncH(async (_req, res) => {
+    const store = await getStore();
+    const all = (await store.list()).filter((r) => r.status !== 'blocked');
+    const NOTE_SIZE = /\b(\d{3})\/(\d{1,2})[/R]?(\d{2})\b/i;
+    const normSz = (s: string | null): string | null => {
+      if (!s) return null;
+      const m = s.replace(/\s/g, '').match(/^(\d{3})\/(\d{1,2})[/R]?(\d{2})$/i);
+      return m ? `${m[1]}/${m[2]}/${m[3]}` : null;
+    };
+    const second = (r: { size2: string | null; notes: string | null }): string | null => {
+      if (r.size2) return normSz(r.size2);
+      const nm = (r.notes || '').match(NOTE_SIZE);
+      return nm ? `${nm[1]}/${nm[2]}/${nm[3]}` : null;
+    };
+    const tally = (map: Map<string, number>, key: string | null | undefined) => {
+      const k = (key ?? '').trim();
+      if (!k) return;
+      map.set(k, (map.get(k) ?? 0) + 1);
+    };
+    const top = (map: Map<string, number>, n = 15) =>
+      [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, n).map(([label, count]) => ({ label, count }));
+
+    const makes = new Map<string, number>();      // first word of makeModel
+    const models = new Map<string, number>();      // full make+model
+    const sizes = new Map<string, number>();       // size1 + 2nd sizes
+    const brands = new Map<string, number>();
+    const seasons = new Map<string, number>();
+    const quantities = new Map<string, number>();
+    let withSecond = 0;
+
+    for (const r of all) {
+      if (r.makeModel) {
+        tally(models, r.makeModel);
+        tally(makes, r.makeModel.trim().split(/\s+/)[0].toUpperCase());
+      }
+      const s1 = normSz(r.size1);
+      if (s1) tally(sizes, s1);
+      const s2 = second(r);
+      if (s2) { tally(sizes, s2); withSecond++; }
+      tally(brands, r.brand);
+      tally(seasons, r.season);
+      if (r.quantity) tally(quantities, r.quantity.trim());
+    }
+    res.json({
+      total: all.length,
+      active: all.filter((r) => r.status === 'active').length,
+      prepared: all.filter((r) => r.status === 'prepared').length,
+      released: all.filter((r) => r.status === 'released').length,
+      withSecondSize: withSecond,
+      makes: top(makes), models: top(models), sizes: top(sizes),
+      brands: top(brands), seasons: top(seasons, 30), quantities: top(quantities),
     });
   }));
 

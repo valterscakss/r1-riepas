@@ -181,6 +181,27 @@ export class SqliteStore implements Store {
     return this.db.prepare('DELETE FROM storage WHERE id = ?').run(Number(id)).changes > 0;
   }
 
+  async updateRecord(id: string, patch: Partial<StorageRecord>): Promise<StorageRecord | null> {
+    const editable = ['season', 'location', 'plate', 'makeModel', 'customerName', 'phone',
+      'size1', 'brand', 'quantity', 'size2', 'rimNote', 'notes', 'intakeDate', 'releaseDate',
+      'threadDepth', 'smsCode', 'feeEur'] as const;
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    for (const k of editable) {
+      if (Object.prototype.hasOwnProperty.call(patch, k)) {
+        sets.push(`${k} = ?`);
+        const v = (patch as Record<string, unknown>)[k];
+        vals.push(v === '' || v === undefined ? null : v);
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'isCompany')) { sets.push('isCompany = ?'); vals.push(patch.isCompany ? 1 : 0); }
+    if (!sets.length) return this.get(id);
+    vals.push(Number(id));
+    const info = this.db.prepare(`UPDATE storage SET ${sets.join(', ')} WHERE id = ?`).run(...(vals as never[]));
+    if (info.changes === 0) return null;
+    return this.get(id);
+  }
+
   async replaceAll(records: IntakeInput[]): Promise<{ imported: number }> {
     const insert = this.db.prepare(`INSERT INTO storage
       (season, location, plate, makeModel, customerName, isCompany, phone, size1, brand, quantity, size2, rimNote, notes, intakeDate, releaseDate, status)
