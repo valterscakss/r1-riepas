@@ -312,7 +312,10 @@ export class PostgresStore implements Store {
 
   // --- Record events ---
   private eventRow(r: { id: number; record_id: string; action: string; comment: string | null; actor: string | null; created_at: string | null }): RecordEvent {
-    return { id: String(r.id), recordId: r.record_id, action: r.action, comment: r.comment, actor: r.actor, createdAt: r.created_at ? String(r.created_at) : null };
+    // pg returns timestamptz as a Date; emit ISO so it sorts/formats correctly on the client.
+    let createdAt: string | null = null;
+    if (r.created_at) { const d = new Date(r.created_at); createdAt = isNaN(d.getTime()) ? String(r.created_at) : d.toISOString(); }
+    return { id: String(r.id), recordId: r.record_id, action: r.action, comment: r.comment, actor: r.actor, createdAt };
   }
   async addEvent(e: { recordId: string; action: string; comment: string | null; actor: string | null }): Promise<RecordEvent> {
     await this.init();
