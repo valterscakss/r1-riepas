@@ -38,6 +38,16 @@ export interface User {
   role: 'admin' | 'staff';
 }
 
+/** One entry in a record's action history (audit trail + comments). */
+export interface RecordEvent {
+  id: string;
+  recordId: string;
+  action: string;          // created | prepared | unprepared | released | blocked | unblocked | edited | comment
+  comment: string | null;  // optional note attached to the action
+  actor: string | null;    // username who did it
+  createdAt: string | null;
+}
+
 /** A user-defined storage container (a shelf/rack/box of numbered places). */
 export interface Container {
   id: string;
@@ -97,6 +107,16 @@ export interface Store {
   createContainer(c: { prefix: string; label: string | null; rows: number; cols: number }): Promise<Container>;
   /** Delete a container definition by id. Returns true if removed. */
   deleteContainer(id: string): Promise<boolean>;
+
+  // --- Record events (per-record action history + comments) ---
+  /** Append an event to a record's history. */
+  addEvent(e: { recordId: string; action: string; comment: string | null; actor: string | null }): Promise<RecordEvent>;
+  /** List a record's events, oldest first. */
+  listEvents(recordId: string): Promise<RecordEvent[]>;
+  /** Edit an event's comment. Returns the updated event or null. */
+  updateEvent(id: string, comment: string | null): Promise<RecordEvent | null>;
+  /** Delete an event. Returns true if removed. */
+  deleteEvent(id: string): Promise<boolean>;
 }
 
 /** Case-insensitive match of a query against the fields staff search by. */

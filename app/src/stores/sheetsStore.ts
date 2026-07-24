@@ -155,6 +155,12 @@ export class SheetsStore implements Store {
   async listContainers(): Promise<[]> { return []; }
   async createContainer(): Promise<never> { return this.unsupported(); }
   async deleteContainer(): Promise<boolean> { return this.unsupported(); }
+  async addEvent(e: { recordId: string; action: string; comment: string | null; actor: string | null }): Promise<import('../types.js').RecordEvent> {
+    return { id: '0', recordId: e.recordId, action: e.action, comment: e.comment, actor: e.actor, createdAt: null };
+  }
+  async listEvents(): Promise<[]> { return []; }
+  async updateEvent(): Promise<null> { return null; }
+  async deleteEvent(): Promise<boolean> { return false; }
 }
 
 // (COL_COUNT kept for reference/validation of the layout width.)

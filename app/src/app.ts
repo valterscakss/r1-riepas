@@ -3,7 +3,7 @@ import cookieParser from 'cookie-parser';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import type { IntakeInput, StorageRecord } from './types.js';
+import type { IntakeInput, StorageRecord, Store } from './types.js';
 import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
 import {
@@ -105,6 +105,7 @@ export function createApp(): express.Express {
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: { message: 'No editable fields provided' } });
     const rec = await store.updateRecord(req.params.id, patch);
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    await logEvent(store, rec.id, 'edited', body.comment, req);
     res.json({ ok: true, record: rec });
   }));
 
@@ -215,6 +216,14 @@ export function createApp(): express.Express {
       status: r.status, id: r.id,
       intakeDate: r.intakeDate, releaseDate: r.releaseDate,
     };
+  };
+
+  // Who performed an action (for the record history), and a fire-and-forget logger.
+  const actorOf = (req: express.Request): string | null =>
+    (req as express.Request & { user?: { username?: string } }).user?.username ?? null;
+  const logEvent = async (store: Store, recordId: string, action: string, comment: unknown, req: express.Request) => {
+    const c = typeof comment === 'string' && comment.trim() ? comment.trim().slice(0, 500) : null;
+    try { await store.addEvent({ recordId, action, comment: c, actor: actorOf(req) }); } catch { /* history is non-critical */ }
   };
 
   // Stats for dashboard + spots grid (design: containers, capacity, activity).
@@ -494,8 +503,9 @@ export function createApp(): express.Express {
     };
     // Swap completion: close the prepared set that reserved this spot, then store
     // the new season's tires in the same place.
-    if (b.releaseId) { try { await store.release(String(b.releaseId), {}); } catch { /* already closed */ } }
+    if (b.releaseId) { try { await store.release(String(b.releaseId), {}); await logEvent(store, String(b.releaseId), 'swapped', 'Aizvietots ar jaunām riepām', req); } catch { /* already closed */ } }
     const rec = await store.create(input);
+    await logEvent(store, rec.id, 'created', b.notes, req);
     res.status(201).json(rec);
   }));
 
@@ -503,6 +513,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const rec = await store.release(req.params.id, { releaseDate: req.body?.releaseDate });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    await logEvent(store, rec.id, 'released', req.body?.comment, req);
     res.json(rec);
   }));
 
@@ -511,6 +522,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const rec = await store.prepare(req.params.id, {});
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    await logEvent(store, rec.id, 'prepared', req.body?.comment, req);
     res.json(rec);
   }));
   // Undo a prepare — put the set back in its spot ('active').
@@ -518,6 +530,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const rec = await store.prepare(req.params.id, { active: true });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    await logEvent(store, rec.id, 'unprepared', req.body?.comment, req);
     res.json(rec);
   }));
 
@@ -530,6 +543,7 @@ export function createApp(): express.Express {
     if (!spots.some((s) => s.code === code)) return res.status(404).json({ error: { message: 'Nezināma vieta' } });
     if (occupied.has(code)) return res.status(409).json({ error: { message: 'Vieta jau ir aizņemta' } });
     const rec = await store.blockSpot(code);
+    await logEvent(store, rec.id, 'blocked', req.body?.comment, req);
     res.status(201).json(rec);
   }));
   // Unblock: remove the placeholder that was holding the spot.
@@ -539,6 +553,34 @@ export function createApp(): express.Express {
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
     if (rec.status !== 'blocked') return res.status(400).json({ error: { message: 'Šī vieta nav bloķēta' } });
     await store.deleteRecord(req.params.id);
+    res.json({ ok: true });
+  }));
+
+  // --- Record history / comments (audit trail per record) ---
+  app.get('/api/storage/:id/events', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    res.json({ events: await store.listEvents(req.params.id) });
+  }));
+  app.post('/api/storage/:id/events', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const rec = await store.get(req.params.id);
+    if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
+    const comment = typeof req.body?.comment === 'string' ? req.body.comment.trim() : '';
+    if (!comment) return res.status(400).json({ error: { message: 'Komentārs ir tukšs' } });
+    const ev = await store.addEvent({ recordId: req.params.id, action: 'comment', comment: comment.slice(0, 500), actor: actorOf(req) });
+    res.status(201).json({ ok: true, event: ev });
+  }));
+  app.patch('/api/events/:id', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const comment = typeof req.body?.comment === 'string' ? req.body.comment.trim().slice(0, 500) : '';
+    const ev = await store.updateEvent(req.params.id, comment || null);
+    if (!ev) return res.status(404).json({ error: { message: 'Not found' } });
+    res.json({ ok: true, event: ev });
+  }));
+  app.delete('/api/events/:id', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const ok = await store.deleteEvent(req.params.id);
+    if (!ok) return res.status(404).json({ error: { message: 'Not found' } });
     res.json({ ok: true });
   }));
 

@@ -87,7 +87,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 34</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 35</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -178,6 +178,7 @@ const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:n
   relQ:'',relResults:[],relLoading:false,relSearched:false,
   table:null,tableLoaded:false,tabQ:'',tabStatus:'active',tabSort:{col:'location',dir:'asc'},
   pending:[],pendingLoaded:false,swapFromId:null,recOpen:false,recData:null,
+  recEvents:[],recEventsLoading:false,
   analytics:null,analyticsLoaded:false,anaSeason:'',anaStatus:'',anaCustomer:'',anaRims:''};
 
 const ROLES={staff:{label:'Personāls',name:'Juris Kalniņš'},manager:{label:'Vadītājs',name:'Ilze Ozola'},owner:{label:'Īpašnieks',name:'Mārtiņš Bērze'}};
@@ -717,12 +718,12 @@ function startSwap(id,plate,loc){resetIntake();S.plate=plate||'';S.presetSpot=lo
 async function recAction(kind){const r=S.recData;if(!r)return;
   if(kind==='edit'){await editRecordDialog(r);return;}
   if(kind==='swap'){S.recOpen=false;renderModal();startSwap(r.id,r.plate,r.location);return;}
-  if(kind==='release'){const c=await ask({icon:'question',title:'Izsniegt riepas?',html:`<b class="mono">${esc(r.plate||'')}</b> · vieta ${esc(r.location||'')}`,confirmButtonText:'Izsniegt'});if(!c.isConfirmed)return;
-    await fetch('/api/storage/'+encodeURIComponent(r.id)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}
-  else if(kind==='prepare'){const c=await ask({icon:'question',title:'Sagatavot izsniegšanai?',html:`Vieta <b class="mono">${esc(r.location||'')}</b> paliks rezervēta`,confirmButtonText:'Sagatavot'});if(!c.isConfirmed)return;
-    await fetch('/api/storage/'+encodeURIComponent(r.id)+'/prepare',{method:'POST'});}
-  else if(kind==='terminate'){const c=await ask({icon:'warning',title:'Slēgt bez jaunām riepām?',html:`<b class="mono">${esc(r.plate||'')}</b> — vieta atbrīvosies.`,confirmButtonText:'Slēgt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});if(!c.isConfirmed)return;
-    await fetch('/api/storage/'+encodeURIComponent(r.id)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});}
+  if(kind==='release'){const c=await ask({icon:'question',title:'Izsniegt riepas?',html:`<b class="mono">${esc(r.plate||'')}</b> · vieta ${esc(r.location||'')}`,input:'text',inputPlaceholder:'Komentārs (neobligāts)',confirmButtonText:'Izsniegt'});if(!c.isConfirmed)return;
+    await fetch('/api/storage/'+encodeURIComponent(r.id)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({comment:c.value||''})});}
+  else if(kind==='prepare'){const c=await ask({icon:'question',title:'Sagatavot izsniegšanai?',html:`Vieta <b class="mono">${esc(r.location||'')}</b> paliks rezervēta`,input:'text',inputPlaceholder:'Komentārs (neobligāts)',confirmButtonText:'Sagatavot'});if(!c.isConfirmed)return;
+    await fetch('/api/storage/'+encodeURIComponent(r.id)+'/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({comment:c.value||''})});}
+  else if(kind==='terminate'){const c=await ask({icon:'warning',title:'Slēgt bez jaunām riepām?',html:`<b class="mono">${esc(r.plate||'')}</b> — vieta atbrīvosies.`,input:'text',inputPlaceholder:'Komentārs (neobligāts)',confirmButtonText:'Slēgt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});if(!c.isConfirmed)return;
+    await fetch('/api/storage/'+encodeURIComponent(r.id)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({comment:c.value||'Slēgts bez jaunām riepām'})});}
   else if(kind==='unprep'){await fetch('/api/storage/'+encodeURIComponent(r.id)+'/unprepare',{method:'POST'});}
   else if(kind==='unblock'){await fetch('/api/storage/'+encodeURIComponent(r.id)+'/unblock',{method:'POST'});}
   const msgs={release:'Riepas izsniegtas',prepare:'Sagatavots · vieta rezervēta',terminate:'Pasūtījums slēgts',unprep:'Novietots atpakaļ',unblock:'Atbloķēts'};
@@ -759,8 +760,49 @@ async function editRecordDialog(r){
   if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās saglabāt');return;}
   S.recData=data.record;
   toast('Saglabāts');
-  await Promise.all([loadTable(),loadStats()]);
+  await Promise.all([loadTable(),loadStats(),loadRecEvents(r.id)]);
   renderModal();updateTabContent();}
+
+// ============ RECORD HISTORY / COMMENTS ============
+const EV_LABEL={created:'Pieņemts',prepared:'Sagatavots (izņemts maiņai)',unprepared:'Novietots atpakaļ vietā',released:'Izsniegts',swapped:'Aizvietots ar jaunām',blocked:'Bloķēts',unblocked:'Atbloķēts',edited:'Rediģēti dati',comment:'Komentārs'};
+const EV_COLOR={created:'var(--ok)',prepared:'var(--warn)',unprepared:'var(--ink-3)',released:'var(--ink-3)',swapped:'var(--accent)',blocked:'var(--danger)',unblocked:'var(--ok)',edited:'var(--accent)',comment:'oklch(0.6 0.13 285)'};
+const fmtEvDate=s=>s?String(s).slice(0,16).replace('T',' '):'';
+async function loadRecEvents(id){S.recEventsLoading=true;
+  try{const d=await(await fetch('/api/storage/'+encodeURIComponent(id)+'/events')).json();if(S.recData&&String(S.recData.id)===String(id))S.recEvents=d.events||[];}catch{S.recEvents=[];}
+  S.recEventsLoading=false;if(S.recOpen)renderModal();}
+function recEventsHTML(){
+  if(S.recEventsLoading&&!(S.recEvents&&S.recEvents.length))return '<div style="color:var(--ink-3);font-size:12px;padding:6px 0;">Ielādē vēsturi…</div>';
+  const evs=S.recEvents||[];
+  const rows=evs.map(e=>{const lbl=EV_LABEL[e.action]||e.action;const isC=e.action==='comment';
+    return `<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+      <div style="width:8px;height:8px;border-radius:50%;margin-top:5px;flex:none;background:${EV_COLOR[e.action]||'var(--ink-3)'};"></div>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;">
+          <span style="font-weight:600;font-size:13px;">${esc(lbl)}</span>
+          <span style="font-size:11px;color:var(--ink-3);white-space:nowrap;">${esc(fmtEvDate(e.createdAt))}${e.actor?' · '+esc(e.actor):''}</span></div>
+        ${e.comment?`<div style="font-size:13px;color:var(--ink-2);margin-top:2px;word-break:break-word;">${esc(e.comment)}</div>`:''}
+        ${isC?`<div style="display:flex;gap:12px;margin-top:3px;"><button data-evedit="${esc(e.id)}" style="font-size:11px;color:var(--accent);background:none;border:0;cursor:pointer;padding:0;">Labot</button><button data-evdel="${esc(e.id)}" style="font-size:11px;color:var(--danger);background:none;border:0;cursor:pointer;padding:0;">Dzēst</button></div>`:''}
+      </div></div>`;}).join('');
+  return `<div>${rows||'<div style="color:var(--ink-3);font-size:12px;padding:4px 0;">Nav darbību vēstures.</div>'}
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <input id="rec-comment" placeholder="Pievienot komentāru…" autocomplete="off" style="flex:1;min-width:0;height:38px;padding:0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);font-size:13px;">
+      <button data-act="rec-addcomment" style="height:38px;padding:0 14px;flex:none;background:var(--accent);color:#fff;border:0;border-radius:9px;font-weight:600;cursor:pointer;">Pievienot</button>
+    </div></div>`;}
+async function addRecComment(){const r=S.recData;if(!r)return;const el=document.getElementById('rec-comment');const c=(el&&el.value||'').trim();if(!c)return;
+  const res=await fetch('/api/storage/'+encodeURIComponent(r.id)+'/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({comment:c})});
+  const data=await res.json().catch(()=>({}));if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās pievienot');return;}
+  await loadRecEvents(r.id);}
+async function editEventDialog(id){const ev=(S.recEvents||[]).find(e=>String(e.id)===String(id));if(!ev)return;
+  const {value:txt}=await R1.fire({title:'Labot komentāru',input:'textarea',inputValue:ev.comment||'',showCancelButton:true,confirmButtonText:'Saglabāt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'}});
+  if(txt===undefined)return;
+  const res=await fetch('/api/events/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({comment:txt})});
+  if(!res.ok){alertErr('Neizdevās saglabāt');return;}
+  if(S.recData)await loadRecEvents(S.recData.id);}
+async function deleteEventDialog(id){const r=await ask({icon:'warning',title:'Dzēst komentāru?',confirmButtonText:'Dzēst',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});
+  if(!r.isConfirmed)return;
+  const res=await fetch('/api/events/'+encodeURIComponent(id),{method:'DELETE'});
+  if(!res.ok){alertErr('Neizdevās dzēst');return;}
+  if(S.recData)await loadRecEvents(S.recData.id);}
 function pendingHTML(){
   const list=S.pending||[];
   const cards=list.map(x=>`<div class="card" style="padding:var(--card);margin-bottom:12px;">
@@ -928,7 +970,11 @@ function renderModal(){const m=$('#modal');
           ${fld('Saņemts',r.intakeDate,1)}${fld('Izsniegts',r.releaseDate,1)}
           ${tabNotes(r)?`<div style="grid-column:1/3;">${fld('Piezīmes',tabNotes(r))}</div>`:''}
         </div>
-        <div style="padding:0 24px 22px;display:flex;flex-direction:column;gap:8px;">${acts}
+        <div style="padding:0 24px 18px;">
+          <div class="label" style="margin-bottom:6px;">Vēsture un komentāri</div>
+          <div id="rec-history">${recEventsHTML()}</div>
+        </div>
+        <div style="padding:0 24px 22px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:16px;">${acts}
           <button data-recact="edit" style="height:40px;background:transparent;border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--ink-2);">✎ Rediģēt datus</button>
         </div>
       </div></div>`;
@@ -954,15 +1000,20 @@ function bind(root){
     else if(a==='sms-done'){S.smsOpen=false;S.smsRec=null;resetIntake();await Promise.all([loadStats(),loadActivity()]);nav('home');}
     else if(a==='import-xlsx'){const f=document.getElementById('imp-file');if(f)f.click();}
     else if(a==='add-container')await addContainerDialog();
+    else if(a==='rec-addcomment')await addRecComment();
     else if(a==='ana-clear'){S.anaSeason='';S.anaStatus='';S.anaCustomer='';S.anaRims='';S.analyticsLoaded=false;render();await loadAnalytics();if(S.screen==='analytics')render();}
   }));
+  root.querySelectorAll('[data-evedit]').forEach(el=>el.addEventListener('click',()=>editEventDialog(el.dataset.evedit)));
+  root.querySelectorAll('[data-evdel]').forEach(el=>el.addEventListener('click',()=>deleteEventDialog(el.dataset.evdel)));
+  const rc=root.querySelector('#rec-comment');
+  if(rc)rc.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addRecComment();}});
   root.querySelectorAll('[data-delcont]').forEach(el=>el.addEventListener('click',(e)=>{e.stopPropagation();deleteContainerDialog(el.dataset.delcont,el.dataset.prefix);}));
   const impf=root.querySelector('#imp-file');
   if(impf)impf.addEventListener('change',async()=>{const file=impf.files&&impf.files[0];impf.value='';if(file)await doImport(file);});
   root.querySelectorAll('[data-pickspot]').forEach(el=>el.addEventListener('click',()=>{
     const code=el.dataset.pickspot;S.presetSpot=(code==='__auto__')?null:code;S.spotPickOpen=false;renderModal();render();}));
   root.querySelectorAll('[data-rec]').forEach(el=>el.addEventListener('click',()=>{
-    const rec=(S.table||[]).find(x=>String(x.id)===el.dataset.rec);if(rec){S.recData=rec;S.recOpen=true;renderModal();}}));
+    const rec=(S.table||[]).find(x=>String(x.id)===el.dataset.rec);if(rec){S.recData=rec;S.recOpen=true;S.recEvents=[];renderModal();loadRecEvents(rec.id);}}));
   root.querySelectorAll('[data-recact]').forEach(el=>el.addEventListener('click',()=>recAction(el.dataset.recact)));
   root.querySelectorAll('[data-tabstatus]').forEach(el=>el.addEventListener('click',()=>{S.tabStatus=el.dataset.tabstatus;render();}));
   root.querySelectorAll('[data-sort]').forEach(el=>el.addEventListener('click',()=>{const k=el.dataset.sort;

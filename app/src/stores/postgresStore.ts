@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { Store, StorageRecord, IntakeInput, User, Container } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent } from '../types.js';
 
 /**
  * Postgres datastore — the production backend for Supabase (or any Postgres).
@@ -53,6 +53,16 @@ CREATE TABLE IF NOT EXISTS containers (
   cols       INTEGER NOT NULL DEFAULT 4,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS record_events (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  record_id  TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  comment    TEXT,
+  actor      TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_events_record ON record_events(record_id);
 `;
 
 interface Row {
@@ -297,6 +307,33 @@ export class PostgresStore implements Store {
   async deleteContainer(id: string): Promise<boolean> {
     await this.init();
     const res = await this.pool.query('DELETE FROM containers WHERE id = $1', [Number(id)]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  // --- Record events ---
+  private eventRow(r: { id: number; record_id: string; action: string; comment: string | null; actor: string | null; created_at: string | null }): RecordEvent {
+    return { id: String(r.id), recordId: r.record_id, action: r.action, comment: r.comment, actor: r.actor, createdAt: r.created_at ? String(r.created_at) : null };
+  }
+  async addEvent(e: { recordId: string; action: string; comment: string | null; actor: string | null }): Promise<RecordEvent> {
+    await this.init();
+    const res = await this.pool.query<never>(
+      'INSERT INTO record_events (record_id, action, comment, actor) VALUES ($1,$2,$3,$4) RETURNING *',
+      [e.recordId, e.action, e.comment, e.actor]);
+    return this.eventRow(res.rows[0]);
+  }
+  async listEvents(recordId: string): Promise<RecordEvent[]> {
+    await this.init();
+    const res = await this.pool.query<never>('SELECT * FROM record_events WHERE record_id = $1 ORDER BY id ASC', [recordId]);
+    return res.rows.map((r) => this.eventRow(r));
+  }
+  async updateEvent(id: string, comment: string | null): Promise<RecordEvent | null> {
+    await this.init();
+    const res = await this.pool.query<never>('UPDATE record_events SET comment = $1 WHERE id = $2 RETURNING *', [comment, Number(id)]);
+    return res.rows[0] ? this.eventRow(res.rows[0]) : null;
+  }
+  async deleteEvent(id: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('DELETE FROM record_events WHERE id = $1', [Number(id)]);
     return (res.rowCount ?? 0) > 0;
   }
 }

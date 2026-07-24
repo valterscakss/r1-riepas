@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Store, StorageRecord, IntakeInput, User, Container } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent } from '../types.js';
 
 /**
  * SQLite datastore — the self-contained default backend. A real, durable, local
@@ -53,6 +53,16 @@ CREATE TABLE IF NOT EXISTS containers (
   cols       INTEGER NOT NULL DEFAULT 4,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS record_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  record_id  TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  comment    TEXT,
+  actor      TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_events_record ON record_events(record_id);
 `;
 
 interface Row {
@@ -287,5 +297,29 @@ export class SqliteStore implements Store {
 
   async deleteContainer(id: string): Promise<boolean> {
     return this.db.prepare('DELETE FROM containers WHERE id = ?').run(Number(id)).changes > 0;
+  }
+
+  // --- Record events ---
+  private eventRow(r: { id: number; record_id: string; action: string; comment: string | null; actor: string | null; created_at: string | null }): RecordEvent {
+    return { id: String(r.id), recordId: r.record_id, action: r.action, comment: r.comment, actor: r.actor, createdAt: r.created_at ?? null };
+  }
+  async addEvent(e: { recordId: string; action: string; comment: string | null; actor: string | null }): Promise<RecordEvent> {
+    const info = this.db.prepare('INSERT INTO record_events (record_id, action, comment, actor) VALUES (?,?,?,?)')
+      .run(e.recordId, e.action, e.comment, e.actor);
+    const r = this.db.prepare('SELECT * FROM record_events WHERE id = ?').get(info.lastInsertRowid) as never;
+    return this.eventRow(r);
+  }
+  async listEvents(recordId: string): Promise<RecordEvent[]> {
+    const rows = this.db.prepare('SELECT * FROM record_events WHERE record_id = ? ORDER BY id ASC').all(recordId) as never[];
+    return rows.map((r) => this.eventRow(r));
+  }
+  async updateEvent(id: string, comment: string | null): Promise<RecordEvent | null> {
+    const info = this.db.prepare('UPDATE record_events SET comment = ? WHERE id = ?').run(comment, Number(id));
+    if (info.changes === 0) return null;
+    const r = this.db.prepare('SELECT * FROM record_events WHERE id = ?').get(Number(id)) as never;
+    return this.eventRow(r);
+  }
+  async deleteEvent(id: string): Promise<boolean> {
+    return this.db.prepare('DELETE FROM record_events WHERE id = ?').run(Number(id)).changes > 0;
   }
 }
