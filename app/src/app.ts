@@ -103,9 +103,30 @@ export function createApp(): express.Express {
       }
     }
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: { message: 'No editable fields provided' } });
+    const before = await store.get(req.params.id);
     const rec = await store.updateRecord(req.params.id, patch);
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
-    await logEvent(store, rec.id, 'edited', body.comment, req);
+    // Build a human-readable diff (old → new) so the history shows exactly what changed.
+    const EDIT_LABELS: Record<string, string> = {
+      season: 'Sezona', location: 'Vieta', plate: 'Numurs', makeModel: 'Auto', customerName: 'Klients',
+      phone: 'Telefons', size1: 'Izmērs', brand: 'Ražotājs', quantity: 'Daudzums', size2: '2. izmērs',
+      rimNote: 'Diski', notes: 'Piezīmes', intakeDate: 'Saņemts', releaseDate: 'Izsniegts',
+      threadDepth: 'Protektors', smsCode: 'SMS kods', feeEur: 'Cena', isCompany: 'Uzņēmums',
+    };
+    const shw = (v: unknown) => (v === null || v === undefined || v === '' ? '—' : String(v));
+    const diffs: string[] = [];
+    if (before) {
+      const bRec = before as unknown as Record<string, unknown>;
+      const nRec = rec as unknown as Record<string, unknown>;
+      for (const k of Object.keys(patch)) {
+        const o = shw(bRec[k]);
+        const n = shw(nRec[k]);
+        if (o !== n) diffs.push(`${EDIT_LABELS[k] ?? k}: ${o} → ${n}`);
+      }
+    }
+    const extra = typeof body.comment === 'string' && body.comment.trim() ? body.comment.trim() : '';
+    const summary = [diffs.join('; '), extra].filter(Boolean).join(' · ') || 'Rediģēti dati';
+    await logEvent(store, rec.id, 'edited', summary, req);
     res.json({ ok: true, record: rec });
   }));
 

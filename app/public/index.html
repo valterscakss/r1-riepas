@@ -55,6 +55,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 .r1-toast{border-radius:12px!important;font-family:'IBM Plex Sans',sans-serif!important;}
 .swal2-container{z-index:2000!important;}
 .tabrow:hover{background:var(--surface-2);}
+.custrow:hover{background:var(--surface-2);}
 /* ===== Responsive / mobile ===== */
 #hamburger{display:none;width:40px;height:40px;flex:none;align-items:center;justify-content:center;border:1px solid var(--border-2);background:var(--surface);border-radius:9px;cursor:pointer;font-size:19px;color:var(--ink-2);}
 #nav-backdrop{display:none;}
@@ -87,7 +88,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 36</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 37</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
@@ -478,7 +479,7 @@ function custContentHTML(){const list=S.customers;const sel=list[S.selCustomer]|
       <span style="width:34px;height:34px;flex:none;border-radius:9px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;color:var(--ink-2);">${esc(initialsOf(c.name))}</span>
       <span style="min-width:0;"><span style="display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(c.name)}</span><span class="mono" style="display:block;font-size:11px;color:var(--ink-3);">${esc(c.plates&&c.plates.length>1?c.plates.length+' auto: '+c.plates.slice(0,2).join(', ')+(c.plates.length>2?'…':''):c.plate)}</span></span></div>
     <span style="flex:none;font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;${c.active>0?'background:var(--ok-soft);color:var(--ok);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${c.active} aktīvs</span></button>`;}).join('');
-  const hist=(sel?sel.history:[]).map(h=>`<div style="display:grid;grid-template-columns:1fr 0.8fr 1.6fr 0.6fr 0.9fr 0.8fr 0.9fr;gap:10px;padding:13px var(--card);align-items:center;border-bottom:1px solid var(--border);font-size:13px;">
+  const hist=(sel?sel.history:[]).map(h=>`<div data-openrec="${esc(h.id)}" title="Atvērt un rediģēt" class="custrow" style="display:grid;grid-template-columns:1fr 0.8fr 1.6fr 0.6fr 0.9fr 0.8fr 0.9fr;gap:10px;padding:13px var(--card);align-items:center;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer;">
     <span style="font-weight:500;">${esc(h.season||'—')}</span><span class="mono" style="font-size:12px;">${esc(h.plate||'—')}</span><span style="color:var(--ink-2);">${esc(h.tires)}${h.tires2?`<span style="display:block;font-size:12px;color:var(--ink-3);">+ ${esc(h.tires2)}</span>`:''}</span>
     <span class="mono">${esc(h.loc)}</span><span class="mono" style="font-size:12px;">${esc(h.thread)}</span><span class="mono">${esc(h.fee)}</span>
     <span style="display:flex;gap:6px;align-items:center;"><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;text-align:center;${h.status==='active'?'background:var(--ok-soft);color:var(--ok);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${h.status==='active'?'Glabājas':'Izsniegts'}</span>
@@ -733,7 +734,7 @@ async function recAction(kind){const r=S.recData;if(!r)return;
   else if(kind==='unblock'){await fetch('/api/storage/'+encodeURIComponent(r.id)+'/unblock',{method:'POST'});}
   const msgs={release:'Riepas izsniegtas',prepare:'Sagatavots · vieta rezervēta',terminate:'Pasūtījums slēgts',unprep:'Novietots atpakaļ',unblock:'Atbloķēts'};
   S.recOpen=false;toast(msgs[kind]||'Izdarīts');
-  await Promise.all([loadTable(),loadStats(),loadPending(),loadActivity()]);
+  await Promise.all([loadTable(),loadStats(),loadPending(),loadActivity(),loadCustomers()]);
   renderModal();render();}
 
 // Manual record edit — a form of the data fields; PATCHes only the changed values.
@@ -765,13 +766,19 @@ async function editRecordDialog(r){
   if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās saglabāt');return;}
   S.recData=data.record;
   toast('Saglabāts');
-  await Promise.all([loadTable(),loadStats(),loadRecEvents(r.id)]);
-  renderModal();updateTabContent();}
+  await Promise.all([loadTable(),loadStats(),loadRecEvents(r.id),loadCustomers()]);
+  renderModal();if(S.screen==='customers')updateCustContent();else updateTabContent();}
 
 // ============ RECORD HISTORY / COMMENTS ============
 const EV_LABEL={created:'Pieņemts',prepared:'Sagatavots (izņemts maiņai)',unprepared:'Novietots atpakaļ vietā',released:'Izsniegts',swapped:'Aizvietots ar jaunām',blocked:'Bloķēts',unblocked:'Atbloķēts',edited:'Rediģēti dati',comment:'Komentārs'};
 const EV_COLOR={created:'var(--ok)',prepared:'var(--warn)',unprepared:'var(--ink-3)',released:'var(--ink-3)',swapped:'var(--accent)',blocked:'var(--danger)',unblocked:'var(--ok)',edited:'var(--accent)',comment:'oklch(0.6 0.13 285)'};
 const fmtEvDate=s=>s?String(s).slice(0,16).replace('T',' '):'';
+// Open a record's detail modal by id (used from the Klienti storage list).
+async function openRecordById(id){
+  try{const rec=await(await fetch('/api/storage/'+encodeURIComponent(id))).json();
+    if(rec&&rec.id){S.recData=rec;S.recOpen=true;S.recEvents=[];renderModal();loadRecEvents(rec.id);}
+    else alertErr('Ieraksts nav atrasts');
+  }catch{alertErr('Neizdevās ielādēt ierakstu');}}
 async function loadRecEvents(id){S.recEventsLoading=true;
   try{const d=await(await fetch('/api/storage/'+encodeURIComponent(id)+'/events')).json();if(S.recData&&String(S.recData.id)===String(id))S.recEvents=d.events||[];}catch{S.recEvents=[];}
   S.recEventsLoading=false;if(S.recOpen)renderModal();}
@@ -1019,6 +1026,7 @@ function bind(root){
     const code=el.dataset.pickspot;S.presetSpot=(code==='__auto__')?null:code;S.spotPickOpen=false;renderModal();render();}));
   root.querySelectorAll('[data-rec]').forEach(el=>el.addEventListener('click',()=>{
     const rec=(S.table||[]).find(x=>String(x.id)===el.dataset.rec);if(rec){S.recData=rec;S.recOpen=true;S.recEvents=[];renderModal();loadRecEvents(rec.id);}}));
+  root.querySelectorAll('[data-openrec]').forEach(el=>el.addEventListener('click',(e)=>{if(e.target.closest('button'))return;openRecordById(el.dataset.openrec);}));
   root.querySelectorAll('[data-recact]').forEach(el=>el.addEventListener('click',()=>recAction(el.dataset.recact)));
   root.querySelectorAll('[data-tabstatus]').forEach(el=>el.addEventListener('click',()=>{S.tabStatus=el.dataset.tabstatus;render();}));
   root.querySelectorAll('[data-sort]').forEach(el=>el.addEventListener('click',()=>{const k=el.dataset.sort;
