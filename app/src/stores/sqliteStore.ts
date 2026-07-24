@@ -227,6 +227,7 @@ export class SqliteStore implements Store {
       VALUES (@season, @location, @plate, @makeModel, @customerName, @isCompany, @phone, @size1, @brand, @quantity, @size2, @rimNote, @notes, @intakeDate, @releaseDate, @status)`);
     const tx = this.db.transaction((items: IntakeInput[]) => {
       this.db.prepare('DELETE FROM storage').run();
+      this.db.prepare('DELETE FROM record_events').run(); // record IDs are reused → stale history would mis-attach
       for (const r of items) {
         insert.run({
           season: r.season ?? null, location: r.location ?? null, plate: r.plate ?? null,

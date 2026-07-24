@@ -211,6 +211,8 @@ export class PostgresStore implements Store {
     try {
       await client.query('BEGIN');
       await client.query('TRUNCATE storage RESTART IDENTITY');
+      // Record IDs reset here, so the old per-record history/comments no longer map — clear them.
+      await client.query('DELETE FROM record_events');
       const COLS = ['season', 'location', 'plate', 'make_model', 'customer_name', 'is_company', 'phone', 'size1', 'brand', 'quantity', 'size2', 'rim_note', 'notes', 'intake_date', 'release_date', 'status'];
       const BATCH = 500;
       let imported = 0;
