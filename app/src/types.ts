@@ -48,6 +48,39 @@ export interface RecordEvent {
   createdAt: string | null;
 }
 
+/**
+ * A job for the warehouse worker. Two sources feed the same queue:
+ *  - 'prepare' — created automatically when staff stage a set for a swap, so the
+ *    warehouse knows which spot to fetch tires from;
+ *  - 'order'   — a free-text request typed into the warehouse chat box.
+ * The warehouse view shows only OPEN tasks; ticking one done makes it disappear.
+ */
+export interface Task {
+  id: string;
+  kind: 'prepare' | 'order';
+  recordId: string | null;  // linked storage record (prepare tasks)
+  title: string;            // headline: plate for prepares, first line for orders
+  details: string | null;   // tires/notes, or the typed order text
+  location: string | null;  // spot code to fetch from
+  plate: string | null;
+  status: 'open' | 'done';
+  createdBy: string | null;
+  createdAt: string | null;
+  doneBy: string | null;
+  doneAt: string | null;
+}
+
+export type TaskInput = Pick<Task, 'kind' | 'recordId' | 'title' | 'details' | 'location' | 'plate'> &
+  { createdBy: string | null };
+
+/** A browser/phone registered for Web Push notifications about new tasks. */
+export interface PushSub {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  username: string | null;
+}
+
 /** A user-defined storage container (a shelf/rack/box of numbered places). */
 export interface Container {
   id: string;
@@ -119,6 +152,24 @@ export interface Store {
   updateEvent(id: string, comment: string | null): Promise<RecordEvent | null>;
   /** Delete an event. Returns true if removed. */
   deleteEvent(id: string): Promise<boolean>;
+
+  // --- Warehouse tasks (prepare jobs + free-text orders) ---
+  /** List tasks, newest first. Omit `status` for everything. */
+  listTasks(opts?: { status?: 'open' | 'done'; limit?: number }): Promise<Task[]>;
+  /** Create a task. Returns the created row. */
+  createTask(t: TaskInput): Promise<Task>;
+  /** Mark a task done/open. `actor` is stamped as doneBy when closing. */
+  setTaskStatus(id: string, status: 'open' | 'done', actor: string | null): Promise<Task | null>;
+  /** Close any OPEN task attached to a record (used when a prepare is undone). */
+  closeTasksForRecord(recordId: string, actor: string | null): Promise<number>;
+  /** Hard-delete a task. */
+  deleteTask(id: string): Promise<boolean>;
+
+  // --- Web Push subscriptions ---
+  listPushSubs(): Promise<PushSub[]>;
+  /** Upsert by endpoint — re-subscribing the same device must not duplicate. */
+  addPushSub(s: PushSub): Promise<void>;
+  deletePushSub(endpoint: string): Promise<boolean>;
 }
 
 /** Case-insensitive match of a query against the fields staff search by. */

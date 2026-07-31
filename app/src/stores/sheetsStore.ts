@@ -162,6 +162,15 @@ export class SheetsStore implements Store {
   async recentEvents(): Promise<[]> { return []; }
   async updateEvent(): Promise<null> { return null; }
   async deleteEvent(): Promise<boolean> { return false; }
+  // Warehouse tasks and push subscriptions need a real database.
+  async listTasks(): Promise<[]> { return []; }
+  async createTask(): Promise<never> { return this.unsupported(); }
+  async setTaskStatus(): Promise<null> { return null; }
+  async closeTasksForRecord(): Promise<number> { return 0; }
+  async deleteTask(): Promise<boolean> { return false; }
+  async listPushSubs(): Promise<[]> { return []; }
+  async addPushSub(): Promise<void> { /* no-op */ }
+  async deletePushSub(): Promise<boolean> { return false; }
 }
 
 // (COL_COUNT kept for reference/validation of the layout width.)

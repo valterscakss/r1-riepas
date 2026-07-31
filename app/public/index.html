@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>R1 Tires — Noliktava</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#1a1e29">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="R1 Noliktava">
+<link rel="icon" href="/icon-192.png" sizes="192x192">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -76,6 +84,12 @@ button{font-family:'IBM Plex Sans',sans-serif;}
   .rf2{grid-template-columns:1fr!important;}
   .rrow>*,.rgridside>*{min-width:0!important;width:100%!important;max-width:100%!important;}
   .cust-list{max-height:none!important;}
+  /* Warehouse: stack the job card so the "Gatavs" button is a full-width target */
+  .twrap{flex-direction:column!important;}
+  .tbtns{flex-direction:row!important;width:100%;}
+  .tbtns>button{flex:1;}
+  .tcompose{flex-direction:column!important;}
+  .tcompose>textarea,.tcompose>button{width:100%;}
 }
 @media(max-width:480px){
   .rf3{grid-template-columns:1fr!important;}
@@ -88,10 +102,11 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 <aside style="width:var(--side);flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;">
   <div style="display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid var(--border);">
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
-    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 38</span></div></div>
+    <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 39</span></div></div>
   </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
+    <button class="navbtn" data-nav="warehouse"><span>▦&nbsp; Noliktava <span id="nav-task-badge" style="display:none;margin-left:auto;font-size:10px;font-weight:700;background:var(--danger);color:#fff;border-radius:9px;padding:1px 7px;"></span></span></button>
     <button class="navbtn" data-nav="intake"><span>↓&nbsp; Pieņemšana</span></button>
     <button class="navbtn" data-nav="release"><span>↑&nbsp; Izsniegšana</span></button>
     <button class="navbtn" data-nav="pending"><span>◔&nbsp; Sagatavotie <span id="nav-pending-badge" style="display:none;margin-left:auto;font-size:10px;font-weight:700;background:var(--warn);color:#fff;border-radius:9px;padding:1px 7px;"></span></span></button>
@@ -179,6 +194,7 @@ const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:n
   relQ:'',relResults:[],relLoading:false,relSearched:false,
   table:null,tableLoaded:false,tabQ:'',tabStatus:'active',tabSort:{col:'location',dir:'asc'},
   pending:[],pendingLoaded:false,swapFromId:null,recOpen:false,recData:null,
+  tasks:[],tasksLoaded:false,taskFilter:'open',taskDraft:'',openTasks:0,pushOn:false,pushCfg:null,
   recEvents:[],recEventsLoading:false,
   analytics:null,analyticsLoaded:false,anaSeason:'',anaStatus:'',anaCustomer:'',anaRims:''};
 
@@ -206,6 +222,9 @@ function price(){const w1=parseInt((S.t1size||'').slice(0,3))||0;const w2=S.t1qt
 async function loadStats(){try{S.stats=await(await fetch('/api/stats')).json();}catch{S.stats=null;}paintSidebar();}
 async function loadActivity(){try{S.activity=(await(await fetch('/api/activity')).json()).events||[];}catch{S.activity=[];}}
 async function loadCustomers(){try{S.customers=(await(await fetch('/api/customers'+(S.custQ?'?q='+encodeURIComponent(S.custQ):''))).json()).customers||[];}catch{S.customers=[];}}
+async function loadTasks(){try{const d=await(await fetch('/api/tasks?status='+(S.taskFilter==='done'?'done':'open'))).json();
+    S.tasks=d.tasks||[];S.openTasks=d.open||0;}catch{S.tasks=[];}
+  S.tasksLoaded=true;paintTaskBadge();}
 
 function paintSidebar(){const st=S.stats;if(!st)return;
   const color=st.capPct>=90?'var(--danger)':st.capPct>=75?'var(--warn)':'var(--accent)';
@@ -227,9 +246,11 @@ function paintHeader(){
   show('#btn-logout',!demo&&!!S.auth);show('#btn-changepass',!demo&&!!S.auth);}
 
 function nav(screen){S.screen=screen;S.selSpot=null;
+  try{localStorage.setItem('r1_last_view',screen);}catch{}
   if(screen==='users'){render();if(!S.usersLoaded)loadUsers().then(()=>{if(S.screen==='users')render();});return;}
   if(screen==='table'){render();if(!S.tableLoaded)loadTable().then(()=>{if(S.screen==='table')render();});return;}
   if(screen==='pending'){render();loadPending().then(()=>{if(S.screen==='pending')render();});return;}
+  if(screen==='warehouse'){render();loadTasks().then(()=>{if(S.screen==='warehouse')render();});return;}
   if(screen==='analytics'){render();loadAnalytics().then(()=>{if(S.screen==='analytics')render();});return;}
   if(screen==='home'){render();Promise.all([loadActivity(),loadStats()]).then(()=>{if(S.screen==='home')render();});return;}
   render();}
@@ -248,6 +269,7 @@ function render(){
   else if(S.screen==='customers')v.innerHTML=customersHTML();
   else if(S.screen==='release')v.innerHTML=releaseHTML();
   else if(S.screen==='pending')v.innerHTML=pendingHTML();
+  else if(S.screen==='warehouse')v.innerHTML=warehouseHTML();
   else if(S.screen==='table')v.innerHTML=tableHTML();
   else if(S.screen==='analytics')v.innerHTML=analyticsHTML();
   else if(S.screen==='users')v.innerHTML=usersHTML();
@@ -298,6 +320,7 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
     <div class="card" style="padding:var(--card);"><div class="label">Aizņemtas vietas</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;">${st.occ}<span style="font-size:16px;color:var(--ink-3);">/${st.total}</span></div></div>
     <div class="card" style="padding:var(--card);"><div class="label">Brīvas vietas</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;color:var(--ok);">${st.free}</div></div>
     ${st.reserved>0?`<div class="card" data-act="go-pending" style="padding:var(--card);cursor:pointer;"><div class="label">Sagatavotas (rezervētas)</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;color:var(--warn);">${st.reserved}</div></div>`:''}
+    ${S.openTasks>0?`<div class="card" data-act="go-warehouse" style="padding:var(--card);cursor:pointer;border-color:oklch(0.8 0.06 25);"><div class="label">Noliktavā darāmie</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;color:var(--danger);">${S.openTasks}</div></div>`:''}
     <div class="card" style="padding:var(--card);"><div class="label">Šodien pieņemtas</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;">${st.todayIntakes}</div></div>
     <div class="card" style="padding:var(--card);"><div class="label">SMS kodi izsniegti</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;">${st.smsIssued}</div></div>
     ${showRev?`<div class="card" style="padding:var(--card);"><div class="label">Ieņēmumi (aktīvie)</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;">${eur(st.revenueActive||0)}</div></div>`:''}
@@ -315,6 +338,7 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
           <button data-act="new-intake" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">↓&nbsp; Pieņemt riepas</button>
           <button data-act="go-release" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">↑&nbsp; Izsniegt riepas (kods/numurs)</button>
           <button data-act="go-release" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">◔&nbsp; Sagatavot riepas (maiņai)</button>
+          <button data-act="go-warehouse" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">▦&nbsp; Pasūtīt no noliktavas</button>
           <button data-act="go-customers" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">◉&nbsp; Klienti</button>
         </div>
       </div>
@@ -744,9 +768,9 @@ async function recAction(kind){const r=S.recData;if(!r)return;
     await fetch('/api/storage/'+encodeURIComponent(r.id)+'/release',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({comment:c.value||'Slēgts bez jaunām riepām'})});}
   else if(kind==='unprep'){await fetch('/api/storage/'+encodeURIComponent(r.id)+'/unprepare',{method:'POST'});}
   else if(kind==='unblock'){await fetch('/api/storage/'+encodeURIComponent(r.id)+'/unblock',{method:'POST'});}
-  const msgs={release:'Riepas izsniegtas',prepare:'Sagatavots · vieta rezervēta',terminate:'Pasūtījums slēgts',unprep:'Novietots atpakaļ',unblock:'Atbloķēts'};
+  const msgs={release:'Riepas izsniegtas',prepare:'Sagatavots · uzdevums nosūtīts noliktavai',terminate:'Pasūtījums slēgts',unprep:'Novietots atpakaļ',unblock:'Atbloķēts'};
   S.recOpen=false;toast(msgs[kind]||'Izdarīts');
-  await Promise.all([loadTable(),loadStats(),loadPending(),loadActivity(),loadCustomers()]);
+  await Promise.all([loadTable(),loadStats(),loadPending(),loadActivity(),loadCustomers(),pollTasks()]);
   renderModal();render();}
 
 // Manual record edit — a form of the data fields; PATCHes only the changed values.
@@ -852,6 +876,132 @@ function pendingHTML(){
     <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Riepas izņemtas, vieta rezervēta — gaida sezonas maiņu</div></div>
     ${!S.pendingLoaded?'<div class="card" style="padding:24px;color:var(--ink-3);">Ielādē…</div>':(list.length?cards:'<div class="card" style="padding:30px;text-align:center;color:var(--ink-3);font-size:14px;">Nav sagatavotu riepu.<br><span style="font-size:13px;">Sadaļā <b>Izsniegšana</b> vai <b>Novietnes</b> nospied “Sagatavot”, lai izņemtu riepas un rezervētu vietu.</span></div>')}
   </div>`;}
+
+// ============ NOLIKTAVA (warehouse job queue) ============
+// One list for the warehouse worker: everything staff have asked for that is not
+// yet fetched. Ticking a job done takes it out of the list, so what stays on
+// screen is exactly what still has to be brought.
+function paintTaskBadge(){const b=document.getElementById('nav-task-badge');if(!b)return;
+  const n=S.openTasks||0;
+  if(n>0){b.textContent=n;b.style.display='';}else b.style.display='none';}
+const TASK_KIND={prepare:['Sagatavot riepas','var(--warn-soft)','var(--warn)'],order:['Pasūtījums','var(--accent-soft)','var(--accent-2)']};
+function taskCard(t){
+  const [lbl,bg,fg]=TASK_KIND[t.kind]||TASK_KIND.order;
+  const w=evWhen(t.status==='done'?(t.doneAt||t.createdAt):t.createdAt);
+  const when=[w.d,w.t].filter(Boolean).join(' ');
+  const done=t.status==='done';
+  return `<div class="card" style="padding:16px var(--card);margin-bottom:10px;${done?'opacity:.62;':''}">
+    <div class="twrap" style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;">
+      <div style="min-width:0;flex:1;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px;">
+          <span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;background:${bg};color:${fg};white-space:nowrap;">${lbl}</span>
+          ${t.location?`<span class="mono" style="font-size:12px;font-weight:600;padding:3px 9px;border-radius:6px;background:var(--ink);color:#fff;">${esc(t.location)}</span>`:''}
+        </div>
+        <div style="font-weight:600;font-size:17px;word-break:break-word;${t.kind==='prepare'?"font-family:'IBM Plex Mono',monospace;":''}${done?'text-decoration:line-through;':''}">${esc(t.title)}</div>
+        ${t.details?`<div style="color:var(--ink-2);font-size:14px;margin-top:4px;word-break:break-word;white-space:pre-wrap;">${esc(t.details)}</div>`:''}
+        <div style="color:var(--ink-3);font-size:12px;margin-top:7px;">${done
+          ? `Pabeidza ${esc(t.doneBy||'—')} · ${esc(when||'—')}`
+          : `Pieprasīja ${esc(t.createdBy||'R1')} · ${esc(when||'—')}`}</div>
+      </div>
+      <div class="tbtns" style="display:flex;flex-direction:column;gap:7px;flex:none;">
+        ${done
+          ? `<button data-taskopen="${esc(t.id)}" style="height:42px;padding:0 16px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:600;cursor:pointer;color:var(--ink-2);">↺ Atjaunot</button>
+             <button data-taskdel="${esc(t.id)}" title="Dzēst" style="height:36px;padding:0 16px;background:transparent;border:0;color:var(--ink-3);font-size:13px;cursor:pointer;">Dzēst</button>`
+          : `<button data-taskdone="${esc(t.id)}" style="height:52px;padding:0 22px;background:var(--ok);color:#fff;border:0;border-radius:11px;font-weight:700;font-size:16px;cursor:pointer;white-space:nowrap;box-shadow:0 1px 2px oklch(0.6 0.13 155 / .35);">✓ Gatavs</button>`}
+      </div>
+    </div>
+  </div>`;}
+function warehouseHTML(){
+  const done=S.taskFilter==='done';
+  const notif=(typeof Notification==='undefined')?'':(Notification.permission==='granted'?'':
+    `<button data-act="enable-push" style="width:100%;height:46px;margin-bottom:var(--gap);background:var(--ink);color:#fff;border:0;border-radius:11px;font-weight:600;font-size:15px;cursor:pointer;">🔔 Ieslēgt paziņojumus uz šo ierīci</button>`);
+  return `<div class="page" style="padding:var(--pad);max-width:840px;margin:0 auto;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
+      <div><h1 style="margin:0;font-size:24px;font-weight:600;">Noliktava</h1>
+      <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${done?'Pabeigtie uzdevumi':`${S.openTasks||0} ${(S.openTasks===1)?'uzdevums':'uzdevumi'} — kas vēl jāatnes`}</div></div>
+      <div style="display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px;">
+        <button class="chip${done?'':' on'}" data-taskfilter="open">Darāmie</button>
+        <button class="chip${done?' on':''}" data-taskfilter="done">Pabeigtie</button>
+      </div>
+    </div>
+    ${notif}
+    <div class="card" style="padding:var(--card);margin-bottom:var(--gap);">
+      <div class="label" style="margin-bottom:8px;">Pasūtīt no noliktavas</div>
+      <div class="tcompose" style="display:flex;gap:10px;align-items:flex-start;">
+        <textarea id="task-draft" rows="2" placeholder="piem. 4× Nokian 205/55/16 no A ceha · BMW X5 klientam" style="flex:1;min-width:0;padding:11px 13px;border:1px solid var(--border-2);border-radius:10px;background:var(--surface);resize:vertical;line-height:1.45;">${esc(S.taskDraft)}</textarea>
+        <button data-act="task-send" style="height:46px;padding:0 20px;flex:none;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">Nosūtīt</button>
+      </div>
+      <div style="color:var(--ink-3);font-size:11px;margin-top:7px;">Enter nosūta · Shift+Enter jauna rinda. Noliktavas darbinieks saņem paziņojumu uzreiz.</div>
+    </div>
+    <div id="task-list">${taskListHTML()}</div>
+  </div>`;}
+function taskListHTML(){
+  if(!S.tasksLoaded)return `<div class="card" style="padding:24px;color:var(--ink-3);font-size:13px;">Ielādē…</div>`;
+  const list=S.tasks||[];
+  if(!list.length)return `<div class="card" style="padding:34px;text-align:center;color:var(--ink-3);font-size:14px;">${S.taskFilter==='done'
+    ? 'Vēl nekas nav pabeigts.'
+    : 'Viss padarīts — tukšs saraksts. ✓<br><span style="font-size:13px;">Jauni uzdevumi parādās, kad kāds nospiež “Sagatavot” vai pasūta no noliktavas.</span>'}</div>`;
+  return list.map(taskCard).join('');}
+function updateTaskList(){const c=document.getElementById('task-list');if(!c)return;c.innerHTML=taskListHTML();bind(c);
+  const h=document.querySelector('#view .page h1');if(h&&h.nextElementSibling&&S.taskFilter!=='done')h.nextElementSibling.textContent=`${S.openTasks||0} ${(S.openTasks===1)?'uzdevums':'uzdevumi'} — kas vēl jāatnes`;}
+async function sendTask(){const el=document.getElementById('task-draft');const text=(el&&el.value||'').trim();
+  if(!text){if(el)el.focus();return;}
+  const res=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās nosūtīt');return;}
+  S.taskDraft='';if(el)el.value='';
+  toast('Nosūtīts uz noliktavu');
+  if(S.taskFilter!=='open'){S.taskFilter='open';await loadTasks();render();return;}
+  await loadTasks();updateTaskList();}
+async function taskAction(id,what){
+  const url=what==='del'?'/api/tasks/'+encodeURIComponent(id):'/api/tasks/'+encodeURIComponent(id)+'/'+what;
+  const res=await fetch(url,{method:what==='del'?'DELETE':'POST'});
+  if(!res.ok){alertErr('Neizdevās atjaunināt uzdevumu');return;}
+  if(what==='done')toast('Gatavs ✓');
+  await loadTasks();updateTaskList();}
+
+// ---- Notifications: Web Push when configured, in-app alerts otherwise ----
+const b64ToU8=(s)=>{const p='='.repeat((4-s.length%4)%4);const b=atob((s+p).replace(/-/g,'+').replace(/_/g,'/'));
+  const out=new Uint8Array(b.length);for(let i=0;i<b.length;i++)out[i]=b.charCodeAt(i);return out;};
+async function enablePush(){
+  if(typeof Notification==='undefined'){alertErr('Šī pārlūkprogramma neatbalsta paziņojumus');return;}
+  let perm=Notification.permission;
+  if(perm!=='granted')perm=await Notification.requestPermission();
+  if(perm!=='granted'){alertErr('Paziņojumi ir bloķēti. Atļauj tos pārlūka iestatījumos šai lapai.');render();return;}
+  await subscribePush();
+  toast('Paziņojumi ieslēgti');render();}
+// Register this device with the server so it gets pushed even when the app is closed.
+async function subscribePush(){
+  if(!('serviceWorker' in navigator)||!('PushManager' in window))return false;
+  try{
+    if(!S.pushCfg)S.pushCfg=await(await fetch('/api/push/key')).json();
+    if(!S.pushCfg||!S.pushCfg.enabled||!S.pushCfg.publicKey)return false; // push not configured — polling covers it
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64ToU8(S.pushCfg.publicKey)});
+    const res=await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub.toJSON())});
+    S.pushOn=res.ok;return res.ok;
+  }catch(e){console.warn('push subscribe failed',e);return false;}}
+// Poll for new jobs. Keeps the badge live everywhere in the app and — when real
+// push isn't configured — raises a local notification for anything new.
+let _seenTasks=null,_taskPoll=null;
+async function pollTasks(){
+  if(!S.auth)return;
+  let list=[];
+  try{list=(await(await fetch('/api/tasks?status=open')).json()).tasks||[];}catch{return;}
+  S.openTasks=list.length;paintTaskBadge();
+  const ids=new Set(list.map(t=>String(t.id)));
+  if(_seenTasks){
+    const fresh=list.filter(t=>!_seenTasks.has(String(t.id)));
+    // Skip local alerts when the server pushes them — otherwise the phone buzzes twice.
+    if(fresh.length&&!S.pushOn&&typeof Notification!=='undefined'&&Notification.permission==='granted'&&document.visibilityState!=='visible'){
+      fresh.slice(0,3).forEach(t=>{try{new Notification(t.kind==='prepare'?'R1 · Sagatavot riepas':'R1 · Jauns pasūtījums',
+        {body:[t.location?'Vieta '+t.location:'',t.title,t.details].filter(Boolean).join(' · ').slice(0,160),icon:'/icon-192.png',tag:'r1-task-'+t.id});}catch{}});}
+  }
+  _seenTasks=ids;
+  if(S.screen==='warehouse'&&S.taskFilter==='open'){S.tasks=list;S.tasksLoaded=true;updateTaskList();}}
+function startTaskPolling(){if(_taskPoll)clearInterval(_taskPoll);_taskPoll=setInterval(pollTasks,20000);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')pollTasks();});}
 
 // ============ VEHICLE HISTORY (spot panel) ============
 async function loadVehicle(plate){S.spotHistLoading=true;renderModal();
@@ -1019,6 +1169,9 @@ function bind(root){
     else if(a==='new-user')await newUserDialog();
     else if(a==='go-release')nav('release');
     else if(a==='go-pending')nav('pending');
+    else if(a==='go-warehouse')nav('warehouse');
+    else if(a==='task-send')await sendTask();
+    else if(a==='enable-push')await enablePush();
     else if(a==='rel-search'){const q=document.getElementById('rel-q');S.relQ=q?q.value:S.relQ;await loadRelease();updateReleaseContent();}
     else if(a==='pick-spot'){grab();S.spotPickOpen=true;renderModal();}
     else if(a==='sms-done'){S.smsOpen=false;S.smsRec=null;resetIntake();await Promise.all([loadStats(),loadActivity()]);nav('home');}
@@ -1041,6 +1194,17 @@ function bind(root){
   root.querySelectorAll('[data-openrec]').forEach(el=>el.addEventListener('click',(e)=>{if(e.target.closest('button'))return;openRecordById(el.dataset.openrec);}));
   root.querySelectorAll('[data-recact]').forEach(el=>el.addEventListener('click',()=>recAction(el.dataset.recact)));
   root.querySelectorAll('[data-tabstatus]').forEach(el=>el.addEventListener('click',()=>{S.tabStatus=el.dataset.tabstatus;render();}));
+  root.querySelectorAll('[data-taskdone]').forEach(el=>el.addEventListener('click',()=>taskAction(el.dataset.taskdone,'done')));
+  root.querySelectorAll('[data-taskopen]').forEach(el=>el.addEventListener('click',()=>taskAction(el.dataset.taskopen,'reopen')));
+  root.querySelectorAll('[data-taskdel]').forEach(el=>el.addEventListener('click',async()=>{
+    const r=await ask({icon:'warning',title:'Dzēst uzdevumu?',confirmButtonText:'Dzēst',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});
+    if(r.isConfirmed)await taskAction(el.dataset.taskdel,'del');}));
+  root.querySelectorAll('[data-taskfilter]').forEach(el=>el.addEventListener('click',async()=>{
+    if(S.taskFilter===el.dataset.taskfilter)return;
+    S.taskFilter=el.dataset.taskfilter;S.tasksLoaded=false;render();await loadTasks();if(S.screen==='warehouse')render();}));
+  const td=root.querySelector('#task-draft');
+  if(td){td.addEventListener('input',()=>{S.taskDraft=td.value;});
+    td.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendTask();}});}
   root.querySelectorAll('[data-sort]').forEach(el=>el.addEventListener('click',()=>{const k=el.dataset.sort;
     if(S.tabSort.col===k)S.tabSort.dir=S.tabSort.dir==='asc'?'desc':'asc';else S.tabSort={col:k,dir:'asc'};updateTabContent();}));
   root.querySelectorAll('[data-reset-user]').forEach(el=>el.addEventListener('click',()=>resetUserDialog(el.dataset.resetUser,el.dataset.name)));
@@ -1056,16 +1220,16 @@ function bind(root){
     const r=await ask({icon:'question',title:'Sagatavot izsniegšanai?',html:`<b class="mono">${esc(el.dataset.plate||'')}</b> · vieta ${esc(el.dataset.loc||'')} paliks <b>rezervēta</b> sezonas maiņai`,confirmButtonText:'Sagatavot'});
     if(!r.isConfirmed)return;
     await fetch('/api/storage/'+encodeURIComponent(el.dataset.relPrepare)+'/prepare',{method:'POST'});
-    toast('Sagatavots · vieta rezervēta');
-    await Promise.all([loadStats(),loadRelease(),loadPending()]);updateReleaseContent();}));
+    toast('Sagatavots · uzdevums nosūtīts noliktavai');
+    await Promise.all([loadStats(),loadRelease(),loadPending(),pollTasks()]);updateReleaseContent();}));
   root.querySelectorAll('[data-swap]').forEach(el=>el.addEventListener('click',()=>{
     S.selSpot=null;renderModal();startSwap(el.dataset.swap,el.dataset.plate,el.dataset.loc);}));
   root.querySelectorAll('[data-prep-spot]').forEach(el=>el.addEventListener('click',async()=>{
     const r=await ask({icon:'question',title:'Sagatavot izsniegšanai?',html:`<b class="mono">${esc(el.dataset.plate||'')}</b> · vieta ${esc(el.dataset.loc||'')} paliks <b>rezervēta</b>`,confirmButtonText:'Sagatavot'});
     if(!r.isConfirmed)return;
     await fetch('/api/storage/'+encodeURIComponent(el.dataset.prepSpot)+'/prepare',{method:'POST'});
-    S.selSpot=null;toast('Sagatavots · vieta rezervēta');
-    await Promise.all([loadStats(),loadPending()]);renderModal();render();}));
+    S.selSpot=null;toast('Sagatavots · uzdevums nosūtīts noliktavai');
+    await Promise.all([loadStats(),loadPending(),pollTasks()]);renderModal();render();}));
   root.querySelectorAll('[data-unprep]').forEach(el=>el.addEventListener('click',async()=>{
     await fetch('/api/storage/'+encodeURIComponent(el.dataset.unprep)+'/unprepare',{method:'POST'});
     S.selSpot=null;toast('Novietots atpakaļ vietā');
@@ -1404,11 +1568,26 @@ function showLogin(){
   setTimeout(()=>{try{user.focus();}catch{}},60);}
 function hideLogin(){const g=$('#gate');if(g){g.innerHTML='';g.style.cssText='';}document.body.style.overflow='';}
 
+// The warehouse phone lives on one screen — reopen where the user left off, and
+// let ?view= (notification click / home-screen shortcut) jump straight there.
+const SCREENS=['home','warehouse','intake','release','pending','spots','customers','table','analytics','users'];
+const LAST_KEY='r1_last_view';
+function openView(v){if(SCREENS.includes(v)){document.body.classList.remove('nav-open');nav(v);}}
+function initialScreen(){
+  const p=new URLSearchParams(location.search).get('view');
+  if(p&&SCREENS.includes(p))return p;
+  try{const v=localStorage.getItem(LAST_KEY);if(v&&SCREENS.includes(v)&&v!=='users')return v;}catch{}
+  return 'home';}
+
 async function startApp(){
   S.role=(S.auth&&S.auth.role==='admin')?'owner':'staff';
-  paintHeader();render();
-  await Promise.all([loadStats(),loadActivity(),loadCustomers(),loadPending()]);
-  render();}
+  paintHeader();
+  nav(initialScreen());
+  await Promise.all([loadStats(),loadActivity(),loadCustomers(),loadPending(),pollTasks()]);
+  render();
+  startTaskPolling();
+  subscribePush(); // silently re-attaches an already-granted device after a reload
+}
 
 // ============ INIT ============
 function bindTopbar(){
@@ -1416,8 +1595,16 @@ function bindTopbar(){
   const cp=$('#btn-changepass');if(cp)cp.addEventListener('click',changePasswordDialog);
   const hb=$('#hamburger');if(hb)hb.addEventListener('click',()=>document.body.classList.toggle('nav-open'));
   const bd=$('#nav-backdrop');if(bd)bd.addEventListener('click',()=>document.body.classList.remove('nav-open'));}
+// Service worker: makes the app installable on a phone and delivers push
+// notifications while it's closed. Harmless (and skipped) on http:// origins.
+function registerSW(){
+  if(!('serviceWorker' in navigator))return;
+  navigator.serviceWorker.register('/sw.js').catch(e=>console.warn('sw register failed',e));
+  navigator.serviceWorker.addEventListener('message',e=>{
+    const d=e.data||{};
+    if(d.type==='r1-open'){try{const v=new URL(d.url,location.origin).searchParams.get('view');if(v)openView(v);}catch{}}});}
 (async function(){
-  bindTopbar();
+  bindTopbar();registerSW();
   try{
     const res=await fetch('/api/me');
     if(res.ok){const d=await res.json();S.auth=d.user;hideLogin();await startApp();}

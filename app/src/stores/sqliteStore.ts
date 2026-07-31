@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub } from '../types.js';
 
 /**
  * SQLite datastore — the self-contained default backend. A real, durable, local
@@ -63,6 +63,31 @@ CREATE TABLE IF NOT EXISTS record_events (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_events_record ON record_events(record_id);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT NOT NULL DEFAULT 'order',
+  record_id  TEXT,
+  title      TEXT NOT NULL,
+  details    TEXT,
+  location   TEXT,
+  plate      TEXT,
+  status     TEXT NOT NULL DEFAULT 'open',
+  created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  done_by    TEXT,
+  done_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_record ON tasks(record_id);
+
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint   TEXT PRIMARY KEY,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  username   TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
 `;
 
 interface Row {
@@ -228,6 +253,7 @@ export class SqliteStore implements Store {
     const tx = this.db.transaction((items: IntakeInput[]) => {
       this.db.prepare('DELETE FROM storage').run();
       this.db.prepare('DELETE FROM record_events').run(); // record IDs are reused → stale history would mis-attach
+      this.db.prepare('DELETE FROM tasks WHERE record_id IS NOT NULL').run(); // same for record-linked warehouse jobs
       for (const r of items) {
         insert.run({
           season: r.season ?? null, location: r.location ?? null, plate: r.plate ?? null,
@@ -327,4 +353,59 @@ export class SqliteStore implements Store {
   async deleteEvent(id: string): Promise<boolean> {
     return this.db.prepare('DELETE FROM record_events WHERE id = ?').run(Number(id)).changes > 0;
   }
+
+  // --- Warehouse tasks ---
+  private taskRow(r: TaskRow): Task {
+    return {
+      id: String(r.id), kind: r.kind === 'prepare' ? 'prepare' : 'order', recordId: r.record_id,
+      title: r.title, details: r.details, location: r.location, plate: r.plate,
+      status: r.status === 'done' ? 'done' : 'open', createdBy: r.created_by,
+      createdAt: r.created_at ?? null, doneBy: r.done_by, doneAt: r.done_at ?? null,
+    };
+  }
+  async listTasks(opts?: { status?: 'open' | 'done'; limit?: number }): Promise<Task[]> {
+    const limit = Math.max(1, Math.min(500, opts?.limit ?? 200));
+    const rows = (opts?.status
+      ? this.db.prepare('SELECT * FROM tasks WHERE status = ? ORDER BY id DESC LIMIT ?').all(opts.status, limit)
+      : this.db.prepare('SELECT * FROM tasks ORDER BY id DESC LIMIT ?').all(limit)) as TaskRow[];
+    return rows.map((r) => this.taskRow(r));
+  }
+  async createTask(t: TaskInput): Promise<Task> {
+    const info = this.db.prepare(
+      'INSERT INTO tasks (kind, record_id, title, details, location, plate, created_by) VALUES (?,?,?,?,?,?,?)')
+      .run(t.kind, t.recordId, t.title, t.details, t.location, t.plate, t.createdBy);
+    return this.taskRow(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid) as TaskRow);
+  }
+  async setTaskStatus(id: string, status: 'open' | 'done', actor: string | null): Promise<Task | null> {
+    const info = this.db.prepare('UPDATE tasks SET status = ?, done_by = ?, done_at = ? WHERE id = ?')
+      .run(status, status === 'done' ? actor : null, status === 'done' ? new Date().toISOString() : null, Number(id));
+    if (info.changes === 0) return null;
+    return this.taskRow(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(Number(id)) as TaskRow);
+  }
+  async closeTasksForRecord(recordId: string, actor: string | null): Promise<number> {
+    return this.db.prepare(`UPDATE tasks SET status = 'done', done_by = ?, done_at = ? WHERE record_id = ? AND status = 'open'`)
+      .run(actor, new Date().toISOString(), recordId).changes;
+  }
+  async deleteTask(id: string): Promise<boolean> {
+    return this.db.prepare('DELETE FROM tasks WHERE id = ?').run(Number(id)).changes > 0;
+  }
+
+  // --- Push subscriptions ---
+  async listPushSubs(): Promise<PushSub[]> {
+    return this.db.prepare('SELECT endpoint, p256dh, auth, username FROM push_subs').all() as PushSub[];
+  }
+  async addPushSub(s: PushSub): Promise<void> {
+    this.db.prepare(`INSERT INTO push_subs (endpoint, p256dh, auth, username) VALUES (?,?,?,?)
+      ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, username = excluded.username`)
+      .run(s.endpoint, s.p256dh, s.auth, s.username);
+  }
+  async deletePushSub(endpoint: string): Promise<boolean> {
+    return this.db.prepare('DELETE FROM push_subs WHERE endpoint = ?').run(endpoint).changes > 0;
+  }
+}
+
+interface TaskRow {
+  id: number; kind: string; record_id: string | null; title: string; details: string | null;
+  location: string | null; plate: string | null; status: string; created_by: string | null;
+  created_at: string | null; done_by: string | null; done_at: string | null;
 }

@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub } from '../types.js';
 
 /**
  * Postgres datastore — the production backend for Supabase (or any Postgres).
@@ -63,6 +63,31 @@ CREATE TABLE IF NOT EXISTS record_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_events_record ON record_events(record_id);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  kind       TEXT NOT NULL DEFAULT 'order',
+  record_id  TEXT,
+  title      TEXT NOT NULL,
+  details    TEXT,
+  location   TEXT,
+  plate      TEXT,
+  status     TEXT NOT NULL DEFAULT 'open',
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  done_by    TEXT,
+  done_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_record ON tasks(record_id);
+
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint   TEXT PRIMARY KEY,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  username   TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 
 interface Row {
@@ -213,6 +238,8 @@ export class PostgresStore implements Store {
       await client.query('TRUNCATE storage RESTART IDENTITY');
       // Record IDs reset here, so the old per-record history/comments no longer map — clear them.
       await client.query('DELETE FROM record_events');
+      // Same reasoning for record-linked warehouse jobs; free-text orders survive.
+      await client.query('DELETE FROM tasks WHERE record_id IS NOT NULL');
       const COLS = ['season', 'location', 'plate', 'make_model', 'customer_name', 'is_company', 'phone', 'size1', 'brand', 'quantity', 'size2', 'rim_note', 'notes', 'intake_date', 'release_date', 'status'];
       const BATCH = 500;
       let imported = 0;
@@ -346,4 +373,81 @@ export class PostgresStore implements Store {
     const res = await this.pool.query('DELETE FROM record_events WHERE id = $1', [Number(id)]);
     return (res.rowCount ?? 0) > 0;
   }
+
+  // --- Warehouse tasks ---
+  private taskRow(r: TaskRow): Task {
+    const iso = (v: string | Date | null) => {
+      if (!v) return null;
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? String(v) : d.toISOString();
+    };
+    return {
+      id: String(r.id), kind: r.kind === 'prepare' ? 'prepare' : 'order', recordId: r.record_id,
+      title: r.title, details: r.details, location: r.location, plate: r.plate,
+      status: r.status === 'done' ? 'done' : 'open', createdBy: r.created_by,
+      createdAt: iso(r.created_at), doneBy: r.done_by, doneAt: iso(r.done_at),
+    };
+  }
+  async listTasks(opts?: { status?: 'open' | 'done'; limit?: number }): Promise<Task[]> {
+    await this.init();
+    const params: unknown[] = [];
+    let where = '';
+    if (opts?.status) { params.push(opts.status); where = `WHERE status = $${params.length}`; }
+    params.push(Math.max(1, Math.min(500, opts?.limit ?? 200)));
+    const res = await this.pool.query<TaskRow>(`SELECT * FROM tasks ${where} ORDER BY id DESC LIMIT $${params.length}`, params);
+    return res.rows.map((r) => this.taskRow(r));
+  }
+  async createTask(t: TaskInput): Promise<Task> {
+    await this.init();
+    const res = await this.pool.query<TaskRow>(
+      `INSERT INTO tasks (kind, record_id, title, details, location, plate, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [t.kind, t.recordId, t.title, t.details, t.location, t.plate, t.createdBy]);
+    return this.taskRow(res.rows[0]);
+  }
+  async setTaskStatus(id: string, status: 'open' | 'done', actor: string | null): Promise<Task | null> {
+    await this.init();
+    const res = await this.pool.query<TaskRow>(
+      `UPDATE tasks SET status = $1, done_by = $2, done_at = $3 WHERE id = $4 RETURNING *`,
+      [status, status === 'done' ? actor : null, status === 'done' ? new Date().toISOString() : null, Number(id)]);
+    return res.rows[0] ? this.taskRow(res.rows[0]) : null;
+  }
+  async closeTasksForRecord(recordId: string, actor: string | null): Promise<number> {
+    await this.init();
+    const res = await this.pool.query(
+      `UPDATE tasks SET status = 'done', done_by = $1, done_at = now() WHERE record_id = $2 AND status = 'open'`,
+      [actor, recordId]);
+    return res.rowCount ?? 0;
+  }
+  async deleteTask(id: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('DELETE FROM tasks WHERE id = $1', [Number(id)]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  // --- Push subscriptions ---
+  async listPushSubs(): Promise<PushSub[]> {
+    await this.init();
+    const res = await this.pool.query<{ endpoint: string; p256dh: string; auth: string; username: string | null }>(
+      'SELECT endpoint, p256dh, auth, username FROM push_subs');
+    return res.rows;
+  }
+  async addPushSub(s: PushSub): Promise<void> {
+    await this.init();
+    await this.pool.query(
+      `INSERT INTO push_subs (endpoint, p256dh, auth, username) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, username = EXCLUDED.username`,
+      [s.endpoint, s.p256dh, s.auth, s.username]);
+  }
+  async deletePushSub(endpoint: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('DELETE FROM push_subs WHERE endpoint = $1', [endpoint]);
+    return (res.rowCount ?? 0) > 0;
+  }
+}
+
+interface TaskRow {
+  id: number; kind: string; record_id: string | null; title: string; details: string | null;
+  location: string | null; plate: string | null; status: string; created_by: string | null;
+  created_at: string | Date | null; done_by: string | null; done_at: string | Date | null;
 }

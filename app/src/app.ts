@@ -10,6 +10,7 @@ import {
   COOKIE, signToken, verifyPassword, hashPassword, currentUser, requireAuth, requireAdmin, toSession,
   AUTH_DISABLED, DEMO_USER,
 } from './auth.js';
+import { pushToAll, pushEnabled, vapidPublicKey } from './push.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -543,7 +544,13 @@ export function createApp(): express.Express {
     };
     // Swap completion: close the prepared set that reserved this spot, then store
     // the new season's tires in the same place.
-    if (b.releaseId) { try { await store.release(String(b.releaseId), {}); await logEvent(store, String(b.releaseId), 'swapped', 'Aizvietots ar jaunām riepām', req); } catch { /* already closed */ } }
+    if (b.releaseId) {
+      try {
+        await store.release(String(b.releaseId), {});
+        await logEvent(store, String(b.releaseId), 'swapped', 'Aizvietots ar jaunām riepām', req);
+        await store.closeTasksForRecord(String(b.releaseId), actorOf(req));
+      } catch { /* already closed */ }
+    }
     const rec = await store.create(input);
     await logEvent(store, rec.id, 'created', b.notes, req);
     res.status(201).json(rec);
@@ -554,6 +561,8 @@ export function createApp(): express.Express {
     const rec = await store.release(req.params.id, { releaseDate: req.body?.releaseDate });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
     await logEvent(store, rec.id, 'released', req.body?.comment, req);
+    // The set has left the building — any warehouse job for it is settled.
+    try { await store.closeTasksForRecord(String(rec.id), actorOf(req)); } catch { /* non-critical */ }
     res.json(rec);
   }));
 
@@ -563,7 +572,18 @@ export function createApp(): express.Express {
     const rec = await store.prepare(req.params.id, {});
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
     await logEvent(store, rec.id, 'prepared', req.body?.comment, req);
-    res.json(rec);
+    // Hand the physical work to the warehouse queue.
+    let task = null;
+    try {
+      const comment = typeof req.body?.comment === 'string' && req.body.comment.trim() ? req.body.comment.trim() : null;
+      task = await store.createTask({
+        kind: 'prepare', recordId: String(rec.id), title: taskTitleFor(rec),
+        details: [taskDetailsFor(rec), comment].filter(Boolean).join(' · ') || null,
+        location: rec.location, plate: rec.plate, createdBy: actorOf(req),
+      });
+      announceTask(task);
+    } catch (e) { console.error('[tasks] could not queue prepare job:', e); }
+    res.json({ ...rec, task });
   }));
   // Undo a prepare — put the set back in its spot ('active').
   app.post('/api/storage/:id/unprepare', requireAuth, asyncH(async (req, res) => {
@@ -571,6 +591,8 @@ export function createApp(): express.Express {
     const rec = await store.prepare(req.params.id, { active: true });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
     await logEvent(store, rec.id, 'unprepared', req.body?.comment, req);
+    // The job is off the table — take it out of the warehouse list too.
+    try { await store.closeTasksForRecord(String(rec.id), actorOf(req)); } catch { /* non-critical */ }
     res.json(rec);
   }));
 
@@ -621,6 +643,98 @@ export function createApp(): express.Express {
     const store = await getStore();
     const ok = await store.deleteEvent(req.params.id);
     if (!ok) return res.status(404).json({ error: { message: 'Not found' } });
+    res.json({ ok: true });
+  }));
+
+  // --- Warehouse tasks (Noliktava) -------------------------------------------
+  // One queue the warehouse worker looks at. Two things land in it: 'prepare'
+  // jobs created automatically when staff stage a set for a swap, and free-text
+  // 'order' requests typed into the warehouse chat box. Ticking a task done takes
+  // it out of the list, so the open list is always "what still has to be fetched".
+  const taskTitleFor = (r: StorageRecord) => (r.plate ?? r.location ?? 'Riepas').trim();
+  const taskDetailsFor = (r: StorageRecord) => {
+    const size2 = r.size2 ?? (r.notes?.match(/\b(\d{3}\/\d{1,2}\/\d{2})\b/)?.[1] ?? null);
+    const tires = [r.quantity ? `${r.quantity}×` : '', canonBrand(r.brand) ?? '', r.size1 ?? '']
+      .filter(Boolean).join(' ') + (size2 ? ` + ${size2}` : '');
+    return [tires.trim() || null, r.customerName, r.rimNote].filter(Boolean).join(' · ') || null;
+  };
+  /** Announce a new job to every subscribed device. Fire-and-forget. */
+  const announceTask = (t: { title: string; details: string | null; location: string | null; kind: string }) => {
+    const what = t.kind === 'prepare' ? 'Sagatavot riepas' : 'Jauns pasūtījums';
+    const body = [t.location ? `Vieta ${t.location}` : null, t.title, t.details].filter(Boolean).join(' · ');
+    getStore()
+      .then((s) => pushToAll(s, { title: `R1 · ${what}`, body: body.slice(0, 160), url: '/?view=warehouse', tag: 'r1-task' }))
+      .catch(() => { /* notifications are best-effort */ });
+  };
+
+  app.get('/api/tasks', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const s = req.query.status;
+    const status = s === 'done' ? 'done' : s === 'all' ? undefined : 'open';
+    const tasks = await store.listTasks({ status, limit: status === 'done' ? 50 : 200 });
+    const open = status === 'open' ? tasks.length : (await store.listTasks({ status: 'open', limit: 500 })).length;
+    res.json({ tasks, open });
+  }));
+
+  app.post('/api/tasks', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const text = typeof b.text === 'string' ? b.text.trim() : '';
+    if (!text) return res.status(400).json({ error: { message: 'Ieraksti, ko vajag no noliktavas' } });
+    // First line is the headline, the rest is detail — so a pasted multi-line
+    // order still reads well in the list.
+    const [first, ...rest] = text.split('\n');
+    const task = await store.createTask({
+      kind: 'order', recordId: null,
+      title: first.trim().slice(0, 120),
+      details: rest.join('\n').trim().slice(0, 800) || null,
+      location: typeof b.location === 'string' && b.location.trim() ? b.location.trim().toUpperCase() : null,
+      plate: typeof b.plate === 'string' && b.plate.trim() ? b.plate.trim().toUpperCase() : null,
+      createdBy: actorOf(req),
+    });
+    announceTask(task);
+    res.status(201).json({ ok: true, task });
+  }));
+
+  app.post('/api/tasks/:id/done', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const t = await store.setTaskStatus(req.params.id, 'done', actorOf(req));
+    if (!t) return res.status(404).json({ error: { message: 'Uzdevums nav atrasts' } });
+    res.json({ ok: true, task: t });
+  }));
+
+  app.post('/api/tasks/:id/reopen', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const t = await store.setTaskStatus(req.params.id, 'open', null);
+    if (!t) return res.status(404).json({ error: { message: 'Uzdevums nav atrasts' } });
+    res.json({ ok: true, task: t });
+  }));
+
+  app.delete('/api/tasks/:id', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const ok = await store.deleteTask(req.params.id);
+    if (!ok) return res.status(404).json({ error: { message: 'Uzdevums nav atrasts' } });
+    res.json({ ok: true });
+  }));
+
+  // --- Web Push registration (one row per device) ---
+  app.get('/api/push/key', requireAuth, (_req, res) => {
+    res.json({ enabled: pushEnabled(), publicKey: vapidPublicKey() });
+  });
+  app.post('/api/push/subscribe', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const b = (req.body ?? {}) as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } };
+    const endpoint = typeof b.endpoint === 'string' ? b.endpoint : '';
+    const p256dh = typeof b.keys?.p256dh === 'string' ? b.keys.p256dh : '';
+    const auth = typeof b.keys?.auth === 'string' ? b.keys.auth : '';
+    if (!endpoint || !p256dh || !auth) return res.status(400).json({ error: { message: 'Nederīga abonēšana' } });
+    await store.addPushSub({ endpoint, p256dh, auth, username: actorOf(req) });
+    res.json({ ok: true });
+  }));
+  app.post('/api/push/unsubscribe', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const endpoint = typeof req.body?.endpoint === 'string' ? req.body.endpoint : '';
+    if (endpoint) await store.deletePushSub(endpoint);
     res.json({ ok: true });
   }));
 
