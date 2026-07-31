@@ -90,6 +90,16 @@ CREATE TABLE IF NOT EXISTS push_subs (
 );
 `;
 
+/**
+ * Legacy sheets wrote "BRĪVS" in the plate column to mean the place is empty.
+ * Those rows are spot placeholders, not stored sets, and must not count against
+ * capacity. SQLite's upper() is ASCII-only, so the spellings are listed out rather
+ * than case-folded. Idempotent — after the first run nothing matches.
+ */
+const FREE_SPOT_FIX = `UPDATE storage SET status = 'free', plate = NULL
+ WHERE status = 'active' AND size1 IS NULL AND brand IS NULL AND customerName IS NULL
+   AND TRIM(COALESCE(plate, '')) IN ('BRĪVS','Brīvs','brīvs','BRIVS','Brivs','brivs','BRĪVA','BRIVA','TUKŠS','Tukšs','tukšs','TUKSS','FREE','Free','free')`;
+
 interface Row {
   id: number; season: string | null; location: string | null; plate: string | null;
   makeModel: string | null; customerName: string | null; isCompany: number;
@@ -99,8 +109,9 @@ interface Row {
   threadDepth?: string | null; smsCode?: string | null; feeEur?: string | null; preparedDate?: string | null;
 }
 
-const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' =>
-  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : s === 'blocked' ? 'blocked' : 'active';
+const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' | 'free' =>
+  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : s === 'blocked' ? 'blocked'
+    : s === 'free' ? 'free' : 'active';
 
 const toRecord = (r: Row): StorageRecord => ({
   id: String(r.id), season: r.season, location: r.location, plate: r.plate,
@@ -126,6 +137,8 @@ export class SqliteStore implements Store {
     }
     const count = (this.db.prepare('SELECT COUNT(*) AS n FROM storage').get() as { n: number }).n;
     if (count === 0 && seedFile && existsSync(seedFile)) this.seed(seedFile);
+    // Runs after seeding too — a JSON seed predates the importer's free-spot fix.
+    this.db.prepare(FREE_SPOT_FIX).run();
   }
 
   private seed(seedFile: string) {

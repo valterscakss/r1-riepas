@@ -308,7 +308,9 @@ export function createApp(): express.Express {
   // source sheet. The 2nd size is pulled from size2 or a size in the notes column.
   app.get('/api/analytics', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
-    const everything = (await store.list()).filter((r) => r.status !== 'blocked');
+    // Placeholder rows (manually blocked spots, "BRĪVS" free markers) hold no tires
+    // and would only skew the counts.
+    const everything = (await store.list()).filter((r) => r.status !== 'blocked' && r.status !== 'free');
     // Distinct source seasons (from the full set, so the dropdown is stable when
     // filtered). Year-prefixed seasons come first, newest first; oddly-named sheets last.
     const seasonOptions = [...new Set(everything.map((r) => (r.season ?? '').trim()).filter(Boolean))]

@@ -6,7 +6,7 @@ import type { IntakeInput } from './types.js';
  * seasonal sheets, normalizes messy values, and produces rows to REPLACE the DB
  * (Excel = source of truth). The file itself is never stored — only parsed.
  */
-export type ParsedRecord = IntakeInput & { releaseDate: string | null; status: 'active' | 'released' };
+export type ParsedRecord = IntakeInput & { releaseDate: string | null; status: 'active' | 'released' | 'free' };
 export interface ParseResult {
   records: ParsedRecord[];
   summary: { sheets: number; rows: number; parsed: number; skipped: number };
@@ -115,6 +115,16 @@ function buildColMap(headerRow: unknown[]): ColMap {
 }
 const NOTE_SIZE = /\b(\d{3})\/(\d{1,2})[/R]?(\d{2})\b/i;
 
+// The seasonal sheets write "BRĪVS" (free) into the AUTO NR. column to mark a spot
+// that holds nothing. That is a spot placeholder, not a car — importing it as a
+// plate makes 670 empty places look occupied. Recognised only when the row has no
+// tire data at all, so a real (if oddly named) record is never swallowed.
+const FREE_MARKERS = new Set(['BRĪVS', 'BRIVS', 'BRĪVA', 'BRIVA', 'BRĪVI', 'TUKŠS', 'TUKSS', 'TUKŠA', 'TUKSA', 'FREE']);
+const isFreeMarker = (v: unknown): boolean => {
+  const s = clean(v);
+  return !!s && FREE_MARKERS.has(s.toUpperCase().replace(/[^A-ZĀČĒĢĪĶĻŅŠŪŽ]/g, ''));
+};
+
 // Testing placeholder: while ANONYMIZE_PHONES=true, every phone is replaced with
 // an obvious dummy so real numbers aren't exposed during testing. Turn the flag
 // off and re-import to restore the actual numbers from the workbook.
@@ -158,15 +168,18 @@ export async function parseWorkbook(buffer: Buffer): Promise<ParseResult> {
         if (nm) { size2 = `${nm[1]}/${nm[2]}/${nm[3]}`; if (/^\s*\d{3}\/\d{1,2}[/R]?\d{2}\s*$/i.test(notes)) notes = null; }
       }
       const thread = m.thread >= 0 ? clean(at(row, m.thread)) : null;
+      const size1 = normSize(size);
+      // "BRĪVS" in the plate column with nothing else on the row = an empty place.
+      const isFree = isFreeMarker(auto) && !size1 && !clean(brand) && !nameStr && !size2 && !releaseDate;
       records.push({
         season: name,
         location: clean(at(row, m.vieta))?.toUpperCase().replace(/\s+/g, '') ?? null,
-        plate: normPlate(auto),
+        plate: isFree ? null : normPlate(auto),
         makeModel: clean(make),
         customerName: nameStr,
         isCompany,
         phone: anon ? (ph.phone ? DUMMY_PHONE : null) : ph.phone,
-        size1: normSize(size),
+        size1,
         brand: clean(brand),
         quantity: qty.raw,
         size2,
@@ -174,7 +187,7 @@ export async function parseWorkbook(buffer: Buffer): Promise<ParseResult> {
         notes,
         intakeDate: parseDate(at(row, m.recv)),
         releaseDate,
-        status: releaseDate ? 'released' : 'active',
+        status: isFree ? 'free' : releaseDate ? 'released' : 'active',
         threadDepth: thread, smsCode: null, feeEur: null,
       });
       parsed++;

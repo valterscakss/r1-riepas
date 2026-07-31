@@ -81,6 +81,13 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_record ON tasks(record_id);
 
+-- One-off data fix: legacy sheets wrote "BRĪVS" in the plate column to mean the
+-- place is empty. Those rows are spot placeholders, not stored sets, so they must
+-- not count against capacity. Idempotent — after the first run nothing matches.
+UPDATE storage SET status = 'free', plate = NULL
+ WHERE status = 'active' AND size1 IS NULL AND brand IS NULL AND customer_name IS NULL
+   AND UPPER(BTRIM(COALESCE(plate, ''))) IN ('BRĪVS','BRIVS','BRĪVA','BRIVA','BRĪVI','TUKŠS','TUKSS','TUKŠA','TUKSA','FREE');
+
 CREATE TABLE IF NOT EXISTS push_subs (
   endpoint   TEXT PRIMARY KEY,
   p256dh     TEXT NOT NULL,
@@ -99,8 +106,9 @@ interface Row {
   thread_depth?: string | null; sms_code?: string | null; fee_eur?: string | null; prepared_date?: string | null;
 }
 
-const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' =>
-  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : s === 'blocked' ? 'blocked' : 'active';
+const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' | 'free' =>
+  s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : s === 'blocked' ? 'blocked'
+    : s === 'free' ? 'free' : 'active';
 
 const toRecord = (r: Row): StorageRecord => ({
   id: String(r.id), season: r.season, location: r.location, plate: r.plate,

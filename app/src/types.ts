@@ -18,8 +18,10 @@ export interface StorageRecord {
   releaseDate: string | null;// IZSNIEGŠANAS DATUMS
   // 'active' = tires in the spot; 'prepared' = tires taken out but the spot stays
   // reserved (waiting for a seasonal swap); 'blocked' = spot manually held with no
-  // tires (unavailable); 'released' = order closed, spot free.
-  status: 'active' | 'prepared' | 'blocked' | 'released';
+  // tires (unavailable); 'released' = order closed, spot free; 'free' = a
+  // placeholder that only says "this spot exists and is empty" (the legacy sheets
+  // wrote "BRĪVS" in the plate column for these).
+  status: 'active' | 'prepared' | 'blocked' | 'released' | 'free';
   preparedDate: string | null; // when the set was staged for a swap
   // Phase-1 features (null for migrated history)
   threadDepth: string | null; // protektora dziļums, mm

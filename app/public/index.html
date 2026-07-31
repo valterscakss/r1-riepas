@@ -572,7 +572,7 @@ function noteSize(n){const m=String(n||'').match(/\b(\d{3})\/(\d{1,2})[\/R]?(\d{
 function tabSize2(r){return r.size2||noteSize(r.notes)||'';}
 function tabNotes(r){const n=r.notes||'';return /^\s*\d{3}\/\d{1,2}[\/R]?\d{2}\s*$/i.test(n)?'':n;}
 function tabVal(r,k){return k==='diski'?(r.rimNote||''):k==='size2'?tabSize2(r):k==='notes'?tabNotes(r):r[k];}
-const STAT_BADGE={active:['Glabājas','var(--ok-soft)','var(--ok)'],prepared:['Rezervēts','var(--warn-soft)','var(--warn)'],blocked:['Bloķēts','var(--danger-soft)','var(--danger)'],released:['Izsniegts','var(--surface-2)','var(--ink-3)']};
+const STAT_BADGE={active:['Glabājas','var(--ok-soft)','var(--ok)'],prepared:['Rezervēts','var(--warn-soft)','var(--warn)'],blocked:['Bloķēts','var(--danger-soft)','var(--danger)'],released:['Izsniegts','var(--surface-2)','var(--ink-3)'],free:['Brīva vieta','var(--ok-soft)','var(--ok)']};
 async function loadTable(){try{const d=await(await fetch('/api/storage')).json();S.table=d.records||[];}catch{S.table=[];}S.tableLoaded=true;}
 async function loadAnalytics(){const p=new URLSearchParams();
   if(S.anaSeason)p.set('season',S.anaSeason);if(S.anaStatus)p.set('status',S.anaStatus);
@@ -1145,6 +1145,8 @@ function renderModal(){const m=$('#modal');
         <button data-recact="unprep" style="height:40px;background:transparent;border:0;color:var(--ink-3);font-weight:500;cursor:pointer;">Novietot atpakaļ vietā</button>`
       :r.status==='blocked'?`
         <button data-recact="unblock" style="height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Atbloķēt vietu</button>`
+      :r.status==='free'?`
+        <div style="color:var(--ink-3);font-size:13px;text-align:center;padding:6px;">Brīva vieta — riepu nav. Gatava jaunai pieņemšanai.</div>`
       :`<div style="color:var(--ink-3);font-size:13px;text-align:center;padding:6px;">Izsniegts ${esc(r.releaseDate||'')} — aktīvu darbību nav.</div>`;
     m.innerHTML=`<div data-close="rec" style="position:fixed;inset:0;background:oklch(0.2 0.02 260 / .45);z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;animation:r1fade .2s ease;">
       <div data-stop="1" style="background:var(--surface);border-radius:18px;width:560px;max-width:100%;max-height:88vh;overflow:auto;box-shadow:0 24px 60px oklch(0.2 0.02 260 / .3);animation:r1pop .24s ease;">
