@@ -119,6 +119,11 @@ const FREE_SPOT_FIX = `UPDATE storage SET status = 'free', plate = NULL
  WHERE status = 'active' AND size1 IS NULL AND brand IS NULL AND customerName IS NULL
    AND TRIM(COALESCE(plate, '')) IN ('BRĪVS','Brīvs','brīvs','BRIVS','Brivs','brivs','BRĪVA','BRIVA','TUKŠS','Tukšs','tukšs','TUKSS','FREE','Free','free')`;
 
+/** Its opposite: AIZŅEMTS ("taken") = the place is held, nothing recorded about it. */
+const HELD_SPOT_FIX = `UPDATE storage SET status = 'blocked', plate = NULL
+ WHERE status = 'active' AND size1 IS NULL AND brand IS NULL AND customerName IS NULL
+   AND TRIM(COALESCE(plate, '')) IN ('AIZŅEMTS','Aizņemts','aizņemts','AIZNEMTS','Aiznemts','AIZŅEMTA','AIZNEMTA','REZERVĒTS','Rezervēts','REZERVETS')`;
+
 interface Row {
   id: number; season: string | null; location: string | null; plate: string | null;
   makeModel: string | null; customerName: string | null; isCompany: number;
@@ -158,6 +163,7 @@ export class SqliteStore implements Store {
     if (count === 0 && seedFile && existsSync(seedFile)) this.seed(seedFile);
     // Runs after seeding too — a JSON seed predates the importer's free-spot fix.
     this.db.prepare(FREE_SPOT_FIX).run();
+    this.db.prepare(HELD_SPOT_FIX).run();
   }
 
   private seed(seedFile: string) {

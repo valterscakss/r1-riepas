@@ -190,13 +190,29 @@ export function createApp(): express.Express {
     const defs = await store.listContainers();
     const seen = new Map<string, { code: string; c: string; n: number }>();
     const occupied = new Map<string, (typeof all)[number]>();
+    // A place carries rows from every season it has ever been used in, so the one
+    // that decides what the grid shows must be the CURRENT holder. `list()` returns
+    // id DESC, which for the imported workbook is OLDEST sheet first — taking the
+    // first match surfaced a 2022 placeholder instead of this season's customer.
+    const holdsSpot = (r: StorageRecord) => r.status === 'active' || r.status === 'prepared' || r.status === 'blocked';
+    // A row with real content outranks a bare placeholder; then the later intake
+    // wins; then the row touched most recently.
+    const substance = (r: StorageRecord) => (r.plate || r.size1 || r.customerName ? 1 : 0);
+    const current = (a: StorageRecord, b: StorageRecord) => {
+      if (substance(a) !== substance(b)) return substance(a) > substance(b) ? a : b;
+      const ad = a.intakeDate ?? '', bd = b.intakeDate ?? '';
+      if (ad !== bd) return ad > bd ? a : b;
+      return Number(a.id) > Number(b.id) ? a : b;
+    };
     for (const r of all) {
       const code = (r.location ?? '').toUpperCase();
       const m = code.match(SPOT_RE);
       if (!m) continue;
       if (!seen.has(code)) seen.set(code, { code, c: m[1], n: Number(m[2]) });
       // Stored ('active'), staged-for-swap ('prepared') and manually 'blocked' spots all hold the spot.
-      if ((r.status === 'active' || r.status === 'prepared' || r.status === 'blocked') && !occupied.has(code)) occupied.set(code, r);
+      if (!holdsSpot(r)) continue;
+      const prev = occupied.get(code);
+      occupied.set(code, prev ? current(prev, r) : r);
     }
     // Add every place from user-defined containers, so empty containers appear too.
     for (const d of defs) {

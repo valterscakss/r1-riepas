@@ -88,6 +88,12 @@ UPDATE storage SET status = 'free', plate = NULL
  WHERE status = 'active' AND size1 IS NULL AND brand IS NULL AND customer_name IS NULL
    AND UPPER(BTRIM(COALESCE(plate, ''))) IN ('BRĪVS','BRIVS','BRĪVA','BRIVA','BRĪVI','TUKŠS','TUKSS','TUKŠA','TUKSA','FREE');
 
+-- Its opposite: AIZŅEMTS ("taken") means the place is held but nothing was recorded
+-- about what sits in it — a blocked spot, not a car called AIZŅEMTS.
+UPDATE storage SET status = 'blocked', plate = NULL
+ WHERE status = 'active' AND size1 IS NULL AND brand IS NULL AND customer_name IS NULL
+   AND UPPER(BTRIM(COALESCE(plate, ''))) IN ('AIZŅEMTS','AIZNEMTS','AIZŅEMTA','AIZNEMTA','REZERVĒTS','REZERVETS');
+
 CREATE TABLE IF NOT EXISTS photos (
   id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   record_id  TEXT NOT NULL,

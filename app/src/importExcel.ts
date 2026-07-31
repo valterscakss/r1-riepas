@@ -6,7 +6,7 @@ import type { IntakeInput } from './types.js';
  * seasonal sheets, normalizes messy values, and produces rows to REPLACE the DB
  * (Excel = source of truth). The file itself is never stored — only parsed.
  */
-export type ParsedRecord = IntakeInput & { releaseDate: string | null; status: 'active' | 'released' | 'free' };
+export type ParsedRecord = IntakeInput & { releaseDate: string | null; status: 'active' | 'released' | 'free' | 'blocked' };
 export interface ParseResult {
   records: ParsedRecord[];
   summary: { sheets: number; rows: number; parsed: number; skipped: number };
@@ -120,10 +120,15 @@ const NOTE_SIZE = /\b(\d{3})\/(\d{1,2})[/R]?(\d{2})\b/i;
 // plate makes 670 empty places look occupied. Recognised only when the row has no
 // tire data at all, so a real (if oddly named) record is never swallowed.
 const FREE_MARKERS = new Set(['BRĪVS', 'BRIVS', 'BRĪVA', 'BRIVA', 'BRĪVI', 'TUKŠS', 'TUKSS', 'TUKŠA', 'TUKSA', 'FREE']);
-const isFreeMarker = (v: unknown): boolean => {
+// The opposite marker: AIZŅEMTS ("taken") means the place is held but nothing is
+// recorded about what is in it. That is a blocked spot, not a car called AIZŅEMTS.
+const HELD_MARKERS = new Set(['AIZŅEMTS', 'AIZNEMTS', 'AIZŅEMTA', 'AIZNEMTA', 'REZERVĒTS', 'REZERVETS']);
+const markerWord = (v: unknown): string => {
   const s = clean(v);
-  return !!s && FREE_MARKERS.has(s.toUpperCase().replace(/[^A-ZĀČĒĢĪĶĻŅŠŪŽ]/g, ''));
+  return s ? s.toUpperCase().replace(/[^A-ZĀČĒĢĪĶĻŅŠŪŽ]/g, '') : '';
 };
+const isFreeMarker = (v: unknown): boolean => FREE_MARKERS.has(markerWord(v));
+const isHeldMarker = (v: unknown): boolean => HELD_MARKERS.has(markerWord(v));
 
 // Testing placeholder: while ANONYMIZE_PHONES=true, every phone is replaced with
 // an obvious dummy so real numbers aren't exposed during testing. Turn the flag
@@ -169,12 +174,15 @@ export async function parseWorkbook(buffer: Buffer): Promise<ParseResult> {
       }
       const thread = m.thread >= 0 ? clean(at(row, m.thread)) : null;
       const size1 = normSize(size);
-      // "BRĪVS" in the plate column with nothing else on the row = an empty place.
-      const isFree = isFreeMarker(auto) && !size1 && !clean(brand) && !nameStr && !size2 && !releaseDate;
+      // A marker word in the plate column with nothing else on the row describes the
+      // PLACE, not a car: BRĪVS → empty, AIZŅEMTS → held with no details recorded.
+      const bare = !size1 && !clean(brand) && !nameStr && !size2 && !releaseDate;
+      const isFree = bare && isFreeMarker(auto);
+      const isHeld = bare && isHeldMarker(auto);
       records.push({
         season: name,
         location: clean(at(row, m.vieta))?.toUpperCase().replace(/\s+/g, '') ?? null,
-        plate: isFree ? null : normPlate(auto),
+        plate: (isFree || isHeld) ? null : normPlate(auto),
         makeModel: clean(make),
         customerName: nameStr,
         isCompany,
@@ -187,7 +195,7 @@ export async function parseWorkbook(buffer: Buffer): Promise<ParseResult> {
         notes,
         intakeDate: parseDate(at(row, m.recv)),
         releaseDate,
-        status: isFree ? 'free' : releaseDate ? 'released' : 'active',
+        status: isFree ? 'free' : isHeld ? 'blocked' : releaseDate ? 'released' : 'active',
         threadDepth: thread, smsCode: null, feeEur: null,
       });
       parsed++;
