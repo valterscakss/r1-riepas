@@ -3,7 +3,8 @@ import cookieParser from 'cookie-parser';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import type { IntakeInput, StorageRecord, Store } from './types.js';
+import type { IntakeInput, StorageRecord, Store, PricingConfig, PricingTier } from './types.js';
+import { DEFAULT_PRICING } from './types.js';
 import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
 import {
@@ -208,12 +209,50 @@ export function createApp(): express.Express {
     const spots = [...seen.values()].sort((a, b) => a.c.localeCompare(b.c) || a.n - b.n);
     return { spots, occupied, all, defs };
   }
-  const priceFor = (size: string | null, rim: string | null) => {
-    const width = parseInt((size ?? '').slice(0, 3)) || 0;
-    if (!width) return { base: 0, mult: 1, total: 0 };
-    const base = width <= 215 ? 15 : width <= 245 ? 20 : width <= 275 ? 25 : 30;
-    const mult = rim === 'aluminum' ? 1.3 : rim === 'steel' ? 1.2 : 1.0;
-    return { base, mult, total: Math.round(base * mult * 100) / 100 };
+  // --- Pricing (editable in Iestatījumi; falls back to the built-in tiers) ---
+  // A tier matches the tire's WIDTH, inclusive at both ends; the widest tire in a
+  // staggered set decides. Validation lives here so a bad payload can never make
+  // the intake screen price things at zero.
+  const cleanPricing = (raw: unknown): PricingConfig => {
+    const r = (raw ?? {}) as Partial<PricingConfig>;
+    const num = (v: unknown, min: number, max: number, dflt: number) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= min && n <= max ? n : dflt;
+    };
+    const tiers = (Array.isArray(r.tiers) ? r.tiers : [])
+      .map((t) => ({
+        from: Math.trunc(num((t as PricingTier)?.from, 0, 999, 0)),
+        to: Math.trunc(num((t as PricingTier)?.to, 0, 999, 999)),
+        price: Math.round(num((t as PricingTier)?.price, 0, 100000, 0) * 100) / 100,
+      }))
+      .filter((t) => t.to >= t.from)
+      .sort((a, b) => a.from - b.from);
+    const rims = (r.rims ?? {}) as PricingConfig['rims'];
+    return {
+      tiers: tiers.length ? tiers : DEFAULT_PRICING.tiers,
+      rims: {
+        none: num(rims.none, 0, 100, DEFAULT_PRICING.rims.none),
+        steel: num(rims.steel, 0, 100, DEFAULT_PRICING.rims.steel),
+        aluminum: num(rims.aluminum, 0, 100, DEFAULT_PRICING.rims.aluminum),
+      },
+    };
+  };
+  const loadPricing = async (): Promise<PricingConfig> => {
+    try {
+      const store = await getStore();
+      const raw = await store.getSetting('pricing');
+      return raw ? cleanPricing(raw) : DEFAULT_PRICING;
+    } catch { return DEFAULT_PRICING; }
+  };
+  const widthOf = (size: string | null) => parseInt((size ?? '').slice(0, 3)) || 0;
+  const priceWith = (cfg: PricingConfig, size: string | null, rim: string | null, size2?: string | null) => {
+    const width = Math.max(widthOf(size), widthOf(size2 ?? null));
+    if (!width) return { width: 0, base: 0, mult: 1, total: 0, tier: null as PricingTier | null };
+    // First matching range wins; anything above every range falls to the last tier.
+    const tier = cfg.tiers.find((t) => width >= t.from && width <= t.to) ?? cfg.tiers[cfg.tiers.length - 1] ?? null;
+    const base = tier?.price ?? 0;
+    const mult = rim === 'aluminum' ? cfg.rims.aluminum : rim === 'steel' ? cfg.rims.steel : cfg.rims.none;
+    return { width, base, mult, total: Math.round(base * mult * 100) / 100, tier };
   };
   const seasonNow = () => {
     const d = new Date();
@@ -516,9 +555,9 @@ export function createApp(): express.Express {
       const firstFree = spots.find((s) => !occupied.has(s.code));
       location = firstFree?.code ?? null;
     }
-    // Pricing (design: base by width tier × rim multiplier).
+    // Pricing: width tier × rim multiplier, both editable in Iestatījumi.
     const rim = b.rim === 'aluminum' || b.rim === 'steel' ? b.rim : 'none';
-    const { total } = priceFor(b.size1 ?? null, rim);
+    const { total } = priceWith(await loadPricing(), b.size1 ?? null, rim, b.size2 ?? null);
     // Unique SMS code: R1T + plate, padded; add suffix on collision.
     const existing = new Set(all.map((r) => r.smsCode).filter(Boolean));
     let smsCode = ('R1T' + plate.replace(/[^A-Z0-9]/g, '')).slice(0, 8).padEnd(8, 'X');
@@ -717,6 +756,53 @@ export function createApp(): express.Express {
     const ok = await store.deleteTask(req.params.id);
     if (!ok) return res.status(404).json({ error: { message: 'Uzdevums nav atrasts' } });
     res.json({ ok: true });
+  }));
+
+  // --- Pricing settings (Iestatījumi) ---------------------------------------
+  // Everyone may READ the rules (the intake screen mirrors them live); only an
+  // admin may change them or reprice stored sets.
+  app.get('/api/pricing', requireAuth, asyncH(async (_req, res) => {
+    res.json({ pricing: await loadPricing(), defaults: DEFAULT_PRICING });
+  }));
+
+  app.put('/api/pricing', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const cfg = cleanPricing(req.body);
+    if (!cfg.tiers.length) return res.status(400).json({ error: { message: 'Vajag vismaz vienu cenu diapazonu' } });
+    // Overlapping ranges would make the price depend on row order — reject them
+    // rather than silently letting the first match win.
+    for (let i = 1; i < cfg.tiers.length; i++) {
+      if (cfg.tiers[i].from <= cfg.tiers[i - 1].to) {
+        return res.status(400).json({
+          error: { message: `Diapazoni pārklājas: ${cfg.tiers[i - 1].from}–${cfg.tiers[i - 1].to} un ${cfg.tiers[i].from}–${cfg.tiers[i].to}` },
+        });
+      }
+    }
+    await store.setSetting('pricing', cfg);
+    res.json({ ok: true, pricing: cfg });
+  }));
+
+  // Reprice stored sets with the current rules. Only sets still in storage are
+  // touched — a released order keeps what the customer was actually charged.
+  app.post('/api/pricing/recalculate', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const cfg = await loadPricing();
+    const dryRun = req.query.dryRun === '1';
+    const all = await store.list();
+    const targets = all.filter((r) => r.status === 'active' || r.status === 'prepared');
+    let changed = 0, unchanged = 0, skipped = 0;
+    const sample: Array<{ plate: string | null; size: string | null; from: string | null; to: string }> = [];
+    for (const r of targets) {
+      const rim = /alum|liet/i.test(r.rimNote ?? '') ? 'aluminum' : /tērau|terau|dzelz/i.test(r.rimNote ?? '') ? 'steel' : 'none';
+      const { total, width } = priceWith(cfg, r.size1, rim, r.size2);
+      if (!width) { skipped++; continue; } // no readable size → nothing to price
+      const next = String(total);
+      if ((r.feeEur ?? '') === next) { unchanged++; continue; }
+      if (sample.length < 8) sample.push({ plate: r.plate, size: r.size1, from: r.feeEur, to: next });
+      if (!dryRun) await store.updateRecord(r.id, { feeEur: next });
+      changed++;
+    }
+    res.json({ ok: true, dryRun, changed, unchanged, skipped, total: targets.length, sample });
   }));
 
   // --- Web Push registration (one row per device) ---

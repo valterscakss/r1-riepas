@@ -88,6 +88,12 @@ UPDATE storage SET status = 'free', plate = NULL
  WHERE status = 'active' AND size1 IS NULL AND brand IS NULL AND customer_name IS NULL
    AND UPPER(BTRIM(COALESCE(plate, ''))) IN ('BRĪVS','BRIVS','BRĪVA','BRIVA','BRĪVI','TUKŠS','TUKSS','TUKŠA','TUKSA','FREE');
 
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS push_subs (
   endpoint   TEXT PRIMARY KEY,
   p256dh     TEXT NOT NULL,
@@ -431,6 +437,21 @@ export class PostgresStore implements Store {
     await this.init();
     const res = await this.pool.query('DELETE FROM tasks WHERE id = $1', [Number(id)]);
     return (res.rowCount ?? 0) > 0;
+  }
+
+  // --- Settings ---
+  async getSetting(key: string): Promise<unknown | null> {
+    await this.init();
+    const res = await this.pool.query<{ value: string }>('SELECT value FROM settings WHERE key = $1', [key]);
+    if (!res.rows[0]) return null;
+    try { return JSON.parse(res.rows[0].value); } catch { return null; }
+  }
+  async setSetting(key: string, value: unknown): Promise<void> {
+    await this.init();
+    await this.pool.query(
+      `INSERT INTO settings (key, value, updated_at) VALUES ($1,$2,now())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [key, JSON.stringify(value)]);
   }
 
   // --- Push subscriptions ---

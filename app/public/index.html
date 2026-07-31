@@ -120,6 +120,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
     <button class="navbtn" data-nav="table"><span>▤&nbsp; Tabula</span></button>
     <button class="navbtn" data-nav="analytics"><span>◫&nbsp; Analītika</span></button>
     <button class="navbtn" data-nav="users" id="nav-users" style="display:none;"><span>◔&nbsp; Lietotāji</span></button>
+    <button class="navbtn" data-nav="settings" id="nav-settings" style="display:none;"><span>⚙&nbsp; Iestatījumi</span></button>
   </nav>
   <div style="padding:16px 18px;border-top:1px solid var(--border);">
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
@@ -200,6 +201,7 @@ const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:n
   table:null,tableLoaded:false,tabQ:'',tabStatus:'active',tabSort:{col:'location',dir:'asc'},
   pending:[],pendingLoaded:false,swapFromId:null,recOpen:false,recData:null,
   tasks:[],tasksLoaded:false,taskTab:'open',taskDraft:'',openTasks:0,pushOn:false,pushCfg:null,
+  pricing:null,pricingDraft:null,pricingSaving:false,priceTest:'',
   recEvents:[],recEventsLoading:false,
   analytics:null,analyticsLoaded:false,anaSeason:'',anaStatus:'',anaCustomer:'',anaRims:''};
 
@@ -219,14 +221,21 @@ function maskSize(v){const d=String(v||'').replace(/[^0-9]/g,'').slice(0,7);
   if(d.length<=5)return d.slice(0,3)+'/'+d.slice(3);
   return d.slice(0,3)+'/'+d.slice(3,5)+'/'+d.slice(5);}
 
-// pricing mirror of the server (design formula)
-function price(){const w1=parseInt((S.t1size||'').slice(0,3))||0;const w2=S.t1qty==='2+2'?(parseInt((S.t2size||'').slice(0,3))||0):0;const w=Math.max(w1,w2);const base=w===0?0:w<=215?15:w<=245?20:w<=275?25:30;
-  const mult=S.rim==='aluminum'?1.3:S.rim==='steel'?1.2:1.0;
-  return {w,base,mult,total:base*mult,cls:w===0?'—':w<=215?'185–215':w<=245?'225–245':w<=275?'255–275':'285+'};}
+// Pricing mirror of the server. The rules are editable in Iestatījumi and loaded
+// at startup, so the intake summary always quotes what the server will charge.
+const DEF_PRICING={tiers:[{from:0,to:215,price:15},{from:216,to:245,price:20},{from:246,to:275,price:25},{from:276,to:999,price:30}],rims:{none:1,steel:1.2,aluminum:1.3}};
+const pricingCfg=()=>S.pricing||DEF_PRICING;
+function tierFor(cfg,w){return (cfg.tiers||[]).find(t=>w>=t.from&&w<=t.to)||(cfg.tiers||[])[(cfg.tiers||[]).length-1]||null;}
+function rimMult(cfg,rim){return rim==='aluminum'?cfg.rims.aluminum:rim==='steel'?cfg.rims.steel:cfg.rims.none;}
+function price(){const w1=parseInt((S.t1size||'').slice(0,3))||0;const w2=S.t1qty==='2+2'?(parseInt((S.t2size||'').slice(0,3))||0):0;const w=Math.max(w1,w2);
+  const cfg=pricingCfg();const t=w?tierFor(cfg,w):null;
+  const base=t?t.price:0;const mult=rimMult(cfg,S.rim);
+  return {w,base,mult,total:base*mult,cls:t?`${t.from}–${t.to}`:'—'};}
 
 async function loadStats(){try{S.stats=await(await fetch('/api/stats')).json();}catch{S.stats=null;}paintSidebar();}
 async function loadActivity(){try{S.activity=(await(await fetch('/api/activity')).json()).events||[];}catch{S.activity=[];}}
 async function loadCustomers(){try{S.customers=(await(await fetch('/api/customers'+(S.custQ?'?q='+encodeURIComponent(S.custQ):''))).json()).customers||[];}catch{S.customers=[];}}
+async function loadPricing(){try{const d=await(await fetch('/api/pricing')).json();if(d&&d.pricing)S.pricing=d.pricing;}catch{}}
 async function loadTasks(){try{const d=await(await fetch('/api/tasks?status='+(S.taskTab==='done'?'done':'open'))).json();
     S.tasks=d.tasks||[];S.openTasks=d.open||0;}catch{S.tasks=[];}
   S.tasksLoaded=true;paintTaskBadge();}
@@ -248,6 +257,7 @@ function paintHeader(){
   set('#hdr-name',demo?'':name);set('#hdr-role',role);set('#hdr-init',demo?'':initialsOf(name));
   set('#hdr-greet',(S.auth&&!demo)?('Sveiks, '+String(name).split(' ')[0]+'!'):'');
   show('#nav-users',S.auth&&S.auth.role==='admin'&&!demo);
+  show('#nav-settings',S.auth&&S.auth.role==='admin');
   show('#btn-logout',!demo&&!!S.auth);show('#btn-changepass',!demo&&!!S.auth);}
 
 function nav(screen){S.screen=screen;S.selSpot=null;
@@ -256,6 +266,10 @@ function nav(screen){S.screen=screen;S.selSpot=null;
   if(screen==='table'){render();if(!S.tableLoaded)loadTable().then(()=>{if(S.screen==='table')render();});return;}
   if(screen==='pending'){render();loadPending().then(()=>{if(S.screen==='pending')render();});return;}
   if(screen==='warehouse'){render();loadTasks().then(()=>{if(S.screen==='warehouse')render();});return;}
+  if(screen==='settings'){
+    // Edit a copy, so "Atcelt izmaiņas" can put the saved rules back.
+    S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();
+    loadPricing().then(()=>{if(S.screen==='settings'){S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();}});return;}
   if(screen==='analytics'){render();loadAnalytics().then(()=>{if(S.screen==='analytics')render();});return;}
   if(screen==='home'){render();Promise.all([loadActivity(),loadStats()]).then(()=>{if(S.screen==='home')render();});return;}
   render();}
@@ -278,6 +292,7 @@ function render(){
   else if(S.screen==='table')v.innerHTML=tableHTML();
   else if(S.screen==='analytics')v.innerHTML=analyticsHTML();
   else if(S.screen==='users')v.innerHTML=usersHTML();
+  else if(S.screen==='settings')v.innerHTML=settingsHTML();
   bind(v);renderModal();
   if(S.screen==='intake')updateSummary();
 }
@@ -882,6 +897,107 @@ function pendingHTML(){
     ${!S.pendingLoaded?'<div class="card" style="padding:24px;color:var(--ink-3);">Ielādē…</div>':(list.length?cards:'<div class="card" style="padding:30px;text-align:center;color:var(--ink-3);font-size:14px;">Nav sagatavotu riepu.<br><span style="font-size:13px;">Sadaļā <b>Izsniegšana</b> vai <b>Novietnes</b> nospied “Sagatavot”, lai izņemtu riepas un rezervētu vietu.</span></div>')}
   </div>`;}
 
+// ============ IESTATĪJUMI (pricing rules) ============
+// Prices are width ranges: "no 216 līdz 245 → 20 €". The widest tire in the set
+// picks the range, then the rim multiplier applies. Editing here changes what new
+// intakes cost; "Pārrēķināt" reprices the sets already in storage.
+function pricingRowsHTML(){
+  const d=S.pricingDraft||{tiers:[],rims:{}};
+  return (d.tiers||[]).map((t,i)=>`<div class="prow" style="display:grid;grid-template-columns:1fr 1fr 1.1fr 40px;gap:10px;align-items:end;margin-bottom:10px;">
+    <div class="field"><label>Platums no</label><input class="mono" data-ptier="${i}" data-pfield="from" type="number" min="0" max="999" value="${esc(t.from)}"></div>
+    <div class="field"><label>līdz</label><input class="mono" data-ptier="${i}" data-pfield="to" type="number" min="0" max="999" value="${esc(t.to)}"></div>
+    <div class="field"><label>Cena €/sezonā</label><input class="mono" data-ptier="${i}" data-pfield="price" type="number" min="0" step="0.5" value="${esc(t.price)}"></div>
+    <button data-pdel="${i}" title="Dzēst diapazonu" style="height:var(--h);border:1px solid var(--border-2);background:var(--surface);border-radius:8px;color:var(--danger);cursor:pointer;font-size:14px;">✕</button>
+  </div>`).join('');}
+function priceTestHTML(){
+  const cfg=S.pricingDraft||pricingCfg();
+  const w=parseInt(String(S.priceTest||'').replace(/\D/g,'').slice(0,3))||0;
+  if(!w)return `<div style="color:var(--ink-3);font-size:13px;">Ievadi izmēru, lai redzētu, kurā diapazonā tas iekrīt un cik maksās.</div>`;
+  const t=tierFor(cfg,w);
+  if(!t)return `<div style="color:var(--danger);font-size:13px;">Neviens diapazons neatbilst platumam ${w}.</div>`;
+  const row=(label,rim)=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border);">
+    <span style="color:var(--ink-2);font-size:13px;">${label}</span>
+    <span class="mono" style="font-weight:600;">${eur(t.price*rimMult(cfg,rim))}</span></div>`;
+  return `<div style="font-size:13px;color:var(--ink-2);margin-bottom:8px;">Platums <b class="mono">${w}</b> → diapazons <b class="mono">${t.from}–${t.to}</b> · pamatcena <b class="mono">${eur(t.price)}</b></div>
+    ${row('Bez diskiem','none')}${row('Tērauda diski','steel')}${row('Alumīnija diski','aluminum')}`;}
+function settingsHTML(){
+  const d=S.pricingDraft;
+  if(!d)return `<div class="page" style="padding:var(--pad);"><div class="card" style="padding:24px;color:var(--ink-3);">Ielādē…</div></div>`;
+  const rim=(k,label)=>`<div class="field"><label>${label}</label><input class="mono" data-prim="${k}" type="number" min="0" step="0.05" value="${esc(d.rims[k])}"></div>`;
+  return `<div class="page" style="padding:var(--pad);max-width:920px;margin:0 auto;">
+    <div style="margin-bottom:var(--pad);"><h1 style="margin:0;font-size:24px;font-weight:600;">Iestatījumi</h1>
+    <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Glabāšanas cenas pēc riepas platuma</div></div>
+    <div class="rgrid2" style="display:grid;grid-template-columns:1.5fr 1fr;gap:var(--gap);align-items:start;">
+      <div style="display:flex;flex-direction:column;gap:var(--gap);min-width:0;">
+        <div class="card" style="padding:var(--card);">
+          <h2 style="margin:0 0 4px;font-size:15px;font-weight:600;">Cena pēc platuma</h2>
+          <div style="color:var(--ink-3);font-size:12px;margin-bottom:16px;">Platums ir izmēra pirmais skaitlis — <b class="mono">225</b>/45/17. Komplektam ar diviem izmēriem noteicošais ir platākais.</div>
+          ${pricingRowsHTML()}
+          <button data-act="price-add" style="height:38px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;">＋ Pievienot diapazonu</button>
+        </div>
+        <div class="card" style="padding:var(--card);">
+          <h2 style="margin:0 0 4px;font-size:15px;font-weight:600;">Disku koeficients</h2>
+          <div style="color:var(--ink-3);font-size:12px;margin-bottom:16px;">Reizinātājs pamatcenai, ja riepas glabājas uz diskiem.</div>
+          <div class="rf3" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+            ${rim('none','Bez diskiem')}${rim('steel','Tērauda')}${rim('aluminum','Alumīnija')}
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button data-act="price-save" ${S.pricingSaving?'disabled':''} style="height:46px;padding:0 22px;background:var(--accent);color:#fff;border:0;border-radius:11px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">${S.pricingSaving?'Saglabā…':'Saglabāt cenas'}</button>
+          <button data-act="price-reset" style="height:46px;padding:0 18px;background:var(--surface);border:1px solid var(--border-2);border-radius:11px;font-weight:500;cursor:pointer;color:var(--ink-2);">Atcelt izmaiņas</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:var(--gap);min-width:0;">
+        <div class="card" style="padding:var(--card);">
+          <h2 style="margin:0 0 12px;font-size:15px;font-weight:600;">Pārbaudi cenu</h2>
+          <div class="field" style="margin-bottom:14px;"><label>Riepas izmērs</label>
+            <input id="price-test" class="mono" inputmode="numeric" value="${esc(S.priceTest)}" placeholder="225/45/17"></div>
+          <div id="price-test-out">${priceTestHTML()}</div>
+        </div>
+        <div class="card" style="padding:var(--card);">
+          <h2 style="margin:0 0 4px;font-size:15px;font-weight:600;">Pārrēķināt</h2>
+          <div style="color:var(--ink-3);font-size:12px;margin-bottom:14px;line-height:1.6;">Pārrēķina cenu <b>riepām, kas šobrīd glabājas</b>, pēc saglabātajiem noteikumiem. Jau izsniegtie pasūtījumi netiek mainīti — tur paliek summa, ko klients samaksāja.</div>
+          <button data-act="price-recalc" style="width:100%;height:44px;background:var(--ink);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">↻ Pārrēķināt glabātajām</button>
+        </div>
+      </div>
+    </div>
+  </div>`;}
+function updatePriceTest(){const o=document.getElementById('price-test-out');if(o)o.innerHTML=priceTestHTML();}
+function grabPricing(){const d=S.pricingDraft;if(!d)return;
+  document.querySelectorAll('[data-ptier]').forEach(el=>{
+    const t=d.tiers[Number(el.dataset.ptier)];if(!t)return;
+    const v=Number(el.value);t[el.dataset.pfield]=Number.isFinite(v)?v:0;});
+  document.querySelectorAll('[data-prim]').forEach(el=>{
+    const v=Number(el.value);d.rims[el.dataset.prim]=Number.isFinite(v)&&v>0?v:1;});}
+async function savePricing(){grabPricing();
+  S.pricingSaving=true;render();
+  const res=await fetch('/api/pricing',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(S.pricingDraft)});
+  const data=await res.json().catch(()=>({}));
+  S.pricingSaving=false;
+  if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās saglabāt cenas');render();return;}
+  S.pricing=data.pricing;S.pricingDraft=JSON.parse(JSON.stringify(data.pricing));
+  toast('Cenas saglabātas');render();}
+// Dry run first: show exactly how many stored sets would change price, and a
+// sample of before → after, before touching anything.
+async function recalcPrices(){
+  const prev=await fetch('/api/pricing/recalculate?dryRun=1',{method:'POST'});
+  const p=await prev.json().catch(()=>({}));
+  if(!prev.ok){alertErr(p.error?.message||'Neizdevās pārrēķināt');return;}
+  if(!p.changed){await ask({icon:'success',title:'Nekas nemainās',text:`Visām ${p.total} glabātajām riepām cena jau atbilst noteikumiem.`,showCancelButton:false,confirmButtonText:'Labi'});return;}
+  const rows=(p.sample||[]).map(s=>`<tr><td style="padding:3px 8px;">${esc(s.plate||'—')}</td><td style="padding:3px 8px;" class="mono">${esc(s.size||'—')}</td><td style="padding:3px 8px;" class="mono">${s.from?eur(s.from):'—'}</td><td style="padding:3px 8px;" class="mono"><b>${eur(s.to)}</b></td></tr>`).join('');
+  const r=await ask({icon:'warning',title:'Pārrēķināt cenas?',width:600,
+    html:`<div style="text-align:left;font-size:13px;">
+      <div style="margin-bottom:10px;"><b style="font-size:18px;">${p.changed}</b> ierakstiem mainīsies cena · ${p.unchanged} paliek · ${p.skipped} bez izmēra</div>
+      <table style="border-collapse:collapse;width:100%;font-size:12px;"><thead><tr style="text-align:left;color:#666;"><th style="padding:4px 8px;">Nr.</th><th style="padding:4px 8px;">Izmērs</th><th style="padding:4px 8px;">Bija</th><th style="padding:4px 8px;">Būs</th></tr></thead><tbody>${rows}</tbody></table>
+      <div style="margin-top:8px;color:#999;font-size:11px;">Rāda pirmos ${(p.sample||[]).length} no ${p.changed}.</div></div>`,
+    confirmButtonText:`Pārrēķināt (${p.changed})`,cancelButtonText:'Atcelt'});
+  if(!r.isConfirmed)return;
+  const res=await fetch('/api/pricing/recalculate',{method:'POST'});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){alertErr(data.error?.message||'Neizdevās pārrēķināt');return;}
+  toast(`Pārrēķināts: ${data.changed} ieraksti`);
+  S.tableLoaded=false;await Promise.all([loadStats(),loadTable()]);}
+
 // ============ NOLIKTAVA (warehouse job queue) ============
 // One list for the warehouse worker: everything staff have asked for that is not
 // yet fetched. Ticking a job done takes it out of the list, so what stays on
@@ -1195,6 +1311,11 @@ function bind(root){
     else if(a==='go-warehouse')nav('warehouse');
     else if(a==='task-send')await sendTask();
     else if(a==='enable-push')await enablePush();
+    else if(a==='price-add'){grabPricing();const t=S.pricingDraft.tiers;const last=t[t.length-1];
+      t.push({from:last?Math.min(999,last.to+1):0,to:999,price:last?last.price:15});render();}
+    else if(a==='price-save')await savePricing();
+    else if(a==='price-reset'){S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();toast('Izmaiņas atceltas','info');}
+    else if(a==='price-recalc')await recalcPrices();
     else if(a==='rel-search'){const q=document.getElementById('rel-q');S.relQ=q?q.value:S.relQ;await loadRelease();updateReleaseContent();}
     else if(a==='pick-spot'){grab();S.spotPickOpen=true;renderModal();}
     else if(a==='sms-done'){S.smsOpen=false;S.smsRec=null;resetIntake();await Promise.all([loadStats(),loadActivity()]);nav('home');}
@@ -1228,6 +1349,13 @@ function bind(root){
     S.taskTab=k;
     if(k==='new'){render();const d=document.getElementById('task-draft');if(d)d.focus();return;}
     S.tasksLoaded=false;render();await loadTasks();if(S.screen==='warehouse')render();}));
+  root.querySelectorAll('[data-pdel]').forEach(el=>el.addEventListener('click',()=>{
+    grabPricing();S.pricingDraft.tiers.splice(Number(el.dataset.pdel),1);render();}));
+  // Live preview while editing — no re-render, so the field keeps focus.
+  root.querySelectorAll('[data-ptier],[data-prim]').forEach(el=>el.addEventListener('input',()=>{grabPricing();updatePriceTest();}));
+  const pt=root.querySelector('#price-test');
+  if(pt)pt.addEventListener('input',()=>{const m=maskSize(pt.value);if(m!==pt.value){pt.value=m;pt.setSelectionRange(m.length,m.length);}
+    S.priceTest=pt.value;updatePriceTest();});
   const td=root.querySelector('#task-draft');
   if(td){td.addEventListener('input',()=>{S.taskDraft=td.value;});
     td.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendTask();}});}
@@ -1596,20 +1724,21 @@ function hideLogin(){const g=$('#gate');if(g){g.innerHTML='';g.style.cssText='';
 
 // The warehouse phone lives on one screen — reopen where the user left off, and
 // let ?view= (notification click / home-screen shortcut) jump straight there.
-const SCREENS=['home','warehouse','intake','release','pending','spots','customers','table','analytics','users'];
+const SCREENS=['home','warehouse','intake','release','pending','spots','customers','table','analytics','users','settings'];
+const ADMIN_SCREENS=['users','settings']; // never the screen a session reopens on
 const LAST_KEY='r1_last_view';
 function openView(v){if(SCREENS.includes(v)){document.body.classList.remove('nav-open');nav(v);}}
 function initialScreen(){
   const p=new URLSearchParams(location.search).get('view');
   if(p&&SCREENS.includes(p))return p;
-  try{const v=localStorage.getItem(LAST_KEY);if(v&&SCREENS.includes(v)&&v!=='users')return v;}catch{}
+  try{const v=localStorage.getItem(LAST_KEY);if(v&&SCREENS.includes(v)&&!ADMIN_SCREENS.includes(v))return v;}catch{}
   return 'home';}
 
 async function startApp(){
   S.role=(S.auth&&S.auth.role==='admin')?'owner':'staff';
   paintHeader();
   nav(initialScreen());
-  await Promise.all([loadStats(),loadActivity(),loadCustomers(),loadPending(),pollTasks()]);
+  await Promise.all([loadStats(),loadActivity(),loadCustomers(),loadPending(),pollTasks(),loadPricing()]);
   render();
   startTaskPolling();
   subscribePush(); // silently re-attaches an already-granted device after a reload

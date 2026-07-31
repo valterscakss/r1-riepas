@@ -75,6 +75,26 @@ export interface Task {
 export type TaskInput = Pick<Task, 'kind' | 'recordId' | 'title' | 'details' | 'location' | 'plate'> &
   { createdBy: string | null };
 
+/**
+ * Editable pricing rules. A tier matches on the tire's WIDTH (the first number of
+ * 225/45/17), inclusive at both ends, and the widest tire in the set decides.
+ * `rims` multiplies the tier price when the set is stored on rims.
+ */
+export interface PricingTier { from: number; to: number; price: number }
+export interface PricingConfig {
+  tiers: PricingTier[];
+  rims: { none: number; steel: number; aluminum: number };
+}
+export const DEFAULT_PRICING: PricingConfig = {
+  tiers: [
+    { from: 0, to: 215, price: 15 },
+    { from: 216, to: 245, price: 20 },
+    { from: 246, to: 275, price: 25 },
+    { from: 276, to: 999, price: 30 },
+  ],
+  rims: { none: 1, steel: 1.2, aluminum: 1.3 },
+};
+
 /** A browser/phone registered for Web Push notifications about new tasks. */
 export interface PushSub {
   endpoint: string;
@@ -166,6 +186,11 @@ export interface Store {
   closeTasksForRecord(recordId: string, actor: string | null): Promise<number>;
   /** Hard-delete a task. */
   deleteTask(id: string): Promise<boolean>;
+
+  // --- App settings (JSON blobs keyed by name, e.g. 'pricing') ---
+  /** Read a settings blob. Returns null when it was never saved. */
+  getSetting(key: string): Promise<unknown | null>;
+  setSetting(key: string, value: unknown): Promise<void>;
 
   // --- Web Push subscriptions ---
   listPushSubs(): Promise<PushSub[]>;

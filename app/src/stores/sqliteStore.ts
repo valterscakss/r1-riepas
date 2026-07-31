@@ -81,6 +81,12 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_record ON tasks(record_id);
 
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS push_subs (
   endpoint   TEXT PRIMARY KEY,
   p256dh     TEXT NOT NULL,
@@ -401,6 +407,18 @@ export class SqliteStore implements Store {
   }
   async deleteTask(id: string): Promise<boolean> {
     return this.db.prepare('DELETE FROM tasks WHERE id = ?').run(Number(id)).changes > 0;
+  }
+
+  // --- Settings ---
+  async getSetting(key: string): Promise<unknown | null> {
+    const r = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+    if (!r) return null;
+    try { return JSON.parse(r.value); } catch { return null; }
+  }
+  async setSetting(key: string, value: unknown): Promise<void> {
+    this.db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES (?,?,?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
+      .run(key, JSON.stringify(value), new Date().toISOString());
   }
 
   // --- Push subscriptions ---
