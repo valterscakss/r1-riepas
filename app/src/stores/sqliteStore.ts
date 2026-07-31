@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub, Photo } from '../types.js';
 
 /**
  * SQLite datastore — the self-contained default backend. A real, durable, local
@@ -80,6 +80,19 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_record ON tasks(record_id);
+
+CREATE TABLE IF NOT EXISTS photos (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  record_id  TEXT NOT NULL,
+  mime       TEXT NOT NULL,
+  data       BLOB NOT NULL,
+  bytes      INTEGER NOT NULL,
+  width      INTEGER,
+  height     INTEGER,
+  created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_photos_record ON photos(record_id);
 
 CREATE TABLE IF NOT EXISTS settings (
   key        TEXT PRIMARY KEY,
@@ -273,6 +286,7 @@ export class SqliteStore implements Store {
       this.db.prepare('DELETE FROM storage').run();
       this.db.prepare('DELETE FROM record_events').run(); // record IDs are reused → stale history would mis-attach
       this.db.prepare('DELETE FROM tasks WHERE record_id IS NOT NULL').run(); // same for record-linked warehouse jobs
+      this.db.prepare('DELETE FROM photos').run();                            // …and for photos
       for (const r of items) {
         insert.run({
           season: r.season ?? null, location: r.location ?? null, plate: r.plate ?? null,
@@ -409,6 +423,43 @@ export class SqliteStore implements Store {
     return this.db.prepare('DELETE FROM tasks WHERE id = ?').run(Number(id)).changes > 0;
   }
 
+  // --- Photos ---
+  private photoRow(r: PhotoRow): Photo {
+    return {
+      id: String(r.id), recordId: r.record_id, mime: r.mime, bytes: r.bytes,
+      width: r.width, height: r.height, createdBy: r.created_by, createdAt: r.created_at ?? null,
+    };
+  }
+  async listPhotos(recordId: string): Promise<Photo[]> {
+    const rows = this.db.prepare(
+      'SELECT id, record_id, mime, bytes, width, height, created_by, created_at FROM photos WHERE record_id = ? ORDER BY id DESC')
+      .all(recordId) as PhotoRow[];
+    return rows.map((r) => this.photoRow(r));
+  }
+  async getPhoto(id: string): Promise<{ mime: string; data: Buffer } | null> {
+    const r = this.db.prepare('SELECT mime, data FROM photos WHERE id = ?').get(Number(id)) as { mime: string; data: Buffer } | undefined;
+    return r ?? null;
+  }
+  async addPhoto(p: { recordId: string; mime: string; data: Buffer; width: number | null; height: number | null; createdBy: string | null }): Promise<Photo> {
+    const info = this.db.prepare('INSERT INTO photos (record_id, mime, data, bytes, width, height, created_by) VALUES (?,?,?,?,?,?,?)')
+      .run(p.recordId, p.mime, p.data, p.data.length, p.width, p.height, p.createdBy);
+    const r = this.db.prepare('SELECT id, record_id, mime, bytes, width, height, created_by, created_at FROM photos WHERE id = ?')
+      .get(info.lastInsertRowid) as PhotoRow;
+    return this.photoRow(r);
+  }
+  async deletePhoto(id: string): Promise<boolean> {
+    return this.db.prepare('DELETE FROM photos WHERE id = ?').run(Number(id)).changes > 0;
+  }
+  async photoCounts(recordIds: string[]): Promise<Record<string, number>> {
+    if (!recordIds.length) return {};
+    const holes = recordIds.map(() => '?').join(',');
+    const rows = this.db.prepare(`SELECT record_id, COUNT(*) AS n FROM photos WHERE record_id IN (${holes}) GROUP BY record_id`)
+      .all(...recordIds) as Array<{ record_id: string; n: number }>;
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.record_id] = r.n;
+    return out;
+  }
+
   // --- Settings ---
   async getSetting(key: string): Promise<unknown | null> {
     const r = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
@@ -439,4 +490,9 @@ interface TaskRow {
   id: number; kind: string; record_id: string | null; title: string; details: string | null;
   location: string | null; plate: string | null; status: string; created_by: string | null;
   created_at: string | null; done_by: string | null; done_at: string | null;
+}
+
+interface PhotoRow {
+  id: number; record_id: string; mime: string; bytes: number;
+  width: number | null; height: number | null; created_by: string | null; created_at: string | null;
 }

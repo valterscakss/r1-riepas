@@ -168,6 +168,11 @@ export class SheetsStore implements Store {
   async setTaskStatus(): Promise<null> { return null; }
   async closeTasksForRecord(): Promise<number> { return 0; }
   async deleteTask(): Promise<boolean> { return false; }
+  async listPhotos(): Promise<[]> { return []; }
+  async getPhoto(): Promise<null> { return null; }
+  async addPhoto(): Promise<never> { return this.unsupported(); }
+  async deletePhoto(): Promise<boolean> { return false; }
+  async photoCounts(): Promise<Record<string, number>> { return {}; }
   async getSetting(): Promise<null> { return null; }
   async setSetting(): Promise<void> { return this.unsupported(); }
   async listPushSubs(): Promise<[]> { return []; }

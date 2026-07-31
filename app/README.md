@@ -62,6 +62,10 @@ falls back to the local seed. The store in use is shown in the app header and at
 | GET | `/api/tasks?status=open\|done\|all` | Warehouse job queue |
 | POST | `/api/tasks` | Post a free-text warehouse order (`{ text }`) |
 | POST | `/api/tasks/:id/done` · `/reopen` | Tick a job off / put it back |
+| GET · PUT | `/api/pricing` | Read / replace the price rules (PUT is admin) |
+| POST | `/api/pricing/recalculate?dryRun=1` | Reprice sets still in storage |
+| GET · POST | `/api/storage/:id/photos` | List / attach photos |
+| GET · DELETE | `/api/photos/:id` | Serve / remove one photo |
 
 ## Noliktava — the warehouse view
 
@@ -99,6 +103,31 @@ Then each device taps **🔔 Ieslēgt paziņojumus** once in the Noliktava view.
 Without the keys push is simply off: the app still polls every 20 s, keeps the
 sidebar badge live, and raises a local notification while it is open.
 Note that iOS only delivers Web Push to apps added to the Home Screen.
+
+## Iestatījumi — pricing rules (admin)
+
+Prices are **width ranges**: the first number of `225/45/17` picks the range, and
+for a staggered set the widest tire decides. Each range has its own price, and
+three multipliers apply when the set is stored on rims. "Pārbaudi cenu" takes a
+size and shows which range it lands in and the price with and without rims.
+
+Overlapping ranges are rejected on save, since which range won would otherwise
+depend on row order. **Pārrēķināt glabātajām** reprices sets currently in storage
+and dry-runs first, showing how many change plus a before → after sample. Released
+orders are never touched — they keep the amount the customer actually paid.
+
+## Photos on a record
+
+Open any record (Tabula, Klienti, or a spot) and attach photos of the set —
+tread, damage, the rims. **📷 Uzņemt bildi** opens the phone camera directly;
+**⭱ Izvēlēties failu** picks from the gallery and takes several at once. Images
+are downscaled to 1280 px JPEG in the browser before upload and stored as rows in
+the database, so there is no second service to configure. Each upload also lands
+in the record's history.
+
+Note that a full Excel re-import renumbers records, so it clears photos, history
+and record-linked warehouse jobs along with the data — the import dialog says so
+before you confirm.
 
 ## Notes / known refinements
 

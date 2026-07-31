@@ -203,6 +203,7 @@ const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:n
   tasks:[],tasksLoaded:false,taskTab:'open',taskDraft:'',openTasks:0,pushOn:false,pushCfg:null,
   pricing:null,pricingDraft:null,pricingSaving:false,priceTest:'',
   recEvents:[],recEventsLoading:false,
+  recPhotos:[],recPhotosLoading:false,recPhotoBusy:'',photoBig:null,
   analytics:null,analyticsLoaded:false,anaSeason:'',anaStatus:'',anaCustomer:'',anaRims:''};
 
 const ROLES={staff:{label:'Personāls',name:'Juris Kalniņš'},manager:{label:'Vadītājs',name:'Ilze Ozola'},owner:{label:'Īpašnieks',name:'Mārtiņš Bērze'}};
@@ -297,7 +298,7 @@ function render(){
   if(S.screen==='intake')updateSummary();
 }
 
-const ACT_FEED={in:['Pieņemšana','var(--ok-soft)','var(--ok)'],created:['Pieņemšana','var(--ok-soft)','var(--ok)'],out:['Izsniegšana','var(--accent-soft)','var(--accent-2)'],released:['Izsniegšana','var(--accent-soft)','var(--accent-2)'],prepared:['Sagatavots','var(--warn-soft)','var(--warn)'],unprepared:['Atpakaļ vietā','var(--surface-2)','var(--ink-2)'],swapped:['Maiņa','var(--accent-soft)','var(--accent-2)'],blocked:['Bloķēts','var(--danger-soft)','var(--danger)'],unblocked:['Atbloķēts','var(--ok-soft)','var(--ok)'],edited:['Rediģēts','var(--surface-2)','var(--ink-2)'],comment:['Komentārs','oklch(0.95 0.03 285)','oklch(0.5 0.15 285)']};
+const ACT_FEED={in:['Pieņemšana','var(--ok-soft)','var(--ok)'],created:['Pieņemšana','var(--ok-soft)','var(--ok)'],out:['Izsniegšana','var(--accent-soft)','var(--accent-2)'],released:['Izsniegšana','var(--accent-soft)','var(--accent-2)'],prepared:['Sagatavots','var(--warn-soft)','var(--warn)'],unprepared:['Atpakaļ vietā','var(--surface-2)','var(--ink-2)'],swapped:['Maiņa','var(--accent-soft)','var(--accent-2)'],blocked:['Bloķēts','var(--danger-soft)','var(--danger)'],unblocked:['Atbloķēts','var(--ok-soft)','var(--ok)'],edited:['Rediģēts','var(--surface-2)','var(--ink-2)'],comment:['Komentārs','oklch(0.95 0.03 285)','oklch(0.5 0.15 285)'],photo:['Bilde','oklch(0.95 0.03 200)','oklch(0.48 0.13 200)']};
 // Format a stored UTC timestamp into the viewer's LOCAL date + time (DD.MM.YYYY / HH:MM).
 // Date-only values (intake/release derived from a date column) show just the date.
 function evWhen(s){
@@ -665,7 +666,7 @@ async function doImport(file){
     </div>
     <div style="max-height:260px;overflow:auto;border:1px solid #eee;border-radius:8px;"><table style="border-collapse:collapse;width:100%;font-size:12px;"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></div>
     <div style="margin-top:8px;color:#999;font-size:11px;">Rāda pirmos ${sample.length} ierakstus priekšskatam.</div>
-    <div style="margin-top:10px;padding:9px 11px;background:#fdecec;color:#b91c1c;border-radius:8px;font-weight:600;">⚠ Šis aizvietos VISUS pašreizējos datus ar šī faila saturu.</div>
+    <div style="margin-top:10px;padding:9px 11px;background:#fdecec;color:#b91c1c;border-radius:8px;font-weight:600;">⚠ Šis aizvietos VISUS pašreizējos datus ar šī faila saturu.<div style="font-weight:400;margin-top:4px;">Ierakstu numuri tiek pārnumurēti, tāpēc tiks dzēsta arī <b>darbību vēsture, komentāri, bildes</b> un noliktavas uzdevumi, kas piesaistīti ierakstiem.</div></div>
   </div>`;
   const r=await ask({icon:'warning',title:'Apstiprināt importu?',html,width:760,confirmButtonText:`Importēt (${prev.parsed})`,confirmButtonColor:'#b91c1c',cancelButtonText:'Atcelt'});
   if(!r.isConfirmed)return;
@@ -825,14 +826,96 @@ async function editRecordDialog(r){
   await Promise.all([loadTable(),loadStats(),loadRecEvents(r.id),loadCustomers()]);
   renderModal();if(S.screen==='customers')updateCustContent();else updateTabContent();}
 
+// ============ RECORD PHOTOS ============
+// Pictures of the set as it was handed in. On a phone "Uzņemt" opens the camera
+// straight away (capture=environment); everything is downscaled in the browser
+// before upload, so a 4 MB phone photo lands as roughly 200 KB.
+// 1280px is plenty to read tread and damage on a phone, and keeps a typical
+// upload in the low hundreds of KB — these rows live in the database.
+const PHOTO_MAX=1280,PHOTO_QUALITY=0.8;
+function readImage(file){return new Promise((resolve,reject)=>{
+  const url=URL.createObjectURL(file);const img=new Image();
+  img.onload=()=>{URL.revokeObjectURL(url);resolve(img);};
+  img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Neizdevās nolasīt attēlu'));};
+  img.src=url;});}
+async function shrinkImage(file){
+  const img=await readImage(file);
+  const scale=Math.min(1,PHOTO_MAX/Math.max(img.naturalWidth,img.naturalHeight));
+  const w=Math.max(1,Math.round(img.naturalWidth*scale)),h=Math.max(1,Math.round(img.naturalHeight*scale));
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  c.getContext('2d').drawImage(img,0,0,w,h);
+  const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',PHOTO_QUALITY));
+  // A canvas re-encode that somehow grew the file isn't worth it — send the original.
+  if(!blob||(blob.size>=file.size&&file.type==='image/jpeg'))return {blob:file,w:img.naturalWidth,h:img.naturalHeight};
+  return {blob,w,h};}
+function revokePhotos(list){(list||[]).forEach(p=>{if(p.src){try{URL.revokeObjectURL(p.src);}catch{}}});}
+async function loadRecPhotos(id){S.recPhotosLoading=true;
+  try{const d=await(await fetch('/api/storage/'+encodeURIComponent(id)+'/photos')).json();
+    const list=d.photos||[];
+    // Pull the bytes through the patched fetch so they carry the auth header —
+    // a plain <img src="/api/photos/…"> relies on the cookie alone and 401s in
+    // any browser that blocks it.
+    await Promise.all(list.map(async p=>{try{const r=await fetch(p.url);if(r.ok)p.src=URL.createObjectURL(await r.blob());}catch{}}));
+    if(S.recData&&String(S.recData.id)===String(id)){revokePhotos(S.recPhotos);S.recPhotos=list;}
+    else revokePhotos(list);
+  }catch{S.recPhotos=[];}
+  S.recPhotosLoading=false;if(S.recOpen)renderModal();}
+async function uploadRecPhotos(files){
+  const r=S.recData;if(!r||!files||!files.length)return;
+  const list=[...files].filter(f=>/^image\//.test(f.type));
+  if(!list.length){alertErr('Izvēlies attēla failu');return;}
+  S.recPhotoBusy=`Augšupielādē 0/${list.length}…`;renderModal();
+  let done=0,failed=0;
+  for(const f of list){
+    try{
+      const {blob,w,h}=await shrinkImage(f);
+      const fd=new FormData();
+      fd.append('photo',blob,(f.name||'foto').replace(/\.[^.]+$/,'')+'.jpg');
+      fd.append('width',w);fd.append('height',h);
+      const res=await fetch('/api/storage/'+encodeURIComponent(r.id)+'/photos',{method:'POST',body:fd});
+      if(!res.ok)failed++;
+    }catch{failed++;}
+    done++;S.recPhotoBusy=`Augšupielādē ${done}/${list.length}…`;renderModal();
+  }
+  S.recPhotoBusy='';
+  if(failed)alertErr(failed===list.length?'Neizdevās augšupielādēt':`${failed} no ${list.length} bildēm neizdevās`);
+  else toast(list.length===1?'Bilde pievienota':`Pievienotas ${list.length} bildes`);
+  await Promise.all([loadRecPhotos(r.id),loadRecEvents(r.id)]);}
+async function deleteRecPhoto(id){
+  const c=await ask({icon:'warning',title:'Dzēst bildi?',confirmButtonText:'Dzēst',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});
+  if(!c.isConfirmed)return;
+  const res=await fetch('/api/photos/'+encodeURIComponent(id),{method:'DELETE'});
+  if(!res.ok){alertErr('Neizdevās dzēst');return;}
+  if(S.recData)await loadRecPhotos(S.recData.id);}
+function recPhotosHTML(){
+  const ps=S.recPhotos||[];
+  const kb=n=>n>=1024*1024?(n/1024/1024).toFixed(1)+' MB':Math.round(n/1024)+' KB';
+  const tiles=ps.map(p=>`<div style="position:relative;">
+    <img data-photobig="${esc(p.src||p.url)}" src="${esc(p.src||p.url)}" alt="Riepu foto" title="${esc(kb(p.bytes))}${p.createdBy?' · '+esc(p.createdBy):''}" loading="lazy"
+      style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);cursor:zoom-in;display:block;">
+    <button data-photodel="${esc(p.id)}" title="Dzēst bildi" style="position:absolute;top:5px;right:5px;width:26px;height:26px;border-radius:7px;border:0;background:oklch(0.2 0.02 260 / .6);color:#fff;cursor:pointer;font-size:13px;line-height:1;">✕</button>
+  </div>`).join('');
+  return `<div>
+    ${S.recPhotosLoading&&!ps.length?'<div style="color:var(--ink-3);font-size:12px;padding:4px 0;">Ielādē bildes…</div>':''}
+    ${ps.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px;margin-bottom:10px;">${tiles}</div>`:''}
+    ${S.recPhotoBusy?`<div style="color:var(--accent-2);font-size:12px;margin-bottom:8px;">${esc(S.recPhotoBusy)}</div>`:''}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button data-act="photo-camera" style="flex:1;min-width:130px;height:40px;background:var(--ink);color:#fff;border:0;border-radius:9px;font-weight:600;font-size:13px;cursor:pointer;">📷 Uzņemt bildi</button>
+      <button data-act="photo-pick" style="flex:1;min-width:130px;height:40px;background:var(--surface);border:1px solid var(--border-2);border-radius:9px;font-weight:500;font-size:13px;cursor:pointer;color:var(--ink-2);">⭱ Izvēlēties failu</button>
+    </div>
+    <input type="file" id="photo-cam" accept="image/*" capture="environment" style="display:none;">
+    <input type="file" id="photo-file" accept="image/*" multiple style="display:none;">
+    ${!ps.length&&!S.recPhotosLoading?'<div style="color:var(--ink-3);font-size:12px;margin-top:8px;">Vēl nav bilžu. Nofotografē protektoru, bojājumus vai diskus — bilde paliks pie šī ieraksta.</div>':''}
+  </div>`;}
+
 // ============ RECORD HISTORY / COMMENTS ============
-const EV_LABEL={created:'Pieņemts',prepared:'Sagatavots (izņemts maiņai)',unprepared:'Novietots atpakaļ vietā',released:'Izsniegts',swapped:'Aizvietots ar jaunām',blocked:'Bloķēts',unblocked:'Atbloķēts',edited:'Rediģēti dati',comment:'Komentārs'};
-const EV_COLOR={created:'var(--ok)',prepared:'var(--warn)',unprepared:'var(--ink-3)',released:'var(--ink-3)',swapped:'var(--accent)',blocked:'var(--danger)',unblocked:'var(--ok)',edited:'var(--accent)',comment:'oklch(0.6 0.13 285)'};
+const EV_LABEL={created:'Pieņemts',prepared:'Sagatavots (izņemts maiņai)',unprepared:'Novietots atpakaļ vietā',released:'Izsniegts',swapped:'Aizvietots ar jaunām',blocked:'Bloķēts',unblocked:'Atbloķēts',edited:'Rediģēti dati',comment:'Komentārs',photo:'Pievienota bilde'};
+const EV_COLOR={created:'var(--ok)',prepared:'var(--warn)',unprepared:'var(--ink-3)',released:'var(--ink-3)',swapped:'var(--accent)',blocked:'var(--danger)',unblocked:'var(--ok)',edited:'var(--accent)',comment:'oklch(0.6 0.13 285)',photo:'oklch(0.6 0.13 200)'};
 const fmtEvDate=s=>s?String(s).slice(0,16).replace('T',' '):'';
 // Open a record's detail modal by id (used from the Klienti storage list).
 async function openRecordById(id){
   try{const rec=await(await fetch('/api/storage/'+encodeURIComponent(id))).json();
-    if(rec&&rec.id){S.recData=rec;S.recOpen=true;S.recEvents=[];renderModal();loadRecEvents(rec.id);}
+    if(rec&&rec.id){S.recData=rec;S.recOpen=true;S.recEvents=[];S.recPhotos=[];S.recPhotoBusy='';renderModal();loadRecEvents(rec.id);loadRecPhotos(rec.id);}
     else alertErr('Ieraksts nav atrasts');
   }catch{alertErr('Neizdevās ielādēt ierakstu');}}
 async function loadRecEvents(id){S.recEventsLoading=true;
@@ -1163,6 +1246,13 @@ function spotHistHTML(){
 
 // ============ MODALS ============
 function renderModal(){const m=$('#modal');
+  // The lightbox sits above every other modal so it can open from the record card.
+  if(S.photoBig){
+    m.innerHTML=`<div data-close="photo" style="position:fixed;inset:0;background:oklch(0.15 0.02 260 / .88);z-index:120;display:flex;align-items:center;justify-content:center;padding:20px;animation:r1fade .15s ease;">
+      <img src="${esc(S.photoBig)}" alt="Riepu foto" style="max-width:100%;max-height:100%;border-radius:12px;box-shadow:0 24px 60px oklch(0.1 0.02 260 / .5);">
+      <button data-close="photo" style="position:absolute;top:16px;right:16px;width:40px;height:40px;border-radius:11px;border:0;background:oklch(1 0 0 / .16);color:#fff;cursor:pointer;font-size:20px;">✕</button>
+    </div>`;
+    bind(m);return;}
   if(S.smsOpen&&S.smsRec){const r=S.smsRec;
     m.innerHTML=`<div data-close="sms" style="position:fixed;inset:0;background:oklch(0.2 0.02 260 / .45);z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;animation:r1fade .2s ease;">
     <div data-stop="1" style="background:var(--surface);border-radius:20px;width:640px;max-width:100%;overflow:hidden;box-shadow:0 24px 60px oklch(0.2 0.02 260 / .3);animation:r1pop .28s cubic-bezier(.2,.8,.2,1);display:grid;grid-template-columns:1fr 300px;">
@@ -1284,6 +1374,10 @@ function renderModal(){const m=$('#modal');
           ${tabNotes(r)?`<div style="grid-column:1/3;">${fld('Piezīmes',tabNotes(r))}</div>`:''}
         </div>
         <div style="padding:0 24px 18px;">
+          <div class="label" style="margin-bottom:6px;">Bildes${(S.recPhotos||[]).length?` · ${(S.recPhotos||[]).length}`:''}</div>
+          <div id="rec-photos">${recPhotosHTML()}</div>
+        </div>
+        <div style="padding:0 24px 18px;">
           <div class="label" style="margin-bottom:6px;">Vēsture un komentāri</div>
           <div id="rec-history">${recEventsHTML()}</div>
         </div>
@@ -1322,8 +1416,16 @@ function bind(root){
     else if(a==='import-xlsx'){const f=document.getElementById('imp-file');if(f)f.click();}
     else if(a==='add-container')await addContainerDialog();
     else if(a==='rec-addcomment')await addRecComment();
+    else if(a==='photo-camera'){const f=document.getElementById('photo-cam');if(f)f.click();}
+    else if(a==='photo-pick'){const f=document.getElementById('photo-file');if(f)f.click();}
     else if(a==='ana-clear'){S.anaSeason='';S.anaStatus='';S.anaCustomer='';S.anaRims='';S.analyticsLoaded=false;render();await loadAnalytics();if(S.screen==='analytics')render();}
   }));
+  ['photo-cam','photo-file'].forEach(id=>{const el=root.querySelector('#'+id);
+    // Copy the FileList out before clearing the input — it is live, so resetting
+    // the input first would empty the very list we are about to upload.
+    if(el)el.addEventListener('change',async()=>{const fs=[...(el.files||[])];el.value='';if(fs.length)await uploadRecPhotos(fs);});});
+  root.querySelectorAll('[data-photobig]').forEach(el=>el.addEventListener('click',()=>{S.photoBig=el.dataset.photobig;renderModal();}));
+  root.querySelectorAll('[data-photodel]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();deleteRecPhoto(el.dataset.photodel);}));
   root.querySelectorAll('[data-evedit]').forEach(el=>el.addEventListener('click',()=>editEventDialog(el.dataset.evedit)));
   root.querySelectorAll('[data-evdel]').forEach(el=>el.addEventListener('click',()=>deleteEventDialog(el.dataset.evdel)));
   const rc=root.querySelector('#rec-comment');
@@ -1334,7 +1436,7 @@ function bind(root){
   root.querySelectorAll('[data-pickspot]').forEach(el=>el.addEventListener('click',()=>{
     const code=el.dataset.pickspot;S.presetSpot=(code==='__auto__')?null:code;S.spotPickOpen=false;renderModal();render();}));
   root.querySelectorAll('[data-rec]').forEach(el=>el.addEventListener('click',()=>{
-    const rec=(S.table||[]).find(x=>String(x.id)===el.dataset.rec);if(rec){S.recData=rec;S.recOpen=true;S.recEvents=[];renderModal();loadRecEvents(rec.id);}}));
+    const rec=(S.table||[]).find(x=>String(x.id)===el.dataset.rec);if(rec){S.recData=rec;S.recOpen=true;S.recEvents=[];S.recPhotos=[];S.recPhotoBusy='';renderModal();loadRecEvents(rec.id);loadRecPhotos(rec.id);}}));
   root.querySelectorAll('[data-openrec]').forEach(el=>el.addEventListener('click',(e)=>{if(e.target.closest('button'))return;openRecordById(el.dataset.openrec);}));
   root.querySelectorAll('[data-recact]').forEach(el=>el.addEventListener('click',()=>recAction(el.dataset.recact)));
   root.querySelectorAll('[data-tabstatus]').forEach(el=>el.addEventListener('click',()=>{S.tabStatus=el.dataset.tabstatus;render();}));
@@ -1397,6 +1499,7 @@ function bind(root){
   root.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',e=>{
     if(e.target!==el&&e.target.closest('[data-stop]'))return;
     const w=el.dataset.close;
+    if(w==='photo'){S.photoBig=null;renderModal();return;} // back to the record card underneath
     if(w==='sms'){S.smsOpen=false;S.smsRec=null;}
     else if(w==='pick'){S.spotPickOpen=false;}
     else if(w==='rec'){S.recOpen=false;}

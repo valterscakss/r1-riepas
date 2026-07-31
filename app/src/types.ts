@@ -95,6 +95,22 @@ export const DEFAULT_PRICING: PricingConfig = {
   rims: { none: 1, steel: 1.2, aluminum: 1.3 },
 };
 
+/**
+ * A photo attached to a stored set (tread wear, damage, the rims as handed in).
+ * Bytes live in the database so there is no second service to configure or pay
+ * for; the client downscales before upload to keep rows small.
+ */
+export interface Photo {
+  id: string;
+  recordId: string;
+  mime: string;
+  bytes: number;
+  width: number | null;
+  height: number | null;
+  createdBy: string | null;
+  createdAt: string | null;
+}
+
 /** A browser/phone registered for Web Push notifications about new tasks. */
 export interface PushSub {
   endpoint: string;
@@ -186,6 +202,16 @@ export interface Store {
   closeTasksForRecord(recordId: string, actor: string | null): Promise<number>;
   /** Hard-delete a task. */
   deleteTask(id: string): Promise<boolean>;
+
+  // --- Record photos ---
+  /** Photo metadata for a record, newest first (never the bytes). */
+  listPhotos(recordId: string): Promise<Photo[]>;
+  /** The image itself, for serving. */
+  getPhoto(id: string): Promise<{ mime: string; data: Buffer } | null>;
+  addPhoto(p: { recordId: string; mime: string; data: Buffer; width: number | null; height: number | null; createdBy: string | null }): Promise<Photo>;
+  deletePhoto(id: string): Promise<boolean>;
+  /** How many photos each of these records has — for list badges. */
+  photoCounts(recordIds: string[]): Promise<Record<string, number>>;
 
   // --- App settings (JSON blobs keyed by name, e.g. 'pricing') ---
   /** Read a settings blob. Returns null when it was never saved. */

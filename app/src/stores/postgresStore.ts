@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub, Photo } from '../types.js';
 
 /**
  * Postgres datastore — the production backend for Supabase (or any Postgres).
@@ -87,6 +87,19 @@ CREATE INDEX IF NOT EXISTS idx_tasks_record ON tasks(record_id);
 UPDATE storage SET status = 'free', plate = NULL
  WHERE status = 'active' AND size1 IS NULL AND brand IS NULL AND customer_name IS NULL
    AND UPPER(BTRIM(COALESCE(plate, ''))) IN ('BRĪVS','BRIVS','BRĪVA','BRIVA','BRĪVI','TUKŠS','TUKSS','TUKŠA','TUKSA','FREE');
+
+CREATE TABLE IF NOT EXISTS photos (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  record_id  TEXT NOT NULL,
+  mime       TEXT NOT NULL,
+  data       BYTEA NOT NULL,
+  bytes      INTEGER NOT NULL,
+  width      INTEGER,
+  height     INTEGER,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_photos_record ON photos(record_id);
 
 CREATE TABLE IF NOT EXISTS settings (
   key        TEXT PRIMARY KEY,
@@ -252,8 +265,10 @@ export class PostgresStore implements Store {
       await client.query('TRUNCATE storage RESTART IDENTITY');
       // Record IDs reset here, so the old per-record history/comments no longer map — clear them.
       await client.query('DELETE FROM record_events');
-      // Same reasoning for record-linked warehouse jobs; free-text orders survive.
+      // Same reasoning for record-linked warehouse jobs and photos; free-text
+      // orders survive. The import dialog warns that both are cleared.
       await client.query('DELETE FROM tasks WHERE record_id IS NOT NULL');
+      await client.query('DELETE FROM photos');
       const COLS = ['season', 'location', 'plate', 'make_model', 'customer_name', 'is_company', 'phone', 'size1', 'brand', 'quantity', 'size2', 'rim_note', 'notes', 'intake_date', 'release_date', 'status'];
       const BATCH = 500;
       let imported = 0;
@@ -439,6 +454,49 @@ export class PostgresStore implements Store {
     return (res.rowCount ?? 0) > 0;
   }
 
+  // --- Photos ---
+  private photoRow(r: PhotoRow): Photo {
+    let createdAt: string | null = null;
+    if (r.created_at) { const d = new Date(r.created_at); createdAt = isNaN(d.getTime()) ? String(r.created_at) : d.toISOString(); }
+    return {
+      id: String(r.id), recordId: r.record_id, mime: r.mime, bytes: r.bytes,
+      width: r.width, height: r.height, createdBy: r.created_by, createdAt,
+    };
+  }
+  async listPhotos(recordId: string): Promise<Photo[]> {
+    await this.init();
+    const res = await this.pool.query<PhotoRow>(
+      'SELECT id, record_id, mime, bytes, width, height, created_by, created_at FROM photos WHERE record_id = $1 ORDER BY id DESC', [recordId]);
+    return res.rows.map((r) => this.photoRow(r));
+  }
+  async getPhoto(id: string): Promise<{ mime: string; data: Buffer } | null> {
+    await this.init();
+    const res = await this.pool.query<{ mime: string; data: Buffer }>('SELECT mime, data FROM photos WHERE id = $1', [Number(id)]);
+    return res.rows[0] ?? null;
+  }
+  async addPhoto(p: { recordId: string; mime: string; data: Buffer; width: number | null; height: number | null; createdBy: string | null }): Promise<Photo> {
+    await this.init();
+    const res = await this.pool.query<PhotoRow>(
+      `INSERT INTO photos (record_id, mime, data, bytes, width, height, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING id, record_id, mime, bytes, width, height, created_by, created_at`,
+      [p.recordId, p.mime, p.data, p.data.length, p.width, p.height, p.createdBy]);
+    return this.photoRow(res.rows[0]);
+  }
+  async deletePhoto(id: string): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('DELETE FROM photos WHERE id = $1', [Number(id)]);
+    return (res.rowCount ?? 0) > 0;
+  }
+  async photoCounts(recordIds: string[]): Promise<Record<string, number>> {
+    await this.init();
+    if (!recordIds.length) return {};
+    const res = await this.pool.query<{ record_id: string; n: string }>(
+      'SELECT record_id, COUNT(*) AS n FROM photos WHERE record_id = ANY($1) GROUP BY record_id', [recordIds]);
+    const out: Record<string, number> = {};
+    for (const r of res.rows) out[r.record_id] = Number(r.n);
+    return out;
+  }
+
   // --- Settings ---
   async getSetting(key: string): Promise<unknown | null> {
     await this.init();
@@ -479,4 +537,9 @@ interface TaskRow {
   id: number; kind: string; record_id: string | null; title: string; details: string | null;
   location: string | null; plate: string | null; status: string; created_by: string | null;
   created_at: string | Date | null; done_by: string | null; done_at: string | Date | null;
+}
+
+interface PhotoRow {
+  id: number; record_id: string; mime: string; bytes: number;
+  width: number | null; height: number | null; created_by: string | null; created_at: string | Date | null;
 }

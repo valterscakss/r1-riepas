@@ -826,6 +826,53 @@ export function createApp(): express.Express {
     res.json({ ok: true });
   }));
 
+  // --- Record photos ------------------------------------------------------
+  // Pictures of the set as handed in — tread, damage, the rims. The client
+  // downscales before upload, so rows stay small enough to live in the database
+  // and there is no second service to configure.
+  const PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+  const photoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+
+  app.get('/api/storage/:id/photos', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const photos = await store.listPhotos(req.params.id);
+    res.json({ photos: photos.map((p) => ({ ...p, url: `/api/photos/${p.id}` })) });
+  }));
+
+  app.post('/api/storage/:id/photos', requireAuth, photoUpload.single('photo'), asyncH(async (req, res) => {
+    const store = await getStore();
+    const file = (req as express.Request & { file?: { buffer: Buffer; mimetype: string } }).file;
+    if (!file) return res.status(400).json({ error: { message: 'Fails nav pievienots' } });
+    if (!PHOTO_TYPES.has(file.mimetype)) return res.status(400).json({ error: { message: 'Atļauti tikai JPG, PNG vai WEBP attēli' } });
+    const rec = await store.get(req.params.id);
+    if (!rec) return res.status(404).json({ error: { message: 'Ieraksts nav atrasts' } });
+    const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null; };
+    const photo = await store.addPhoto({
+      recordId: String(rec.id), mime: file.mimetype, data: file.buffer,
+      width: num(req.body?.width), height: num(req.body?.height), createdBy: actorOf(req),
+    });
+    await logEvent(store, String(rec.id), 'photo', null, req); // the label already says it
+    res.status(201).json({ ok: true, photo: { ...photo, url: `/api/photos/${photo.id}` } });
+  }));
+
+  // Serving the bytes. Images are immutable once stored (a new photo gets a new
+  // id), so they can be cached hard despite the app's global no-store header.
+  app.get('/api/photos/:id', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const p = await store.getPhoto(req.params.id);
+    if (!p) return res.status(404).json({ error: { message: 'Bilde nav atrasta' } });
+    res.setHeader('Content-Type', p.mime);
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    res.send(p.data);
+  }));
+
+  app.delete('/api/photos/:id', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const ok = await store.deletePhoto(req.params.id);
+    if (!ok) return res.status(404).json({ error: { message: 'Bilde nav atrasta' } });
+    res.json({ ok: true });
+  }));
+
   // --- Storage containers (user-defined shelves/racks) ---
   app.get('/api/containers', requireAuth, asyncH(async (_req, res) => {
     const store = await getStore();
