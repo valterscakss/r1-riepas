@@ -62,6 +62,10 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 .r1-btn-danger{background:var(--danger);color:#fff;}
 .r1-toast{border-radius:12px!important;font-family:'IBM Plex Sans',sans-serif!important;}
 .swal2-container{z-index:2000!important;}
+/* Sub-tabs inside a screen (Noliktava: Darāmie / Pasūtīt / Vēsture) */
+.subtab{background:transparent;border:0;border-bottom:2px solid transparent;padding:10px 2px;margin-bottom:-1px;cursor:pointer;font-size:14px;font-weight:500;color:var(--ink-3);white-space:nowrap;}
+.subtab:hover{color:var(--ink-2);}
+.subtab.on{color:var(--ink);font-weight:600;border-bottom-color:var(--accent);}
 .tabrow:hover{background:var(--surface-2);}
 .custrow:hover{background:var(--surface-2);}
 /* ===== Responsive / mobile ===== */
@@ -107,6 +111,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
     <button class="navbtn" data-nav="warehouse"><span>▦&nbsp; Noliktava <span id="nav-task-badge" style="display:none;margin-left:auto;font-size:10px;font-weight:700;background:var(--danger);color:#fff;border-radius:9px;padding:1px 7px;"></span></span></button>
+    <div style="height:1px;background:var(--border);margin:8px 12px;"></div>
     <button class="navbtn" data-nav="intake"><span>↓&nbsp; Pieņemšana</span></button>
     <button class="navbtn" data-nav="release"><span>↑&nbsp; Izsniegšana</span></button>
     <button class="navbtn" data-nav="pending"><span>◔&nbsp; Sagatavotie <span id="nav-pending-badge" style="display:none;margin-left:auto;font-size:10px;font-weight:700;background:var(--warn);color:#fff;border-radius:9px;padding:1px 7px;"></span></span></button>
@@ -194,7 +199,7 @@ const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:n
   relQ:'',relResults:[],relLoading:false,relSearched:false,
   table:null,tableLoaded:false,tabQ:'',tabStatus:'active',tabSort:{col:'location',dir:'asc'},
   pending:[],pendingLoaded:false,swapFromId:null,recOpen:false,recData:null,
-  tasks:[],tasksLoaded:false,taskFilter:'open',taskDraft:'',openTasks:0,pushOn:false,pushCfg:null,
+  tasks:[],tasksLoaded:false,taskTab:'open',taskDraft:'',openTasks:0,pushOn:false,pushCfg:null,
   recEvents:[],recEventsLoading:false,
   analytics:null,analyticsLoaded:false,anaSeason:'',anaStatus:'',anaCustomer:'',anaRims:''};
 
@@ -222,7 +227,7 @@ function price(){const w1=parseInt((S.t1size||'').slice(0,3))||0;const w2=S.t1qt
 async function loadStats(){try{S.stats=await(await fetch('/api/stats')).json();}catch{S.stats=null;}paintSidebar();}
 async function loadActivity(){try{S.activity=(await(await fetch('/api/activity')).json()).events||[];}catch{S.activity=[];}}
 async function loadCustomers(){try{S.customers=(await(await fetch('/api/customers'+(S.custQ?'?q='+encodeURIComponent(S.custQ):''))).json()).customers||[];}catch{S.customers=[];}}
-async function loadTasks(){try{const d=await(await fetch('/api/tasks?status='+(S.taskFilter==='done'?'done':'open'))).json();
+async function loadTasks(){try{const d=await(await fetch('/api/tasks?status='+(S.taskTab==='done'?'done':'open'))).json();
     S.tasks=d.tasks||[];S.openTasks=d.open||0;}catch{S.tasks=[];}
   S.tasksLoaded=true;paintTaskBadge();}
 
@@ -911,39 +916,54 @@ function taskCard(t){
       </div>
     </div>
   </div>`;}
+// The screen splits into three sub-tabs so each does exactly one job. The one it
+// opens on — Darāmie — is nothing but the outstanding list: no compose box, no
+// finished work, just what still has to be fetched.
+const TASK_TABS=[['open','Darāmie'],['new','Pasūtīt'],['done','Vēsture']];
 function warehouseHTML(){
-  const done=S.taskFilter==='done';
-  const notif=(typeof Notification==='undefined')?'':(Notification.permission==='granted'?'':
-    `<button data-act="enable-push" style="width:100%;height:46px;margin-bottom:var(--gap);background:var(--ink);color:#fff;border:0;border-radius:11px;font-weight:600;font-size:15px;cursor:pointer;">🔔 Ieslēgt paziņojumus uz šo ierīci</button>`);
+  const tab=S.taskTab||'open';
+  const n=S.openTasks||0;
+  const sub={open:`${n} ${n===1?'uzdevums':'uzdevumi'} — kas vēl nav atnests`,
+    new:'Pieprasi riepas vai citu preci no noliktavas',
+    done:'Padarītie darbi — arhīvs'}[tab];
+  const bell=(typeof Notification==='undefined'||Notification.permission==='granted')?'':
+    `<button data-act="enable-push" title="Ieslēgt paziņojumus uz šo ierīci" style="margin-left:auto;align-self:center;height:32px;padding:0 12px;background:var(--ink);color:#fff;border:0;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">🔔 Paziņojumi</button>`;
   return `<div class="page" style="padding:var(--pad);max-width:840px;margin:0 auto;">
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
-      <div><h1 style="margin:0;font-size:24px;font-weight:600;">Noliktava</h1>
-      <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${done?'Pabeigtie uzdevumi':`${S.openTasks||0} ${(S.openTasks===1)?'uzdevums':'uzdevumi'} — kas vēl jāatnes`}</div></div>
-      <div style="display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px;">
-        <button class="chip${done?'':' on'}" data-taskfilter="open">Darāmie</button>
-        <button class="chip${done?' on':''}" data-taskfilter="done">Pabeigtie</button>
-      </div>
+    <h1 style="margin:0;font-size:24px;font-weight:600;">Noliktava</h1>
+    <div id="task-sub" style="color:var(--ink-3);font-size:13px;margin-top:4px;">${esc(sub)}</div>
+    <div class="subtabs" style="display:flex;gap:22px;align-items:stretch;border-bottom:1px solid var(--border);margin:16px 0 var(--gap);">
+      ${TASK_TABS.map(([k,label])=>`<button class="subtab${tab===k?' on':''}" data-tasktab="${k}">${label}${(k==='open'&&n>0)?`<span style="margin-left:7px;font-size:10px;font-weight:700;background:var(--danger);color:#fff;border-radius:9px;padding:1px 7px;vertical-align:1px;">${n}</span>`:''}</button>`).join('')}
+      ${bell}
     </div>
-    ${notif}
-    <div class="card" style="padding:var(--card);margin-bottom:var(--gap);">
-      <div class="label" style="margin-bottom:8px;">Pasūtīt no noliktavas</div>
+    <div id="task-body">${taskBodyHTML()}</div>
+  </div>`;}
+function composeHTML(){
+  return `<div class="card" style="padding:var(--card);">
+      <div class="label" style="margin-bottom:8px;">Ko vajag no noliktavas?</div>
       <div class="tcompose" style="display:flex;gap:10px;align-items:flex-start;">
-        <textarea id="task-draft" rows="2" placeholder="piem. 4× Nokian 205/55/16 no A ceha · BMW X5 klientam" style="flex:1;min-width:0;padding:11px 13px;border:1px solid var(--border-2);border-radius:10px;background:var(--surface);resize:vertical;line-height:1.45;">${esc(S.taskDraft)}</textarea>
+        <textarea id="task-draft" rows="3" placeholder="piem. 4× Nokian 205/55/16 no A ceha&#10;BMW X5 klientam, ar diskiem" style="flex:1;min-width:0;padding:11px 13px;border:1px solid var(--border-2);border-radius:10px;background:var(--surface);resize:vertical;line-height:1.45;">${esc(S.taskDraft)}</textarea>
         <button data-act="task-send" style="height:46px;padding:0 20px;flex:none;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">Nosūtīt</button>
       </div>
-      <div style="color:var(--ink-3);font-size:11px;margin-top:7px;">Enter nosūta · Shift+Enter jauna rinda. Noliktavas darbinieks saņem paziņojumu uzreiz.</div>
-    </div>
-    <div id="task-list">${taskListHTML()}</div>
-  </div>`;}
-function taskListHTML(){
+      <div style="color:var(--ink-3);font-size:12px;margin-top:9px;line-height:1.6;">Pirmā rinda ir virsraksts, pārējais — apraksts.<br>Enter nosūta · Shift+Enter jauna rinda. Noliktavas darbinieks saņem paziņojumu uzreiz, un uzdevums parādās sadaļā <b>Darāmie</b>.</div>
+    </div>`;}
+function taskBodyHTML(){
+  if(S.taskTab==='new')return composeHTML();
   if(!S.tasksLoaded)return `<div class="card" style="padding:24px;color:var(--ink-3);font-size:13px;">Ielādē…</div>`;
   const list=S.tasks||[];
-  if(!list.length)return `<div class="card" style="padding:34px;text-align:center;color:var(--ink-3);font-size:14px;">${S.taskFilter==='done'
+  if(!list.length)return `<div class="card" style="padding:34px;text-align:center;color:var(--ink-3);font-size:14px;">${S.taskTab==='done'
     ? 'Vēl nekas nav pabeigts.'
-    : 'Viss padarīts — tukšs saraksts. ✓<br><span style="font-size:13px;">Jauni uzdevumi parādās, kad kāds nospiež “Sagatavot” vai pasūta no noliktavas.</span>'}</div>`;
+    : 'Viss padarīts — nekas nav jāatnes. ✓<br><span style="font-size:13px;">Jauni uzdevumi parādās, kad kāds nospiež “Sagatavot” vai pasūta no noliktavas.</span>'}</div>`;
   return list.map(taskCard).join('');}
-function updateTaskList(){const c=document.getElementById('task-list');if(!c)return;c.innerHTML=taskListHTML();bind(c);
-  const h=document.querySelector('#view .page h1');if(h&&h.nextElementSibling&&S.taskFilter!=='done')h.nextElementSibling.textContent=`${S.openTasks||0} ${(S.openTasks===1)?'uzdevums':'uzdevumi'} — kas vēl jāatnes`;}
+// Refresh just the list + the counters, so polling never steals focus from the
+// compose box or scrolls the warehouse worker's list out from under them.
+function updateTaskList(){
+  const c=document.getElementById('task-body');
+  if(c&&S.taskTab!=='new'){c.innerHTML=taskBodyHTML();bind(c);}
+  const n=S.openTasks||0;
+  const sb=document.getElementById('task-sub');
+  if(sb&&(S.taskTab||'open')==='open')sb.textContent=`${n} ${n===1?'uzdevums':'uzdevumi'} — kas vēl nav atnests`;
+  const tb=document.querySelector('.subtab[data-tasktab="open"] span');
+  if(tb){tb.textContent=n;tb.style.display=n>0?'':'none';}}
 async function sendTask(){const el=document.getElementById('task-draft');const text=(el&&el.value||'').trim();
   if(!text){if(el)el.focus();return;}
   const res=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
@@ -951,8 +971,9 @@ async function sendTask(){const el=document.getElementById('task-draft');const t
   if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās nosūtīt');return;}
   S.taskDraft='';if(el)el.value='';
   toast('Nosūtīts uz noliktavu');
-  if(S.taskFilter!=='open'){S.taskFilter='open';await loadTasks();render();return;}
-  await loadTasks();updateTaskList();}
+  // Sending drops you back on the list, so you see the job you just created.
+  S.taskTab='open';S.tasksLoaded=false;render();
+  await loadTasks();if(S.screen==='warehouse')render();}
 async function taskAction(id,what){
   const url=what==='del'?'/api/tasks/'+encodeURIComponent(id):'/api/tasks/'+encodeURIComponent(id)+'/'+what;
   const res=await fetch(url,{method:what==='del'?'DELETE':'POST'});
@@ -999,7 +1020,7 @@ async function pollTasks(){
         {body:[t.location?'Vieta '+t.location:'',t.title,t.details].filter(Boolean).join(' · ').slice(0,160),icon:'/icon-192.png',tag:'r1-task-'+t.id});}catch{}});}
   }
   _seenTasks=ids;
-  if(S.screen==='warehouse'&&S.taskFilter==='open'){S.tasks=list;S.tasksLoaded=true;updateTaskList();}}
+  if(S.screen==='warehouse'&&(S.taskTab||'open')==='open'){S.tasks=list;S.tasksLoaded=true;updateTaskList();}}
 function startTaskPolling(){if(_taskPoll)clearInterval(_taskPoll);_taskPoll=setInterval(pollTasks,20000);
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')pollTasks();});}
 
@@ -1199,9 +1220,12 @@ function bind(root){
   root.querySelectorAll('[data-taskdel]').forEach(el=>el.addEventListener('click',async()=>{
     const r=await ask({icon:'warning',title:'Dzēst uzdevumu?',confirmButtonText:'Dzēst',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});
     if(r.isConfirmed)await taskAction(el.dataset.taskdel,'del');}));
-  root.querySelectorAll('[data-taskfilter]').forEach(el=>el.addEventListener('click',async()=>{
-    if(S.taskFilter===el.dataset.taskfilter)return;
-    S.taskFilter=el.dataset.taskfilter;S.tasksLoaded=false;render();await loadTasks();if(S.screen==='warehouse')render();}));
+  root.querySelectorAll('[data-tasktab]').forEach(el=>el.addEventListener('click',async()=>{
+    const k=el.dataset.tasktab;
+    if((S.taskTab||'open')===k)return;
+    S.taskTab=k;
+    if(k==='new'){render();const d=document.getElementById('task-draft');if(d)d.focus();return;}
+    S.tasksLoaded=false;render();await loadTasks();if(S.screen==='warehouse')render();}));
   const td=root.querySelector('#task-draft');
   if(td){td.addEventListener('input',()=>{S.taskDraft=td.value;});
     td.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendTask();}});}
