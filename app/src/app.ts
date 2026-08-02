@@ -822,9 +822,26 @@ export function createApp(): express.Express {
   }));
 
   // --- Web Push registration (one row per device) ---
-  app.get('/api/push/key', requireAuth, (_req, res) => {
-    res.json({ enabled: pushEnabled(), publicKey: vapidPublicKey() });
-  });
+  app.get('/api/push/key', requireAuth, asyncH(async (_req, res) => {
+    let devices = 0;
+    try { devices = (await (await getStore()).listPushSubs()).length; } catch { /* not fatal */ }
+    res.json({ enabled: pushEnabled(), publicKey: vapidPublicKey(), devices });
+  }));
+
+  // Prove the whole chain works without having to order something for real.
+  app.post('/api/push/test', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    if (!pushEnabled()) return res.status(400).json({ error: { message: 'Paziņojumi nav konfigurēti (trūkst VAPID atslēgu)' } });
+    const devices = (await store.listPushSubs()).length;
+    if (!devices) return res.status(400).json({ error: { message: 'Neviena ierīce nav pieteikta. Nospied “Paziņojumi” Noliktavas skatā.' } });
+    const who = actorOf(req);
+    const { sent, failed } = await pushToAll(store, {
+      title: 'R1 · Tests',
+      body: `Paziņojumi darbojas${who ? ` · pārbaudīja ${who}` : ''}`,
+      url: '/?view=warehouse', tag: 'r1-test',
+    });
+    res.json({ ok: true, devices, sent, failed });
+  }));
   app.post('/api/push/subscribe', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
     const b = (req.body ?? {}) as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } };

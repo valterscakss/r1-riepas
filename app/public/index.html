@@ -269,7 +269,7 @@ function nav(screen){S.screen=screen;S.selSpot=null;
   if(screen==='warehouse'){render();loadTasks().then(()=>{if(S.screen==='warehouse')render();});return;}
   if(screen==='settings'){
     // Edit a copy, so "Atcelt izmaiņas" can put the saved rules back.
-    S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();
+    S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();refreshPushStatus();
     loadPricing().then(()=>{if(S.screen==='settings'){S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();}});return;}
   if(screen==='analytics'){render();loadAnalytics().then(()=>{if(S.screen==='analytics')render();});return;}
   if(screen==='home'){render();Promise.all([loadActivity(),loadStats()]).then(()=>{if(S.screen==='home')render();});return;}
@@ -1038,6 +1038,11 @@ function settingsHTML(){
           <div id="price-test-out">${priceTestHTML()}</div>
         </div>
         <div class="card" style="padding:var(--card);">
+          <h2 style="margin:0 0 4px;font-size:15px;font-weight:600;">Paziņojumi</h2>
+          <div id="push-status" style="color:var(--ink-3);font-size:12px;margin-bottom:14px;line-height:1.6;">${pushStatusHTML()}</div>
+          <button data-act="push-test" style="width:100%;height:44px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:600;cursor:pointer;color:var(--ink-2);">🔔 Nosūtīt testa paziņojumu</button>
+        </div>
+        <div class="card" style="padding:var(--card);">
           <h2 style="margin:0 0 4px;font-size:15px;font-weight:600;">Pārrēķināt</h2>
           <div style="color:var(--ink-3);font-size:12px;margin-bottom:14px;line-height:1.6;">Pārrēķina cenu <b>riepām, kas šobrīd glabājas</b>, pēc saglabātajiem noteikumiem. Jau izsniegtie pasūtījumi netiek mainīti — tur paliek summa, ko klients samaksāja.</div>
           <button data-act="price-recalc" style="width:100%;height:44px;background:var(--ink);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">↻ Pārrēķināt glabātajām</button>
@@ -1046,6 +1051,24 @@ function settingsHTML(){
     </div>
   </div>`;}
 function updatePriceTest(){const o=document.getElementById('price-test-out');if(o)o.innerHTML=priceTestHTML();}
+// Push is easy to think is on when it isn't — say plainly what the server has and
+// how many phones are actually registered.
+function pushStatusHTML(){
+  const c=S.pushCfg;
+  if(!c)return 'Pārbauda…';
+  if(!c.enabled)return '<b style="color:var(--warn);">Nav konfigurēti.</b> Serverim trūkst VAPID atslēgu — lietotne joprojām pārbauda uzdevumus ik pēc 20 s, bet aizvērta lietotne paziņojumus nesaņems.';
+  const n=c.devices||0;
+  return `<b style="color:var(--ok);">Ieslēgti.</b> Pieteiktas ierīces: <b class="mono">${n}</b>.`
+    +(n?' Katra saņems paziņojumu, tiklīdz kāds kaut ko pasūta.':' Vēl neviena — atver <b>Noliktava</b> uz telefona un nospied <b>🔔 Paziņojumi</b>.');}
+async function refreshPushStatus(){
+  try{S.pushCfg=await(await fetch('/api/push/key')).json();}catch{S.pushCfg=null;}
+  const el=document.getElementById('push-status');if(el)el.innerHTML=pushStatusHTML();}
+async function sendTestPush(){
+  const res=await fetch('/api/push/test',{method:'POST'});
+  const d=await res.json().catch(()=>({}));
+  if(!res.ok){alertErr(d.error?.message||'Neizdevās nosūtīt');return;}
+  toast(d.failed?`Nosūtīts ${d.sent} no ${d.devices} ierīcēm`:`Nosūtīts uz ${d.sent} ${d.sent===1?'ierīci':'ierīcēm'}`);
+  refreshPushStatus();}
 function grabPricing(){const d=S.pricingDraft;if(!d)return;
   document.querySelectorAll('[data-ptier]').forEach(el=>{
     const t=d.tiers[Number(el.dataset.ptier)];if(!t)return;
@@ -1101,7 +1124,9 @@ function taskCard(t){
           <span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;background:${bg};color:${fg};white-space:nowrap;">${lbl}</span>
           ${t.location?`<span class="mono" style="font-size:12px;font-weight:600;padding:3px 9px;border-radius:6px;background:var(--ink);color:#fff;">${esc(t.location)}</span>`:''}
         </div>
-        <div style="font-weight:600;font-size:17px;word-break:break-word;${t.kind==='prepare'?"font-family:'IBM Plex Mono',monospace;":''}${done?'text-decoration:line-through;':''}">${esc(t.title)}</div>
+        <div style="font-weight:600;font-size:17px;word-break:break-word;${t.kind==='prepare'?"font-family:'IBM Plex Mono',monospace;":''}${done?'text-decoration:line-through;':''}">${esc(t.title)}${t.recordId
+          ? `<button data-taskrec="${esc(t.recordId)}" title="Atvērt ierakstu — dati un bildes" style="margin-left:9px;vertical-align:2px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-2);cursor:pointer;">Atvērt ↗</button>`
+          : ''}</div>
         ${t.details?`<div style="color:var(--ink-2);font-size:14px;margin-top:4px;word-break:break-word;white-space:pre-wrap;">${esc(t.details)}</div>`:''}
         <div style="color:var(--ink-3);font-size:12px;margin-top:7px;">${done
           ? `Pabeidza ${esc(t.doneBy||'—')} · ${esc(when||'—')}`
@@ -1410,6 +1435,7 @@ function bind(root){
     else if(a==='price-save')await savePricing();
     else if(a==='price-reset'){S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();toast('Izmaiņas atceltas','info');}
     else if(a==='price-recalc')await recalcPrices();
+    else if(a==='push-test')await sendTestPush();
     else if(a==='rel-search'){const q=document.getElementById('rel-q');S.relQ=q?q.value:S.relQ;await loadRelease();updateReleaseContent();}
     else if(a==='pick-spot'){grab();S.spotPickOpen=true;renderModal();}
     else if(a==='sms-done'){S.smsOpen=false;S.smsRec=null;resetIntake();await Promise.all([loadStats(),loadActivity()]);nav('home');}
@@ -1440,6 +1466,7 @@ function bind(root){
   root.querySelectorAll('[data-openrec]').forEach(el=>el.addEventListener('click',(e)=>{if(e.target.closest('button'))return;openRecordById(el.dataset.openrec);}));
   root.querySelectorAll('[data-recact]').forEach(el=>el.addEventListener('click',()=>recAction(el.dataset.recact)));
   root.querySelectorAll('[data-tabstatus]').forEach(el=>el.addEventListener('click',()=>{S.tabStatus=el.dataset.tabstatus;render();}));
+  root.querySelectorAll('[data-taskrec]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();openRecordById(el.dataset.taskrec);}));
   root.querySelectorAll('[data-taskdone]').forEach(el=>el.addEventListener('click',()=>taskAction(el.dataset.taskdone,'done')));
   root.querySelectorAll('[data-taskopen]').forEach(el=>el.addEventListener('click',()=>taskAction(el.dataset.taskopen,'reopen')));
   root.querySelectorAll('[data-taskdel]').forEach(el=>el.addEventListener('click',async()=>{
