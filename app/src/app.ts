@@ -182,6 +182,34 @@ export function createApp(): express.Express {
     res.json({ suggestions });
   }));
 
+  // Company typeahead for intake: distinct company names already on file, so a
+  // returning company is picked rather than retyped into a second spelling.
+  app.get('/api/company-suggest', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const q = String(req.query.q ?? '').trim().toUpperCase();
+    const all = await store.list();
+    const seen = new Map<string, { name: string; plates: Set<string>; phone: string | null; last: string; count: number }>();
+    for (const r of all) {
+      if (!r.isCompany || !r.customerName) continue;
+      const key = r.customerName.trim().toUpperCase();
+      if (!key || (q && !key.includes(q))) continue;
+      let e = seen.get(key);
+      if (!e) { e = { name: r.customerName.trim(), plates: new Set(), phone: r.phone, last: '', count: 0 }; seen.set(key, e); }
+      e.count++;
+      if (r.plate) e.plates.add(r.plate);
+      if (!e.phone && r.phone) e.phone = r.phone;
+      if ((r.intakeDate ?? '') > e.last) e.last = r.intakeDate ?? '';
+    }
+    const suggestions = [...seen.values()]
+      .sort((a, b) => {
+        const ap = a.name.toUpperCase().startsWith(q) ? 0 : 1, bp = b.name.toUpperCase().startsWith(q) ? 0 : 1;
+        return ap - bp || b.count - a.count || a.name.localeCompare(b.name, 'lv');
+      })
+      .slice(0, 8)
+      .map((e) => ({ name: e.name, phone: e.phone, vehicles: e.plates.size, count: e.count, last: e.last || null }));
+    res.json({ suggestions });
+  }));
+
   // ---- Domain helpers (per design: pricing, spot assignment, SMS codes) ----
   const SPOT_RE = /^([A-ZĀ-Ž]{1,4})(\d{1,3})$/;
   async function spotUniverse() {
@@ -292,6 +320,9 @@ export function createApp(): express.Express {
       fee: r.feeEur ? `€${Number(r.feeEur).toFixed(2).replace('.', ',')}` : '—',
       status: r.status, id: r.id,
       intakeDate: r.intakeDate, releaseDate: r.releaseDate,
+      // Everything else the row holds, so the client view can show the full picture.
+      sms: r.smsCode, rims: r.rimNote, notes: r.notes, makeModel: r.makeModel,
+      size1: r.size1, size2, quantity: r.quantity, brand: canonBrand(r.brand),
     };
   };
 
