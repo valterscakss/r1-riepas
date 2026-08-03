@@ -200,7 +200,7 @@ const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:n
   relQ:'',relResults:[],relLoading:false,relSearched:false,
   table:null,tableLoaded:false,tabQ:'',tabStatus:'active',tabSort:{col:'location',dir:'asc'},
   pending:[],pendingLoaded:false,swapFromId:null,recOpen:false,recData:null,
-  tasks:[],tasksLoaded:false,taskTab:'open',taskDraft:'',openTasks:0,pushOn:false,pushCfg:null,
+  tasks:[],tasksLoaded:false,taskTab:'open',taskDraft:'',taskDest:'',taskDestCustom:'',openTasks:0,pushOn:false,pushCfg:null,
   pricing:null,pricingDraft:null,pricingSaving:false,priceTest:'',
   recEvents:[],recEventsLoading:false,
   recPhotos:[],recPhotosLoading:false,recPhotoBusy:'',photoBig:null,
@@ -469,11 +469,29 @@ function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capP
     const base='position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;height:var(--spot);border-radius:9px;cursor:pointer;border:1px solid;padding:0;';
     const fill=s.occ?(s.blocked?'background:var(--danger-soft);border-color:oklch(0.8 0.06 25);color:var(--danger);':s.reserved?'background:var(--warn-soft);border-color:oklch(0.82 0.08 82);color:var(--warn);':s.hasRims?'background:oklch(0.95 0.04 285);border-color:oklch(0.75 0.12 285);color:oklch(0.45 0.15 285);':'background:var(--surface-2);border-color:var(--border-2);color:var(--ink-2);'):'background:var(--ok-soft);border-color:oklch(0.8 0.08 155);color:var(--ok);';
     const style=base+fill+ring;
+    // A merged zone: one place holding several sets — show load against capacity.
+    if(s.zone){const full=s.count>=s.cap;
+      const zfill=full?'background:var(--surface-2);border-color:var(--border-2);color:var(--ink-2);':'background:oklch(0.95 0.03 285);border-color:oklch(0.72 0.12 285);color:oklch(0.45 0.15 285);';
+      return `<button data-spot="${esc(s.code)}" title="Zona ${esc(s.code)} · ${s.count}/${s.cap}" style="${base}${zfill}${sel?'outline:2px solid var(--accent);outline-offset:1px;':''}grid-column:span ${Math.max(1,s.hspan||1)};">
+        <span class="mono" style="font-weight:700;font-size:11px;">${esc(s.code)}</span>
+        <span class="mono" style="font-size:9px;opacity:.85;">${s.count}/${s.cap}</span></button>`;}
     const title=s.occ?(s.blocked?'Bloķēts':(s.plate+' · '+(s.cust||'')+(s.reserved?' · rezervēts':'')+(s.hasRims?' · ar diskiem':''))):'Brīvs';
     return `<button data-spot="${esc(s.code)}" title="${esc(title)}" style="${style}">
       ${s.hasRims&&!s.blocked?'<span title="Ar diskiem" style="position:absolute;top:3px;right:4px;font-size:9px;line-height:1;color:oklch(0.55 0.16 285);">◉</span>':''}
       <span class="mono" style="font-weight:600;font-size:11px;">${esc(s.code)}</span>
       ${s.occ?(s.blocked?'<span style="font-size:9px;opacity:.8;">bloķēts</span>':`<span class="mono" style="font-size:9px;opacity:.8;">${esc(s.plate||'')}</span>`):'<span style="font-size:9px;opacity:.75;">brīvs</span>'}</button>`;};
+  // Lay the cells out: a zone button spans its horizontal run, so the fill cells it
+  // covers are skipped; fills on other rows render as tinted continuation cells.
+  function cellsHTML(c){
+    const cells=c.cells||c.spots;let skip=0;const out=[];
+    for(const s of cells){
+      if(skip>0){skip--;continue;}
+      if(!s){out.push('<div></div>');continue;}
+      if(s.zoneFill){out.push('<div title="Zonas turpinājums" style="border-radius:9px;background:oklch(0.95 0.03 285 / .55);border:1px dashed oklch(0.78 0.08 285);"></div>');continue;}
+      if(s.zone)skip=Math.max(0,(s.hspan||1)-1);
+      out.push(spotBtn(s));
+    }
+    return out.join('');}
   return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
   <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--pad);flex-wrap:wrap;gap:12px;">
     <div><h1 style="margin:0;font-size:24px;font-weight:600;">Novietnes</h1>
@@ -493,7 +511,7 @@ function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capP
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;">
         <h2 style="margin:0;font-size:15px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Konteiners ${esc(c.letter)}${c.label?` · <span style="font-weight:400;color:var(--ink-3);">${esc(c.label)}</span>`:''}</h2>
         <span style="display:flex;align-items:center;gap:8px;flex:none;"><span class="mono" style="font-size:12px;color:var(--ink-3);">${c.occ}/${c.total}</span>${(isAdmin&&c.defId)?`<button data-editcont="${esc(c.defId)}" data-prefix="${esc(c.letter)}" title="Rediģēt formu" style="width:22px;height:22px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:11px;line-height:1;">✎</button><button data-delcont="${esc(c.defId)}" data-prefix="${esc(c.letter)}" title="Dzēst konteineru" style="width:22px;height:22px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:12px;line-height:1;">✕</button>`:''}</span></div>
-      <div style="display:grid;grid-template-columns:repeat(${c.cols||4},1fr);gap:6px;">${(c.cells||c.spots).map(s=>s?spotBtn(s):'<div></div>').join('')}</div>
+      <div style="display:grid;grid-template-columns:repeat(${c.cols||4},1fr);gap:6px;">${cellsHTML(c)}</div>
     </div>`).join('')}
   </div></div>`;}
 
@@ -502,10 +520,12 @@ function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capP
 // the drawing matches the real rack — L-shaped, with gaps, whatever it is. A place
 // is numbered by its POSITION (index+1), so switching a cell off never renumbers
 // the ones around it and can't silently rename a spot that holds someone's tires.
-const _cg={rows:4,cols:20,cells:[],paint:null};
+const _cg={rows:4,cols:20,cells:[],paint:null,zones:[],zoneSel:-1};
 function cgTotal(){return _cg.rows*_cg.cols;}
 function cgString(){return _cg.cells.map(v=>v?'1':'0').join('');}
 function cgCount(){return _cg.cells.reduce((a,v)=>a+(v?1:0),0);}
+const ZONE_HUES=[285,200,60,330,155,25];
+function cgZoneOf(i){return _cg.zones.findIndex(z=>z.cells.includes(i));}
 function cgResize(rows,cols,keep){
   const old=_cg.cells,oc=_cg.cols;
   _cg.rows=rows;_cg.cols=cols;
@@ -518,18 +538,48 @@ function cgResize(rows,cols,keep){
 function cgRender(){
   const box=document.getElementById('cg-grid');if(!box)return;
   box.style.gridTemplateColumns=`repeat(${_cg.cols},minmax(0,1fr))`;
-  box.innerHTML=_cg.cells.map((on,i)=>`<button type="button" data-cg="${i}" title="${on?'Vieta':'Tukšums'}" style="aspect-ratio:1;min-width:0;border-radius:4px;cursor:pointer;font-size:8px;line-height:1;padding:0;overflow:hidden;${on
-    ?'background:var(--ok-soft);border:1px solid oklch(0.8 0.08 155);color:var(--ok);'
-    :'background:transparent;border:1px dashed var(--border-2);color:transparent;'}">${on?(i+1):''}</button>`).join('');
+  box.innerHTML=_cg.cells.map((on,i)=>{
+    const zi=cgZoneOf(i);
+    let st;
+    if(!on)st='background:transparent;border:1px dashed var(--border-2);color:transparent;';
+    else if(zi>=0){const h=ZONE_HUES[zi%ZONE_HUES.length];st=`background:oklch(0.93 0.05 ${h});border:1px solid oklch(0.7 0.12 ${h});color:oklch(0.42 0.14 ${h});font-weight:700;`;}
+    else st='background:var(--ok-soft);border:1px solid oklch(0.8 0.08 155);color:var(--ok);';
+    return `<button type="button" data-cg="${i}" title="${!on?'Tukšums':zi>=0?('Zona '+_cg.zones[zi].name):'Vieta'}" style="aspect-ratio:1;min-width:0;border-radius:4px;cursor:pointer;font-size:8px;line-height:1;padding:0;overflow:hidden;${st}">${!on?'':zi>=0?esc(_cg.zones[zi].name[0]):(i+1)}</button>`;
+  }).join('');
   const n=document.getElementById('cg-count');
-  if(n)n.textContent=`${cgCount()} vietas no ${cgTotal()} rūtiņām`;
+  if(n){const zc=_cg.zones.reduce((a,z)=>a+z.cells.length,0);
+    n.textContent=`${cgCount()-zc} vietas + ${_cg.zones.length} zonas (${zc} rūtiņas) no ${cgTotal()} rūtiņām`;}
+  const zl=document.getElementById('cg-zones');
+  if(zl)zl.innerHTML=_cg.zones.map((z,i)=>{const h=ZONE_HUES[i%ZONE_HUES.length];const on=_cg.zoneSel===i;
+    return `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;background:oklch(0.93 0.05 ${h});color:oklch(0.42 0.14 ${h});border:2px solid ${on?`oklch(0.55 0.15 ${h})`:'transparent'};" data-cgzone="${i}">${esc(z.name)} · ${z.cells.length} rūt. · maks. ${z.cap}<button type="button" data-cgzonedel="${i}" title="Dzēst zonu" style="border:0;background:transparent;cursor:pointer;font-size:12px;color:inherit;padding:0;line-height:1;">✕</button></span>`;}).join(' ')||'<span style="color:var(--ink-3);font-size:12px;">Nav zonu.</span>';
   box.querySelectorAll('[data-cg]').forEach(el=>{
     const i=Number(el.dataset.cg);
-    const set=v=>{if(_cg.cells[i]!==v){_cg.cells[i]=v;cgRender();}};
-    el.addEventListener('mousedown',e=>{e.preventDefault();_cg.paint=!_cg.cells[i];set(_cg.paint);});
-    el.addEventListener('mouseenter',()=>{if(_cg.paint!==null)set(_cg.paint);});
-    el.addEventListener('touchstart',e=>{e.preventDefault();set(!_cg.cells[i]);},{passive:false});
-  });}
+    const act=()=>{
+      // With a zone selected, clicks assign/unassign cells to it; otherwise they
+      // paint the shape on/off as before.
+      if(_cg.zoneSel>=0){
+        if(!_cg.cells[i])return;
+        const z=_cg.zones[_cg.zoneSel];
+        const other=cgZoneOf(i);
+        if(other>=0&&other!==_cg.zoneSel)_cg.zones[other].cells=_cg.zones[other].cells.filter(x=>x!==i);
+        const at=z.cells.indexOf(i);
+        if(at>=0)z.cells.splice(at,1);else z.cells.push(i);
+        cgRender();return;}
+      const v=_cg.paint!==null?_cg.paint:!_cg.cells[i];
+      if(_cg.cells[i]!==v){_cg.cells[i]=v;
+        if(!v)_cg.zones.forEach(z=>{z.cells=z.cells.filter(x=>x!==i);});
+        cgRender();}};
+    el.addEventListener('mousedown',e=>{e.preventDefault();if(_cg.zoneSel<0)_cg.paint=!_cg.cells[i];act();});
+    el.addEventListener('mouseenter',()=>{if(_cg.paint!==null&&_cg.zoneSel<0)act();});
+    el.addEventListener('touchstart',e=>{e.preventDefault();act();},{passive:false});
+  });
+  const zlist=document.getElementById('cg-zones');
+  if(zlist){
+    zlist.querySelectorAll('[data-cgzonedel]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();
+      _cg.zones.splice(Number(el.dataset.cgzonedel),1);_cg.zoneSel=-1;cgRender();}));
+    zlist.querySelectorAll('[data-cgzone]').forEach(el=>el.addEventListener('click',()=>{
+      const i=Number(el.dataset.cgzone);_cg.zoneSel=_cg.zoneSel===i?-1:i;cgRender();}));
+  }}
 function cgStopPaint(){_cg.paint=null;}
 function cgFormHTML(opts){
   const o=opts||{};
@@ -552,6 +602,16 @@ function cgFormHTML(opts){
       <div id="cg-grid" style="display:grid;gap:3px;max-height:290px;overflow:auto;padding:6px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;"></div>
       <div id="cg-count" style="color:var(--ink-3);font-size:12px;margin-top:7px;"></div>
     </div>
+    <div>
+      <span class="label" style="display:block;margin-bottom:6px;">Zonas — lielākas vietas</span>
+      <div style="color:var(--ink-3);font-size:11px;margin-bottom:8px;">Zona apvieno vairākas rūtiņas vienā vietā ar savu nosaukumu un maksimālo komplektu skaitu. Pievieno zonu, tad klikšķini uz rūtiņām, lai to iezīmētu; vēlreiz klikšķis uz zonas pogas beidz iezīmēšanu.</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <input id="zn-name" class="swal2-input mono" placeholder="GRĪDA1" maxlength="8" style="margin:0;flex:1.4;min-width:0;text-transform:uppercase;height:38px;font-size:14px;">
+        <input id="zn-cap" type="number" min="1" max="99" value="6" title="Maks. komplekti" class="swal2-input mono" style="margin:0;flex:.7;min-width:0;height:38px;font-size:14px;">
+        <button type="button" id="cg-zoneadd" style="height:38px;padding:0 12px;font-size:12px;font-weight:600;border:1px solid var(--border-2);background:var(--surface);border-radius:8px;cursor:pointer;white-space:nowrap;">＋ Zona</button>
+      </div>
+      <div id="cg-zones" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+    </div>
     <div><label class="label" style="display:block;margin-bottom:5px;">Nosaukums (neobligāts)</label><input id="cg-label" class="swal2-input" value="${esc(o.label||'')}" placeholder="piem. Ziemas plaukts" style="margin:0;width:100%;"></div>
   </div>`;}
 function cgWire(){
@@ -563,12 +623,23 @@ function cgWire(){
     cgResize(r,c,keep);cgRender();};
   ['cg-rows','cg-cols'].forEach(id=>document.getElementById(id).addEventListener('input',()=>sync(true)));
   document.getElementById('cg-all').addEventListener('click',()=>{_cg.cells=_cg.cells.map(()=>true);cgRender();});
-  document.getElementById('cg-none').addEventListener('click',()=>{_cg.cells=_cg.cells.map(()=>false);cgRender();});
+  document.getElementById('cg-none').addEventListener('click',()=>{_cg.cells=_cg.cells.map(()=>false);_cg.zones.forEach(z=>z.cells=[]);cgRender();});
+  const za=document.getElementById('cg-zoneadd');
+  if(za)za.addEventListener('click',()=>{
+    const nameEl=document.getElementById('zn-name'),capEl=document.getElementById('zn-cap');
+    const name=(nameEl.value||'').trim().toUpperCase().replace(/\s+/g,'');
+    const cap=parseInt(capEl.value,10);
+    if(!/^[A-ZĀČĒĢĪĶĻŅŠŪŽ0-9-]{1,8}$/.test(name)){Swal.showValidationMessage('Zonas nosaukums: 1–8 burti/cipari');return;}
+    if(_cg.zones.some(z=>z.name===name)){Swal.showValidationMessage('Šāda zona jau ir');return;}
+    if(!(cap>=1&&cap<=99)){Swal.showValidationMessage('Maks. komplekti: 1–99');return;}
+    Swal.resetValidationMessage&&Swal.resetValidationMessage();
+    _cg.zones.push({name,cap,cells:[]});
+    _cg.zoneSel=_cg.zones.length-1;nameEl.value='';cgRender();});
   document.addEventListener('mouseup',cgStopPaint);
   cgRender();}
 async function addContainerDialog(){
   if(!R1)return;
-  cgResize(4,20,false);
+  cgResize(4,20,false);_cg.zones=[];_cg.zoneSel=-1;
   const {value:form}=await R1.fire({title:'Pievienot konteineru',width:640,
     html:cgFormHTML({}),
     showCancelButton:true,confirmButtonText:'Izveidot',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'},
@@ -576,7 +647,7 @@ async function addContainerDialog(){
     preConfirm:()=>{const prefix=(document.getElementById('cg-prefix').value||'').trim().toUpperCase();
       if(!/^[A-ZĀČĒĢĪĶĻŅŠŪŽ]{1,4}$/.test(prefix)){Swal.showValidationMessage('Prefikss: 1–4 burti (piem. D)');return false;}
       if(!cgCount()){Swal.showValidationMessage('Jāatzīmē vismaz viena vieta');return false;}
-      return {prefix,rows:_cg.rows,cols:_cg.cols,cells:cgString(),label:document.getElementById('cg-label').value.trim()||null};}});
+      return {prefix,rows:_cg.rows,cols:_cg.cols,cells:cgString(),zones:JSON.stringify(_cg.zones.filter(z=>z.cells.length)),label:document.getElementById('cg-label').value.trim()||null};}});
   if(!form)return;
   const res=await fetch('/api/containers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
   const data=await res.json().catch(()=>({}));
@@ -590,12 +661,13 @@ async function editContainerDialog(id,prefix){
   const rows=c.rows||Math.ceil((c.total||1)/(c.cols||4)),cols=c.cols||4;
   cgResize(rows,cols,false);
   if(c.drawn)_cg.cells=_cg.cells.map((_,i)=>c.drawn[i]!=='0');
+  _cg.zones=(c.zones||[]).map(z=>({name:z.name,cap:z.cap,cells:[...z.cells]}));_cg.zoneSel=-1;
   const {value:form}=await R1.fire({title:'Rediģēt konteineru',width:640,
     html:cgFormHTML({prefix,label:c.label}),
     showCancelButton:true,confirmButtonText:'Saglabāt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'},
     didOpen:cgWire,willClose:cgStopPaint,
     preConfirm:()=>{if(!cgCount()){Swal.showValidationMessage('Jāatzīmē vismaz viena vieta');return false;}
-      return {rows:_cg.rows,cols:_cg.cols,cells:cgString(),label:document.getElementById('cg-label').value.trim()||null};}});
+      return {rows:_cg.rows,cols:_cg.cols,cells:cgString(),zones:JSON.stringify(_cg.zones.filter(z=>z.cells.length)),label:document.getElementById('cg-label').value.trim()||null};}});
   if(!form)return;
   const res=await fetch('/api/containers/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
   const data=await res.json().catch(()=>({}));
@@ -1290,8 +1362,21 @@ function warehouseHTML(){
     </div>
     <div id="task-body">${taskBodyHTML()}</div>
   </div>`;}
+// Where the goods must land: the shop counter, the mounting bay, or anywhere
+// typed by hand. Travels on the task's location, so the job card and the push
+// notification both carry it.
+const TASK_DESTS=[['','—'],['VEIKALS','Veikals'],['MONTĀŽA','Montāža'],['__custom__','Cits…']];
 function composeHTML(){
+  const d=S.taskDest||'';
+  const isCustom=d==='__custom__';
   return `<div class="card" style="padding:var(--card);">
+      <div class="label" style="margin-bottom:8px;">Kur piegādāt?</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+        <div style="display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px;">
+          ${TASK_DESTS.map(([k,l])=>`<button class="chip${d===k?' on':''}" data-taskdest="${esc(k)}">${l}</button>`).join('')}
+        </div>
+        ${isCustom?`<input id="task-dest-custom" value="${esc(S.taskDestCustom||'')}" placeholder="piem. 2. bokss" style="height:36px;flex:1;min-width:140px;padding:0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);font-size:13px;">`:''}
+      </div>
       <div class="label" style="margin-bottom:8px;">Ko vajag no noliktavas?</div>
       <div class="tcompose" style="display:flex;gap:10px;align-items:flex-start;">
         <textarea id="task-draft" rows="3" placeholder="piem. 4× Nokian 205/55/16 no A ceha&#10;BMW X5 klientam, ar diskiem" style="flex:1;min-width:0;padding:11px 13px;border:1px solid var(--border-2);border-radius:10px;background:var(--surface);resize:vertical;line-height:1.45;">${esc(S.taskDraft)}</textarea>
@@ -1319,7 +1404,10 @@ function updateTaskList(){
   if(tb){tb.textContent=n;tb.style.display=n>0?'':'none';}}
 async function sendTask(){const el=document.getElementById('task-draft');const text=(el&&el.value||'').trim();
   if(!text){if(el)el.focus();return;}
-  const res=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+  const cEl=document.getElementById('task-dest-custom');
+  if(cEl)S.taskDestCustom=cEl.value;
+  const location=S.taskDest==='__custom__'?(S.taskDestCustom||'').trim():(S.taskDest||'');
+  const res=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,location:location||null})});
   const data=await res.json().catch(()=>({}));
   if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās nosūtīt');return;}
   S.taskDraft='';if(el)el.value='';
@@ -1445,11 +1533,24 @@ function renderModal(){const m=$('#modal');
   } else if(S.selSpot){const s=S.selSpot;
     m.innerHTML=`<div data-close="spot" style="position:fixed;inset:0;background:oklch(0.2 0.02 260 / .35);z-index:60;animation:r1fade .18s ease;">
     <div data-stop="1" style="position:absolute;top:0;right:0;bottom:0;width:380px;max-width:92vw;background:var(--surface);border-left:1px solid var(--border);box-shadow:-8px 0 30px oklch(0.2 0.02 260 / .18);padding:26px;overflow:auto;animation:r1pop .22s ease;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <span class="mono" style="font-weight:600;font-size:24px;">${esc(s.code)}</span>
-        <button data-close="spot" style="width:34px;height:34px;border-radius:9px;border:1px solid var(--border-2);background:var(--surface);cursor:pointer;font-size:18px;color:var(--ink-2);">✕</button></div>
-      <span style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;padding:4px 10px;border-radius:7px;${s.blocked?'background:var(--danger-soft);color:var(--danger);':s.occ?(s.reserved?'background:var(--warn-soft);color:var(--warn);':'background:var(--surface-2);border:1px solid var(--border-2);color:var(--ink-2);'):'background:var(--ok-soft);color:var(--ok);'}">${s.blocked?'Bloķēts':s.occ?(s.reserved?'Rezervēts · gaida maiņu':'Aizņemta'):'Brīvs'}</span>
-      ${s.blocked?`<div style="margin-top:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:8px;">
+        <span style="display:flex;align-items:center;gap:8px;min-width:0;"><span class="mono" style="font-weight:600;font-size:24px;">${esc(s.code)}</span>
+        ${(!s.zone&&S.auth&&S.auth.role==='admin')?`<button data-renamespot="${esc(s.code)}" title="Pārdēvēt vietu" style="height:26px;padding:0 9px;border:1px solid var(--border-2);background:var(--surface);border-radius:7px;font-size:11px;cursor:pointer;color:var(--ink-3);">✎ Pārdēvēt</button>`:''}</span>
+        <button data-close="spot" style="width:34px;height:34px;flex:none;border-radius:9px;border:1px solid var(--border-2);background:var(--surface);cursor:pointer;font-size:18px;color:var(--ink-2);">✕</button></div>
+      ${s.zone?`
+      <span style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;padding:4px 10px;border-radius:7px;background:oklch(0.95 0.03 285);color:oklch(0.45 0.15 285);">Zona · ${s.count}/${s.cap} aizņemts</span>
+      <div style="margin-top:20px;display:flex;flex-direction:column;gap:12px;">
+        <div style="height:9px;background:var(--border);border-radius:6px;overflow:hidden;"><div style="height:100%;width:${Math.min(100,Math.round(s.count/s.cap*100))}%;background:oklch(0.6 0.13 285);border-radius:6px;"></div></div>
+        ${(s.recs&&s.recs.length)?`<div><div class="label" style="margin-bottom:6px;">Šeit glabājas</div>
+          ${s.recs.map(r=>`<div data-openrec="${esc(r.id)}" class="custrow" style="display:flex;justify-content:space-between;gap:8px;padding:9px 4px;border-bottom:1px solid var(--border);font-size:13px;cursor:pointer;">
+            <span class="mono" style="font-weight:600;">${esc(r.plate||'—')}</span>
+            <span style="color:var(--ink-3);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc([r.cust,r.brand,r.size].filter(Boolean).join(' · ')||'—')}</span></div>`).join('')}
+        </div>`:'<div style="color:var(--ink-3);font-size:13px;">Zona ir tukša.</div>'}
+        ${s.count<s.cap?`<button data-assign="${esc(s.code)}" style="height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Piešķirt šo zonu (${s.cap-s.count} brīvas)</button>`:'<div style="color:var(--ink-3);font-size:12px;text-align:center;">Zona ir pilna.</div>'}
+      </div>`:''}
+      ${s.zone?'':`
+      <span style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;padding:4px 10px;border-radius:7px;${s.blocked?'background:var(--danger-soft);color:var(--danger);':s.occ?(s.reserved?'background:var(--warn-soft);color:var(--warn);':'background:var(--surface-2);border:1px solid var(--border-2);color:var(--ink-2);'):'background:var(--ok-soft);color:var(--ok);'}">${s.blocked?'Bloķēts':s.occ?(s.reserved?'Rezervēts · gaida maiņu':'Aizņemta'):'Brīvs'}</span>`}
+      ${s.zone?'':s.blocked?`<div style="margin-top:22px;">
         <p style="color:var(--ink-2);font-size:14px;line-height:1.6;margin:0 0 18px;">Šī vieta ir manuāli bloķēta un nav pieejama pieņemšanai.</p>
         <button data-unblock="${esc(s.id)}" style="width:100%;height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Atbloķēt vietu</button>
       </div>`:s.occ?`<div style="margin-top:22px;display:flex;flex-direction:column;gap:14px;">
@@ -1587,6 +1688,18 @@ function bind(root){
   if(rc)rc.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addRecComment();}});
   root.querySelectorAll('[data-delcont]').forEach(el=>el.addEventListener('click',(e)=>{e.stopPropagation();deleteContainerDialog(el.dataset.delcont,el.dataset.prefix);}));
   root.querySelectorAll('[data-editcont]').forEach(el=>el.addEventListener('click',(e)=>{e.stopPropagation();editContainerDialog(el.dataset.editcont,el.dataset.prefix);}));
+  root.querySelectorAll('[data-renamespot]').forEach(el=>el.addEventListener('click',async()=>{
+    const from=el.dataset.renamespot;
+    const {value:name}=await R1.fire({title:'Pārdēvēt vietu',input:'text',inputValue:from,
+      inputAttributes:{style:'text-transform:uppercase;font-family:IBM Plex Mono,monospace;'},
+      html:`<div style="font-size:13px;color:var(--ink-2);text-align:left;">Jaunais nosaukums vietai <b class="mono">${esc(from)}</b>. Formāts: burti + numurs (piem. <b class="mono">B7</b>).<br><span style="color:var(--ink-3);font-size:12px;">Visi ieraksti šajā vietā pāries uz jauno nosaukumu.</span></div>`,
+      showCancelButton:true,confirmButtonText:'Pārdēvēt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'}});
+    if(!name)return;
+    const res=await fetch('/api/spots/'+encodeURIComponent(from)+'/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    const d=await res.json().catch(()=>({}));
+    if(!res.ok||!d.ok){alertErr(d.error?.message||'Neizdevās pārdēvēt');return;}
+    S.selSpot=null;toast(`${from} → ${d.name}${d.changed?` · ${d.changed} ieraksti pārcelti`:''}`);
+    await loadStats();renderModal();render();}));
   const impf=root.querySelector('#imp-file');
   if(impf)impf.addEventListener('change',async()=>{const file=impf.files&&impf.files[0];impf.value='';if(file)await doImport(file);});
   root.querySelectorAll('[data-pickspot]').forEach(el=>el.addEventListener('click',()=>{
@@ -1616,6 +1729,11 @@ function bind(root){
   const pt=root.querySelector('#price-test');
   if(pt)pt.addEventListener('input',()=>{const m=maskSize(pt.value);if(m!==pt.value){pt.value=m;pt.setSelectionRange(m.length,m.length);}
     S.priceTest=pt.value;updatePriceTest();});
+  root.querySelectorAll('[data-taskdest]').forEach(el=>el.addEventListener('click',()=>{
+    const c=document.getElementById('task-dest-custom');if(c)S.taskDestCustom=c.value;
+    const d=document.getElementById('task-draft');if(d)S.taskDraft=d.value;
+    S.taskDest=el.dataset.taskdest;render();
+    const t=document.getElementById('task-draft');if(t)t.focus();}));
   const td=root.querySelector('#task-draft');
   if(td){td.addEventListener('input',()=>{S.taskDraft=td.value;});
     td.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendTask();}});}

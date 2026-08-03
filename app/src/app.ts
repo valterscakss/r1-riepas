@@ -4,7 +4,7 @@ import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { IntakeInput, StorageRecord, Store, PricingConfig, PricingTier } from './types.js';
-import { DEFAULT_PRICING, matches, cellMap } from './types.js';
+import { DEFAULT_PRICING, matches, cellMap, parseZones } from './types.js';
 import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
 import {
@@ -244,22 +244,71 @@ export function createApp(): express.Express {
     }
     // Add every place from user-defined containers, so empty containers appear too.
     // A place is numbered by its POSITION in the grid, so switching a cell off
-    // never renumbers the places around it. `layouts` keeps the grid order
-    // (code or null per position) so the UI can draw the shape with its holes.
-    const layouts = new Map<string, Array<string | null>>();
+    // never renumbers the places around it — but a place may carry a CUSTOM NAME
+    // (renamed by the admin), stored in the def's names map by position.
+    // `layouts` keeps the grid order (cell descriptor or null per position) so the
+    // UI can draw the shape with its holes and merged zones.
+    type LayoutCell = { code: string; zone?: { name: string; cap: number; span: number; hspan: number } } | { fill: true; code?: undefined } | null;
+    const layouts = new Map<string, LayoutCell[]>();
+    const zoneCaps = new Map<string, number>();
     for (const d of defs) {
       const map = cellMap(d);
-      const layout: Array<string | null> = [];
+      let names: Record<string, string> = {};
+      try { names = d.names ? JSON.parse(d.names) : {}; } catch { /* ignore bad json */ }
+      const zones = parseZones(d.zones);
+      const zoneAt = new Map<number, { name: string; cap: number; first: number; size: number }>();
+      for (const z of zones) {
+        const cells = z.cells.filter((i) => i < map.length && map[i]).sort((a, b) => a - b);
+        if (!cells.length) continue;
+        const zi = { name: z.name, cap: z.cap, first: cells[0], size: cells.length };
+        cells.forEach((i) => zoneAt.set(i, zi));
+        zoneCaps.set(z.name, z.cap);
+        if (!seen.has(z.name)) seen.set(z.name, { code: z.name, c: d.prefix, n: cells[0] + 1 });
+      }
+      const layout: LayoutCell[] = [];
       map.forEach((on, i) => {
         if (!on) { layout.push(null); return; }
-        const code = `${d.prefix}${i + 1}`;
-        layout.push(code);
+        const z = zoneAt.get(i);
+        if (z) {
+          // First zone cell renders the zone; the rest are 'fill' so the client can
+          // stretch the zone button across them instead of leaving holes.
+          layout.push(i === z.first ? { code: z.name, zone: { name: z.name, cap: z.cap, span: z.size, hspan: 1 } } : { fill: true });
+          return;
+        }
+        const code = (names[String(i)] || `${d.prefix}${i + 1}`).toUpperCase();
+        layout.push({ code });
         if (!seen.has(code)) seen.set(code, { code, c: d.prefix, n: i + 1 });
+      });
+      // hspan: how many cells the zone button may stretch horizontally — the run of
+      // its own fill cells immediately to its right in the same row.
+      layout.forEach((c, i) => {
+        if (!c || !('zone' in c) || !c.zone) return;
+        let h = 1;
+        const row = Math.floor(i / d.cols);
+        for (let j = i + 1; j < layout.length && Math.floor(j / d.cols) === row; j++) {
+          const nx = layout[j];
+          if (nx && 'fill' in nx && nx.fill) h++; else break;
+        }
+        c.zone.hspan = h;
       });
       layouts.set(d.prefix, layout);
     }
     const spots = [...seen.values()].sort((a, b) => a.c.localeCompare(b.c) || a.n - b.n);
-    return { spots, occupied, all, defs, layouts };
+    // A zone holds up to `cap` sets: it is "free" until that many records sit there.
+    const zoneLoad = new Map<string, StorageRecord[]>();
+    for (const r of all) {
+      const code = (r.location ?? '').toUpperCase();
+      if (!zoneCaps.has(code)) continue;
+      if (r.status === 'active' || r.status === 'prepared' || r.status === 'blocked') {
+        if (!zoneLoad.has(code)) zoneLoad.set(code, []);
+        zoneLoad.get(code)!.push(r);
+      }
+    }
+    for (const [name, cap] of zoneCaps) {
+      const load = (zoneLoad.get(name) ?? []).length;
+      if (load < cap) occupied.delete(name); // below capacity → still assignable
+    }
+    return { spots, occupied, all, defs, layouts, zoneCaps, zoneLoad };
   }
   // --- Pricing (editable in Iestatījumi; falls back to the built-in tiers) ---
   // A tier matches the tire's WIDTH, inclusive at both ends; the widest tire in a
@@ -344,20 +393,41 @@ export function createApp(): express.Express {
 
   // Stats for dashboard + spots grid (design: containers, capacity, activity).
   app.get('/api/stats', requireAuth, asyncH(async (_req, res) => {
-    const { spots, occupied, all, defs, layouts } = await spotUniverse();
+    const { spots, occupied, all, defs, layouts, zoneCaps, zoneLoad } = await spotUniverse();
     const defByPrefix = new Map(defs.map((d) => [d.prefix, d]));
-    const spotView = (code: string) => {
+    const spotView = (code: string, zone?: { name: string; cap: number; span: number; hspan: number }) => {
+      if (zone) {
+        // A zone is one place holding several sets: report the load against the cap.
+        const recs = zoneLoad.get(zone.name) ?? [];
+        return {
+          code: zone.name, zone: true, cap: zone.cap, count: recs.length, span: zone.span, hspan: zone.hspan,
+          occ: recs.length >= zone.cap, reserved: false, blocked: false, hasRims: false,
+          plates: recs.slice(0, 6).map((r) => r.plate).filter(Boolean),
+          recs: recs.slice(0, 20).map((r) => ({ id: r.id, plate: r.plate, cust: r.customerName, size: r.size1, brand: r.brand, status: r.status })),
+        };
+      }
       const r = occupied.get(code);
       return r
         ? { code, occ: true, reserved: r.status === 'prepared', blocked: r.status === 'blocked', hasRims: !!r.rimNote, id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
         : { code, occ: false };
     };
-    const byC = new Map<string, { letter: string; spots: unknown[]; occ: number }>();
+    // Capacity bookkeeping: a zone contributes `cap` places and its load, not 0/1.
+    const zoneOf = (code: string) => zoneCaps.has(code);
+    const byC = new Map<string, { letter: string; spots: unknown[]; occ: number; cap: number }>();
     for (const s of spots) {
-      if (!byC.has(s.c)) byC.set(s.c, { letter: s.c, spots: [], occ: 0 });
+      if (!byC.has(s.c)) byC.set(s.c, { letter: s.c, spots: [], occ: 0, cap: 0 });
       const g = byC.get(s.c)!;
-      if (occupied.get(s.code)) g.occ++;
-      g.spots.push(spotView(s.code));
+      if (zoneOf(s.code)) {
+        g.cap += zoneCaps.get(s.code)!;
+        g.occ += Math.min((zoneLoad.get(s.code) ?? []).length, zoneCaps.get(s.code)!);
+      } else {
+        g.cap += 1;
+        if (occupied.get(s.code)) g.occ++;
+      }
+      // The flat list must know zones too — the click-through panel reads it.
+      g.spots.push(zoneOf(s.code)
+        ? spotView(s.code, { name: s.code, cap: zoneCaps.get(s.code)!, span: 0, hspan: 1 })
+        : spotView(s.code));
     }
     const containers = [...byC.values()]
       .map((g) => {
@@ -366,21 +436,25 @@ export function createApp(): express.Express {
         // hole — so the UI renders an L-shape as an L-shape. Containers that exist
         // only because records mention them have no drawing, so cells === spots.
         const layout = d ? layouts.get(d.prefix) : null;
-        const cells = layout ? layout.map((code) => (code ? spotView(code) : null)) : g.spots;
+        const cells = layout
+          ? layout.map((c) => (c ? ('fill' in c && c.fill ? { zoneFill: true } : spotView(c.code!, 'zone' in c ? c.zone : undefined)) : null))
+          : g.spots;
         return {
-          ...g, cells, total: g.spots.length, cols: d?.cols ?? 4, rows: d?.rows ?? null,
+          ...g, cells, total: g.cap, cols: d?.cols ?? 4, rows: d?.rows ?? null,
           label: d?.label ?? null, defId: d?.id ?? null, drawn: d?.cells ?? null,
+          zones: d ? parseZones(d.zones) : [], names: d?.names ?? null,
         };
       })
       .sort((a, b) => a.letter.localeCompare(b.letter));
-    const occ = [...occupied.keys()].length;
+    const totalCap = containers.reduce((a, c) => a + c.total, 0);
+    const occ = containers.reduce((a, c) => a + c.occ, 0);
     const reserved = [...occupied.values()].filter((r) => r.status === 'prepared').length;
     const today = new Date().toISOString().slice(0, 10);
-    const firstFree = spots.find((s) => !occupied.has(s.code));
+    const firstFree = spots.find((s) => !occupied.has(s.code) && !zoneOf(s.code));
     const revenue = all.filter((r) => r.status === 'active' && r.feeEur).reduce((a, r) => a + (parseFloat(r.feeEur!) || 0), 0);
     res.json({
-      occ, total: spots.length, free: spots.length - occ, reserved,
-      capPct: spots.length ? Math.round((occ / spots.length) * 100) : 0,
+      occ, total: totalCap, free: totalCap - occ, reserved,
+      capPct: totalCap ? Math.round((occ / totalCap) * 100) : 0,
       todayIntakes: all.filter((r) => r.intakeDate === today).length,
       smsIssued: all.filter((r) => r.smsCode).length,
       revenueActive: Math.round(revenue * 100) / 100,
@@ -722,6 +796,39 @@ export function createApp(): express.Express {
     res.json(rec);
   }));
 
+  // Rename a place. Codes stay automatic (prefix + position) until someone does
+  // this; then the custom name wins. Every record on the old code moves with it,
+  // so occupancy and history follow the physical place, not the label.
+  app.post('/api/spots/:code/rename', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const from = String(req.params.code).toUpperCase().replace(/\s+/g, '');
+    const to = String(req.body?.name ?? '').toUpperCase().replace(/\s+/g, '');
+    if (!/^[A-ZĀ-Ž]{1,4}\d{1,3}$/.test(to)) {
+      return res.status(400).json({ error: { message: 'Nosaukums: 1–4 burti + numurs (piem. B7)' } });
+    }
+    if (from === to) return res.json({ ok: true, changed: 0, name: to });
+    const { spots, layouts, defs } = await spotUniverse();
+    if (!spots.some((s) => s.code === from)) return res.status(404).json({ error: { message: 'Vieta nav atrasta' } });
+    if (spots.some((s) => s.code === to)) return res.status(409).json({ error: { message: `Vieta ${to} jau eksistē` } });
+    // If the place belongs to a drawn container, persist the name by position so
+    // it survives with no record to carry it.
+    for (const d of defs) {
+      const layout = layouts.get(d.prefix) ?? [];
+      const idx = layout.findIndex((c) => c && c.code === from && !('zone' in c && c.zone));
+      if (idx >= 0) {
+        let names: Record<string, string> = {};
+        try { names = d.names ? JSON.parse(d.names) : {}; } catch { /* ignore */ }
+        // Renaming back to the automatic code just clears the alias.
+        if (to === `${d.prefix}${idx + 1}`) delete names[String(idx)];
+        else names[String(idx)] = to;
+        await store.updateContainer(d.id, { names: Object.keys(names).length ? JSON.stringify(names) : null });
+        break;
+      }
+    }
+    const changed = await store.renameLocation(from, to);
+    res.json({ ok: true, changed, name: to });
+  }));
+
   // Manually block/reserve an empty spot (no tires) so it's unavailable.
   app.post('/api/spots/:code/block', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
@@ -787,7 +894,7 @@ export function createApp(): express.Express {
   /** Announce a new job to every subscribed device. Fire-and-forget. */
   const announceTask = (t: { title: string; details: string | null; location: string | null; kind: string }) => {
     const what = t.kind === 'prepare' ? 'Sagatavot riepas' : 'Jauns pasūtījums';
-    const body = [t.location ? `Vieta ${t.location}` : null, t.title, t.details].filter(Boolean).join(' · ');
+    const body = [t.location ? (t.kind === 'prepare' ? `Vieta ${t.location}` : t.location) : null, t.title, t.details].filter(Boolean).join(' · ');
     getStore()
       .then((s) => pushToAll(s, { title: `R1 · ${what}`, body: body.slice(0, 160), url: '/?view=warehouse', tag: 'r1-task' }))
       .catch(() => { /* notifications are best-effort */ });
@@ -1011,7 +1118,13 @@ export function createApp(): express.Express {
     const existing = await store.listContainers();
     if (existing.some((c) => c.prefix === prefix)) return res.status(409).json({ error: { message: `Konteiners "${prefix}" jau eksistē` } });
     try {
-      const created = await store.createContainer({ prefix, label, rows: grid.rows, cols: grid.cols, cells: grid.cells });
+      let created = await store.createContainer({ prefix, label, rows: grid.rows, cols: grid.cols, cells: grid.cells });
+      // Zones drawn during creation are saved in a follow-up write; validation for
+      // them lives in the PATCH path and a brand-new container has no records to guard.
+      if (typeof b.zones === 'string' && b.zones.length) {
+        const zones = parseZones(b.zones);
+        if (zones.length) created = (await store.updateContainer(created.id, { zones: JSON.stringify(zones) })) ?? created;
+      }
       res.status(201).json({ ok: true, container: created });
     } catch {
       res.status(409).json({ error: { message: `Konteiners "${prefix}" jau eksistē` } });
@@ -1029,13 +1142,43 @@ export function createApp(): express.Express {
     const grid = readGrid({ rows: b.rows ?? def.rows, cols: b.cols ?? def.cols, cells: b.cells });
     if ('error' in grid) return res.status(400).json({ error: { message: grid.error } });
 
-    const survives = new Set<string>();
+    // Zones: validate the incoming drawing. Each zone needs a name and a cap;
+    // its cells must be inside the grid and active.
+    let zonesJson: string | null | undefined = undefined;
+    if (b.zones !== undefined) {
+      const zones = parseZones(typeof b.zones === 'string' ? b.zones : JSON.stringify(b.zones ?? []));
+      const activeCells = cellMap({ rows: grid.rows, cols: grid.cols, cells: grid.cells });
+      const usedCell = new Set<number>();
+      const usedName = new Set<string>();
+      for (const z of zones) {
+        if (!/^[A-ZĀ-Ž0-9-]{1,8}$/.test(z.name)) return res.status(400).json({ error: { message: `Zonas nosaukums "${z.name}": 1–8 burti/cipari` } });
+        if (usedName.has(z.name)) return res.status(400).json({ error: { message: `Zonas nosaukums "${z.name}" atkārtojas` } });
+        usedName.add(z.name);
+        for (const i of z.cells) {
+          if (i >= activeCells.length || !activeCells[i]) return res.status(400).json({ error: { message: `Zona "${z.name}" iezīmē neaktīvu rūtiņu` } });
+          if (usedCell.has(i)) return res.status(400).json({ error: { message: `Rūtiņa pieder divām zonām` } });
+          usedCell.add(i);
+        }
+      }
+      zonesJson = zones.length ? JSON.stringify(zones) : null;
+    }
+
+    // What survives the edit: the alias-aware code of every active cell, plus the
+    // names of the zones being saved.
+    let names: Record<string, string> = {};
+    try { names = def.names ? JSON.parse(def.names) : {}; } catch { /* ignore */ }
+    const newZones = zonesJson !== undefined ? parseZones(zonesJson) : parseZones(def.zones);
+    const zoneCells = new Set(newZones.flatMap((z) => z.cells));
+    const survives = new Set<string>(newZones.map((z) => z.name));
     cellMap({ rows: grid.rows, cols: grid.cols, cells: grid.cells })
-      .forEach((on, i) => { if (on) survives.add(`${def.prefix}${i + 1}`); });
-    const { occupied } = await spotUniverse();
-    const lost = [...occupied.keys()]
-      .filter((code) => code.startsWith(def.prefix) && /^\D+\d+$/.test(code))
-      .filter((code) => code.replace(/\d+$/, '') === def.prefix && !survives.has(code));
+      .forEach((on, i) => { if (on && !zoneCells.has(i)) survives.add((names[String(i)] || `${def.prefix}${i + 1}`).toUpperCase()); });
+    // Codes this container was responsible for BEFORE the edit:
+    const { occupied, layouts, zoneLoad } = await spotUniverse();
+    const before = new Set((layouts.get(def.prefix) ?? []).flatMap((c) => (c && c.code ? [c.code] : [])));
+    // A zone below capacity is "assignable" and therefore absent from `occupied`,
+    // but records still live on it — count it as occupied for the removal guard.
+    const holds = (code: string) => occupied.has(code) || (zoneLoad.get(code)?.length ?? 0) > 0;
+    const lost = [...before].filter((code) => holds(code) && !survives.has(code));
     if (lost.length) {
       return res.status(409).json({
         error: { message: `Šīs vietas ir aizņemtas un tās nevar noņemt: ${lost.slice(0, 12).join(', ')}${lost.length > 12 ? ` +${lost.length - 12}` : ''}` },
@@ -1044,6 +1187,7 @@ export function createApp(): express.Express {
     const label = b.label === undefined ? undefined : (typeof b.label === 'string' && b.label.trim() ? b.label.trim() : null);
     const updated = await store.updateContainer(def.id, {
       ...(label === undefined ? {} : { label }),
+      ...(zonesJson === undefined ? {} : { zones: zonesJson }),
       rows: grid.rows, cols: grid.cols, cells: grid.cells,
     });
     res.json({ ok: true, container: updated });

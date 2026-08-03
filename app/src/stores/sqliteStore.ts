@@ -161,6 +161,8 @@ export class SqliteStore implements Store {
     }
     // Drawn container shape — added later, so tolerate it already existing.
     try { this.db.exec('ALTER TABLE containers ADD COLUMN cells TEXT'); } catch { /* exists */ }
+    try { this.db.exec('ALTER TABLE containers ADD COLUMN names TEXT'); } catch { /* exists */ }
+    try { this.db.exec('ALTER TABLE containers ADD COLUMN zones TEXT'); } catch { /* exists */ }
     const count = (this.db.prepare('SELECT COUNT(*) AS n FROM storage').get() as { n: number }).n;
     if (count === 0 && seedFile && existsSync(seedFile)) this.seed(seedFile);
     // Runs after seeding too — a JSON seed predates the importer's free-spot fix.
@@ -286,6 +288,11 @@ export class SqliteStore implements Store {
     return this.get(id);
   }
 
+  async renameLocation(from_: string, to: string): Promise<number> {
+    return this.db.prepare("UPDATE storage SET location = ? WHERE TRIM(COALESCE(location,'')) = TRIM(?) COLLATE NOCASE")
+      .run(to, from_).changes;
+  }
+
   async setCustomerType(customerName: string, isCompany: boolean): Promise<number> {
     return this.db.prepare("UPDATE storage SET isCompany = ? WHERE TRIM(COALESCE(customerName,'')) = TRIM(?) COLLATE NOCASE")
       .run(isCompany ? 1 : 0, customerName).changes;
@@ -357,11 +364,11 @@ export class SqliteStore implements Store {
   private containerRow(r: ContainerRow): Container {
     return {
       id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols,
-      cells: r.cells ?? null, createdAt: r.created_at ?? null,
+      cells: r.cells ?? null, names: r.names ?? null, zones: r.zones ?? null, createdAt: r.created_at ?? null,
     };
   }
   async listContainers(): Promise<Container[]> {
-    const rows = this.db.prepare('SELECT id, prefix, label, rows, cols, cells, created_at FROM containers ORDER BY prefix ASC')
+    const rows = this.db.prepare('SELECT id, prefix, label, rows, cols, cells, names, zones, created_at FROM containers ORDER BY prefix ASC')
       .all() as ContainerRow[];
     return rows.map((r) => this.containerRow(r));
   }
@@ -369,21 +376,21 @@ export class SqliteStore implements Store {
   async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null }): Promise<Container> {
     const info = this.db.prepare('INSERT INTO containers (prefix, label, rows, cols, cells) VALUES (?,?,?,?,?)')
       .run(c.prefix, c.label, c.rows, c.cols, c.cells);
-    const r = this.db.prepare('SELECT id, prefix, label, rows, cols, cells, created_at FROM containers WHERE id = ?')
+    const r = this.db.prepare('SELECT id, prefix, label, rows, cols, cells, names, zones, created_at FROM containers WHERE id = ?')
       .get(info.lastInsertRowid) as ContainerRow;
     return this.containerRow(r);
   }
 
-  async updateContainer(id: string, patch: { label?: string | null; rows?: number; cols?: number; cells?: string | null }): Promise<Container | null> {
+  async updateContainer(id: string, patch: { label?: string | null; rows?: number; cols?: number; cells?: string | null; names?: string | null; zones?: string | null }): Promise<Container | null> {
     const sets: string[] = [];
     const vals: unknown[] = [];
-    for (const k of ['label', 'rows', 'cols', 'cells'] as const) {
+    for (const k of ['label', 'rows', 'cols', 'cells', 'names', 'zones'] as const) {
       if (Object.prototype.hasOwnProperty.call(patch, k)) { vals.push(patch[k]); sets.push(`${k} = ?`); }
     }
     if (!sets.length) return null;
     vals.push(Number(id));
     if (this.db.prepare(`UPDATE containers SET ${sets.join(', ')} WHERE id = ?`).run(...vals as never[]).changes === 0) return null;
-    const r = this.db.prepare('SELECT id, prefix, label, rows, cols, cells, created_at FROM containers WHERE id = ?')
+    const r = this.db.prepare('SELECT id, prefix, label, rows, cols, cells, names, zones, created_at FROM containers WHERE id = ?')
       .get(Number(id)) as ContainerRow;
     return this.containerRow(r);
   }
@@ -527,7 +534,7 @@ interface TaskRow {
 
 interface ContainerRow {
   id: number; prefix: string; label: string | null; rows: number; cols: number;
-  cells: string | null; created_at: string | null;
+  cells: string | null; names: string | null; zones: string | null; created_at: string | null;
 }
 
 interface PhotoRow {

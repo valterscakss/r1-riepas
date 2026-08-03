@@ -138,7 +138,37 @@ export interface Container {
   rows: number;     // physical rows
   cols: number;     // places per row; grid size = rows × cols
   cells: string | null; // '1'/'0' per position, or null for "all present"
+  /**
+   * Custom names for individual places, as a JSON object of position index →
+   * name (e.g. {"21":"B7"}). A place without an entry keeps its automatic
+   * code (prefix + position). Renames live here so an empty renamed place
+   * survives with no record to carry it.
+   */
+  names: string | null;
+  /**
+   * Merged areas, as JSON: [{ name, cells: [indices], cap }]. The cells stop
+   * being individual places; the zone is ONE location that can hold up to `cap`
+   * sets at once (e.g. a floor corner that fits six).
+   */
+  zones: string | null;
   createdAt: string | null;
+}
+
+/** Parsed shape of one merged zone. */
+export interface Zone { name: string; cells: number[]; cap: number }
+export function parseZones(z: string | null | undefined): Zone[] {
+  if (!z) return [];
+  try {
+    const raw = JSON.parse(z);
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((x) => ({
+        name: String(x?.name ?? '').toUpperCase().trim(),
+        cells: Array.isArray(x?.cells) ? x.cells.map((n: unknown) => Math.trunc(Number(n))).filter((n: number) => Number.isFinite(n) && n >= 0) : [],
+        cap: Math.max(1, Math.min(99, Math.trunc(Number(x?.cap)) || 1)),
+      }))
+      .filter((x) => x.name && x.cells.length);
+  } catch { return []; }
 }
 
 /** Expand a container's cell string into one boolean per grid position. */
@@ -204,8 +234,10 @@ export interface Store {
   listContainers(): Promise<Container[]>;
   /** Create a container. Returns the created row. */
   createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null }): Promise<Container>;
-  /** Update a container's label, grid size and drawn shape. */
-  updateContainer(id: string, patch: { label?: string | null; rows?: number; cols?: number; cells?: string | null }): Promise<Container | null>;
+  /** Update a container's label, grid size, drawn shape or place names. */
+  updateContainer(id: string, patch: { label?: string | null; rows?: number; cols?: number; cells?: string | null; names?: string | null; zones?: string | null }): Promise<Container | null>;
+  /** Move every record from one spot code to another (a place was renamed). */
+  renameLocation(from: string, to: string): Promise<number>;
   /** Delete a container definition by id. Returns true if removed. */
   deleteContainer(id: string): Promise<boolean>;
 

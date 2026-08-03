@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS containers (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE containers ADD COLUMN IF NOT EXISTS cells TEXT;
+ALTER TABLE containers ADD COLUMN IF NOT EXISTS names TEXT;
+ALTER TABLE containers ADD COLUMN IF NOT EXISTS zones TEXT;
 
 CREATE TABLE IF NOT EXISTS record_events (
   id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -264,6 +266,14 @@ export class PostgresStore implements Store {
     return res.rows[0] ? toRecord(res.rows[0]) : null;
   }
 
+  async renameLocation(from_: string, to: string): Promise<number> {
+    await this.init();
+    const res = await this.pool.query(
+      'UPDATE storage SET location = $1 WHERE UPPER(BTRIM(COALESCE(location, \'\'))) = UPPER(BTRIM($2))',
+      [to, from_]);
+    return res.rowCount ?? 0;
+  }
+
   async setCustomerType(customerName: string, isCompany: boolean): Promise<number> {
     await this.init();
     const res = await this.pool.query(
@@ -364,35 +374,36 @@ export class PostgresStore implements Store {
   private containerRow(r: ContainerRow): Container {
     return {
       id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols,
-      cells: r.cells ?? null, createdAt: r.created_at ? String(r.created_at) : null,
+      cells: r.cells ?? null, names: r.names ?? null, zones: r.zones ?? null,
+      createdAt: r.created_at ? String(r.created_at) : null,
     };
   }
   async listContainers(): Promise<Container[]> {
     await this.init();
     const res = await this.pool.query<ContainerRow>(
-      'SELECT id, prefix, label, rows, cols, cells, created_at FROM containers ORDER BY prefix ASC');
+      'SELECT id, prefix, label, rows, cols, cells, names, zones, created_at FROM containers ORDER BY prefix ASC');
     return res.rows.map((r) => this.containerRow(r));
   }
 
   async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null }): Promise<Container> {
     await this.init();
     const res = await this.pool.query<ContainerRow>(
-      'INSERT INTO containers (prefix, label, rows, cols, cells) VALUES ($1,$2,$3,$4,$5) RETURNING id, prefix, label, rows, cols, cells, created_at',
+      'INSERT INTO containers (prefix, label, rows, cols, cells) VALUES ($1,$2,$3,$4,$5) RETURNING id, prefix, label, rows, cols, cells, names, zones, created_at',
       [c.prefix, c.label, c.rows, c.cols, c.cells]);
     return this.containerRow(res.rows[0]);
   }
 
-  async updateContainer(id: string, patch: { label?: string | null; rows?: number; cols?: number; cells?: string | null }): Promise<Container | null> {
+  async updateContainer(id: string, patch: { label?: string | null; rows?: number; cols?: number; cells?: string | null; names?: string | null; zones?: string | null }): Promise<Container | null> {
     await this.init();
     const sets: string[] = [];
     const vals: unknown[] = [];
-    for (const k of ['label', 'rows', 'cols', 'cells'] as const) {
+    for (const k of ['label', 'rows', 'cols', 'cells', 'names', 'zones'] as const) {
       if (Object.prototype.hasOwnProperty.call(patch, k)) { vals.push(patch[k]); sets.push(`${k} = $${vals.length}`); }
     }
     if (!sets.length) return null;
     vals.push(Number(id));
     const res = await this.pool.query<ContainerRow>(
-      `UPDATE containers SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING id, prefix, label, rows, cols, cells, created_at`, vals);
+      `UPDATE containers SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING id, prefix, label, rows, cols, cells, names, zones, created_at`, vals);
     return res.rows[0] ? this.containerRow(res.rows[0]) : null;
   }
 
@@ -575,7 +586,7 @@ interface TaskRow {
 
 interface ContainerRow {
   id: number; prefix: string; label: string | null; rows: number; cols: number;
-  cells: string | null; created_at: string | null;
+  cells: string | null; names: string | null; zones: string | null; created_at: string | null;
 }
 
 interface PhotoRow {
