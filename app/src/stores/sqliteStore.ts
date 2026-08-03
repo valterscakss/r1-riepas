@@ -286,6 +286,11 @@ export class SqliteStore implements Store {
     return this.get(id);
   }
 
+  async setCustomerType(customerName: string, isCompany: boolean): Promise<number> {
+    return this.db.prepare("UPDATE storage SET isCompany = ? WHERE TRIM(COALESCE(customerName,'')) = TRIM(?) COLLATE NOCASE")
+      .run(isCompany ? 1 : 0, customerName).changes;
+  }
+
   async replaceAll(records: IntakeInput[]): Promise<{ imported: number }> {
     const insert = this.db.prepare(`INSERT INTO storage
       (season, location, plate, makeModel, customerName, isCompany, phone, size1, brand, quantity, size2, rimNote, notes, intakeDate, releaseDate, status)

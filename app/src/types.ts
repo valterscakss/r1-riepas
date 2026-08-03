@@ -173,6 +173,13 @@ export interface Store {
   /** Patch editable fields of a record (Tabula manual edit). Only allowlisted keys apply. */
   updateRecord(id: string, patch: Partial<StorageRecord>): Promise<StorageRecord | null>;
   /**
+   * Flip every record of one customer between company and private in a single
+   * statement. The importer guesses this from the sheet and gets it wrong for
+   * names like "Sandijs"; fixing it one record at a time is not workable when a
+   * customer has hundreds. Returns how many rows changed.
+   */
+  setCustomerType(customerName: string, isCompany: boolean): Promise<number>;
+  /**
    * Replace ALL storage rows with the given records, transactionally.
    * Used by the Excel import pipeline (Excel = source of truth).
    */

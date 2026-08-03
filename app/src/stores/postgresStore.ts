@@ -264,6 +264,14 @@ export class PostgresStore implements Store {
     return res.rows[0] ? toRecord(res.rows[0]) : null;
   }
 
+  async setCustomerType(customerName: string, isCompany: boolean): Promise<number> {
+    await this.init();
+    const res = await this.pool.query(
+      `UPDATE storage SET is_company = $1 WHERE UPPER(BTRIM(COALESCE(customer_name, ''))) = UPPER(BTRIM($2))`,
+      [isCompany, customerName]);
+    return res.rowCount ?? 0;
+  }
+
   async replaceAll(records: IntakeInput[]): Promise<{ imported: number }> {
     await this.init();
     const client = await this.pool.connect();

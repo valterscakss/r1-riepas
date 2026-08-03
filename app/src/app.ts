@@ -411,7 +411,7 @@ export function createApp(): express.Express {
   // Analytics: aggregate car makes/models, tire sizes, brands, seasons, quantity
   // types (excludes 'blocked' placeholder spots). Optional ?season= filters to one
   // source sheet. The 2nd size is pulled from size2 or a size in the notes column.
-  app.get('/api/analytics', requireAuth, asyncH(async (req, res) => {
+  const analyticsData = async (req: express.Request) => {
     const store = await getStore();
     // Placeholder rows (manually blocked spots, "BRĪVS" free markers) hold no tires
     // and would only skew the counts.
@@ -477,7 +477,7 @@ export function createApp(): express.Express {
       tally(seasons, r.season);
       if (r.quantity) tally(quantities, r.quantity.trim());
     }
-    res.json({
+    return {
       total: all.length,
       active: all.filter((r) => r.status === 'active').length,
       prepared: all.filter((r) => r.status === 'prepared').length,
@@ -487,7 +487,11 @@ export function createApp(): express.Express {
       filters: { status: fStatus, customer: fCustomer, rims: fRims },
       makes: top(makes), models: top(models), sizes: top(sizes),
       brands: top(brands), seasons: top(seasons, 30), quantities: top(quantities),
-    });
+    };
+  };
+
+  app.get('/api/analytics', requireAuth, asyncH(async (req, res) => {
+    res.json(await analyticsData(req));
   }));
 
   // Recent activity feed (intakes + releases by date).
@@ -526,7 +530,10 @@ export function createApp(): express.Express {
   app.get('/api/customers', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
     const q = typeof req.query.q === 'string' ? req.query.q.trim().toUpperCase() : '';
-    const all = await store.list(q ? { q } : undefined);
+    const type = typeof req.query.type === 'string' ? req.query.type : '';
+    let all = await store.list(q ? { q } : undefined);
+    if (type === 'company') all = all.filter((r) => r.isCompany);
+    else if (type === 'private') all = all.filter((r) => !r.isCompany);
     // Grouping: a company = one card for ALL its vehicles; an individual with a
     // real phone = one card across plates; otherwise fall back to name+plate.
     // A phone only groups if it's a genuine number — NOT the anonymized placeholder
@@ -567,6 +574,18 @@ export function createApp(): express.Express {
       .sort((a, b) => b.latest.localeCompare(a.latest))
       .slice(0, 30);
     res.json({ customers: list });
+  }));
+
+  // Reclassify a whole customer at once. The importer guesses company-vs-private
+  // from the sheet and gets it wrong for names like "Sandijs"; a customer with
+  // hundreds of visits can't be corrected record by record.
+  app.post('/api/customers/type', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (!name) return res.status(400).json({ error: { message: 'Trūkst klienta vārda' } });
+    const isCompany = !!req.body?.isCompany;
+    const changed = await store.setCustomerType(name, isCompany);
+    res.json({ ok: true, changed, isCompany });
   }));
 
   // Full storage history for a single vehicle (all seasons), for the spot panel.
@@ -1098,10 +1117,26 @@ export function createApp(): express.Express {
       return asSheet(out, 'Tabula', res, `r1-tabula-${stamp()}.xlsx`);
     }
 
+    if (what === 'analytics') {
+      // The dashboard's aggregates, one sheet-friendly table: every chart's rows
+      // stacked with a column saying which chart they came from.
+      const a = await analyticsData(req);
+      const out: Array<Record<string, unknown>> = [];
+      const push = (group: string, items: Array<{ label: string; count: number }>) =>
+        items.forEach((x) => out.push({ Grupa: group, Vērtība: x.label, Skaits: x.count }));
+      push('Auto markas', a.makes); push('Modeļi', a.models); push('Izmēri', a.sizes);
+      push('Ražotāji', a.brands); push('Daudzuma veidi', a.quantities); push('Sezonas', a.seasons);
+      if (!out.length) return res.status(404).json({ error: { message: 'Nav ko eksportēt' } });
+      return asSheet(out, 'Analītika', res, `r1-analitika-${stamp()}.xlsx`);
+    }
+
     if (what === 'customers') {
       // One row per storage entry, grouped under its client — so the sheet can be
       // pivoted or filtered per customer in Excel.
-      const all = await store.list(q ? { q } : undefined);
+      const type = typeof req.query.type === 'string' ? req.query.type : '';
+      let all = await store.list(q ? { q } : undefined);
+      if (type === 'company') all = all.filter((r) => r.isCompany);
+      else if (type === 'private') all = all.filter((r) => !r.isCompany);
       const out = all
         .filter((r) => r.plate || r.customerName)
         .map((r) => ({

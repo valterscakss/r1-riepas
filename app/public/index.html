@@ -194,7 +194,7 @@ window.fetch=function(input,init){
   });
 };
 
-const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:null,activity:[],customers:[],selCustomer:0,custQ:'',
+const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:null,activity:[],customers:[],selCustomer:0,custQ:'',custType:'',
   plate:'',looked:false,isNew:false,isCompany:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',t2size:'',t2brand:'',rim:'none',thread:'',history:0,
   smsOpen:false,smsRec:null,selSpot:null,presetSpot:null,spotHist:[],spotHistLoading:false,spotPickOpen:false,
   relQ:'',relResults:[],relLoading:false,relSearched:false,
@@ -235,7 +235,10 @@ function price(){const w1=parseInt((S.t1size||'').slice(0,3))||0;const w2=S.t1qt
 
 async function loadStats(){try{S.stats=await(await fetch('/api/stats')).json();}catch{S.stats=null;}paintSidebar();}
 async function loadActivity(){try{S.activity=(await(await fetch('/api/activity')).json()).events||[];}catch{S.activity=[];}}
-async function loadCustomers(){try{S.customers=(await(await fetch('/api/customers'+(S.custQ?'?q='+encodeURIComponent(S.custQ):''))).json()).customers||[];}catch{S.customers=[];}}
+async function loadCustomers(){const p=new URLSearchParams();
+  if(S.custQ)p.set('q',S.custQ);if(S.custType)p.set('type',S.custType);
+  const qs=p.toString()?('?'+p.toString()):'';
+  try{S.customers=(await(await fetch('/api/customers'+qs)).json()).customers||[];}catch{S.customers=[];}}
 async function loadPricing(){try{const d=await(await fetch('/api/pricing')).json();if(d&&d.pricing)S.pricing=d.pricing;}catch{}}
 async function loadTasks(){try{const d=await(await fetch('/api/tasks?status='+(S.taskTab==='done'?'done':'open'))).json();
     S.tasks=d.tasks||[];S.openTasks=d.open||0;}catch{S.tasks=[];}
@@ -613,7 +616,10 @@ function customersHTML(){
   <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
     <div><h1 style="margin:0;font-size:24px;font-weight:600;">Klienti</h1>
     <div style="color:var(--ink-3);font-size:13px;margin-top:4px;"><span id="cust-count">${S.customers.length}</span> rādīti</div></div>
-    ${exportBtn('customers',`q=${encodeURIComponent(S.custQ||'')}`,'Excel')}
+    <div style="display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px;">
+      ${[['','Visi'],['company','Uzņēmumi'],['private','Privātie']].map(([k,l])=>`<button class="chip${S.custType===k?' on':''}" data-custtype="${k}">${l}</button>`).join('')}
+    </div>
+    ${exportBtn('customers',`q=${encodeURIComponent(S.custQ||'')}&type=${encodeURIComponent(S.custType||'')}`,'Excel')}
     <input id="cust-q" value="${esc(S.custQ)}" placeholder="Meklēt pēc numura, vārda, telefona…" style="height:40px;width:300px;max-width:100%;padding:0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);">
   </div>
   <div id="cust-content">${custContentHTML()}</div></div>`;}
@@ -642,7 +648,7 @@ function custContentHTML(){const list=S.customers;const sel=list[S.selCustomer]|
           <div style="display:flex;gap:14px;align-items:center;">
             <span style="width:52px;height:52px;border-radius:13px;background:var(--accent-soft);color:var(--accent-2);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:18px;">${esc(initialsOf(sel.name))}</span>
             <div><h2 style="margin:0;font-size:19px;font-weight:600;">${esc(sel.name)}</h2>
-            <div style="display:flex;gap:8px;align-items:center;margin-top:5px;"><span style="font-size:11px;font-weight:600;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:2px 8px;color:var(--ink-2);">${sel.isCompany?'Uzņēmums':'Privātpersona'}</span><span style="font-size:12px;color:var(--ink-3);">Klients kopš ${esc(sel.since)}</span></div></div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:5px;flex-wrap:wrap;"><span style="font-size:11px;font-weight:600;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:2px 8px;color:var(--ink-2);">${sel.isCompany?'Uzņēmums':'Privātpersona'}</span><button data-custflip="${esc(sel.name)}" data-to="${sel.isCompany?'0':'1'}" title="Mainīt klienta veidu visiem šī klienta ierakstiem" style="font-size:11px;border:1px solid var(--border-2);background:var(--surface);border-radius:6px;padding:2px 8px;cursor:pointer;color:var(--ink-3);">→ ${sel.isCompany?'Privātpersona':'Uzņēmums'}</button><span style="font-size:12px;color:var(--ink-3);">Klients kopš ${esc(sel.since)}</span></div></div>
           </div>
           <div style="text-align:right;font-size:13px;"><div class="mono" style="font-weight:600;">${esc(sel.phone||'—')}</div></div>
         </div>
@@ -714,6 +720,7 @@ function analyticsHTML(){
       <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;">
         <div><h1 style="margin:0;font-size:24px;font-weight:600;">Analītika</h1>
         <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${S.anaSeason?'Avots: <b>'+esc(S.anaSeason)+'</b>':'Auto markas, izmēri, ražotāji un sezonu sadalījums'}</div></div>
+        ${a?exportBtn('analytics',`season=${encodeURIComponent(S.anaSeason)}&status=${encodeURIComponent(S.anaStatus)}&customer=${encodeURIComponent(S.anaCustomer)}&rims=${encodeURIComponent(S.anaRims)}`,'Excel'):''}
       </div>
       ${a?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center;">
         ${seasonSel}${statusSel}${custSel}${rimsSel}
@@ -1699,6 +1706,19 @@ function bind(root){
     await Promise.all([loadStats(),loadCustomers()]);toast('Riepas izsniegtas');
     await offerReintake(el.dataset.plate,el.dataset.loc);}));
   root.querySelectorAll('[data-cust]').forEach(el=>el.addEventListener('click',()=>{S.selCustomer=Number(el.dataset.cust);updateCustContent();}));
+  root.querySelectorAll('[data-custtype]').forEach(el=>el.addEventListener('click',async()=>{
+    S.custType=el.dataset.custtype;S.selCustomer=0;render();await loadCustomers();if(S.screen==='customers')render();}));
+  root.querySelectorAll('[data-custflip]').forEach(el=>el.addEventListener('click',async()=>{
+    const name=el.dataset.custflip,toCo=el.dataset.to==='1';
+    const r=await ask({icon:'question',title:toCo?'Pārvērst par uzņēmumu?':'Pārvērst par privātpersonu?',
+      html:`<b>${esc(name)}</b> — mainīs klienta veidu <b>visiem</b> šī klienta ierakstiem (arī vēsturē).`,
+      confirmButtonText:'Mainīt'});
+    if(!r.isConfirmed)return;
+    const res=await fetch('/api/customers/type',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,isCompany:toCo})});
+    const d=await res.json().catch(()=>({}));
+    if(!res.ok||!d.ok){alertErr(d.error?.message||'Neizdevās mainīt');return;}
+    toast(`Mainīti ${d.changed} ieraksti`);
+    await loadCustomers();updateCustContent();}));
   const pl=root.querySelector('#in-plate');
   if(pl){
     pl.addEventListener('keydown',e=>{
