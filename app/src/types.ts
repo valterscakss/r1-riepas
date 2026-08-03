@@ -119,14 +119,35 @@ export interface PushSub {
   username: string | null;
 }
 
-/** A user-defined storage container (a shelf/rack/box of numbered places). */
+/**
+ * A user-defined storage container (a shelf/rack/box of numbered places).
+ *
+ * `cells` draws the actual shape: one '1' or '0' per grid position in reading
+ * order (rows × cols), so an L-shaped rack is a full grid with its missing corner
+ * switched off. Null/empty means every position exists — the original behaviour.
+ *
+ * A place is numbered by its POSITION in the grid (index + 1), never by counting
+ * the active ones. Switching a cell off therefore leaves every other place's code
+ * untouched; numbering with gaps is the price of never silently renaming a spot
+ * that already holds someone's tires.
+ */
 export interface Container {
   id: string;
   prefix: string;   // spot code prefix, e.g. "D" → D1, D2, …
   label: string | null; // optional display name
   rows: number;     // physical rows
-  cols: number;     // places per row; capacity = rows × cols
+  cols: number;     // places per row; grid size = rows × cols
+  cells: string | null; // '1'/'0' per position, or null for "all present"
   createdAt: string | null;
+}
+
+/** Expand a container's cell string into one boolean per grid position. */
+export function cellMap(c: { rows: number; cols: number; cells?: string | null }): boolean[] {
+  const total = Math.max(0, (c.rows || 0) * (c.cols || 0));
+  const raw = c.cells ?? '';
+  const out: boolean[] = [];
+  for (let i = 0; i < total; i++) out.push(raw.length > i ? raw[i] === '1' : true);
+  return out;
 }
 
 export interface ImportSummary {
@@ -175,7 +196,9 @@ export interface Store {
   /** List all defined containers, ordered by prefix. */
   listContainers(): Promise<Container[]>;
   /** Create a container. Returns the created row. */
-  createContainer(c: { prefix: string; label: string | null; rows: number; cols: number }): Promise<Container>;
+  createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null }): Promise<Container>;
+  /** Update a container's label, grid size and drawn shape. */
+  updateContainer(id: string, patch: { label?: string | null; rows?: number; cols?: number; cells?: string | null }): Promise<Container | null>;
   /** Delete a container definition by id. Returns true if removed. */
   deleteContainer(id: string): Promise<boolean>;
 

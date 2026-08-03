@@ -4,7 +4,7 @@ import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { IntakeInput, StorageRecord, Store, PricingConfig, PricingTier } from './types.js';
-import { DEFAULT_PRICING, matches } from './types.js';
+import { DEFAULT_PRICING, matches, cellMap } from './types.js';
 import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
 import {
@@ -243,15 +243,23 @@ export function createApp(): express.Express {
       occupied.set(code, prev ? current(prev, r) : r);
     }
     // Add every place from user-defined containers, so empty containers appear too.
+    // A place is numbered by its POSITION in the grid, so switching a cell off
+    // never renumbers the places around it. `layouts` keeps the grid order
+    // (code or null per position) so the UI can draw the shape with its holes.
+    const layouts = new Map<string, Array<string | null>>();
     for (const d of defs) {
-      const cap = Math.max(0, (d.rows || 1) * (d.cols || 1));
-      for (let n = 1; n <= cap; n++) {
-        const code = `${d.prefix}${n}`;
-        if (!seen.has(code)) seen.set(code, { code, c: d.prefix, n });
-      }
+      const map = cellMap(d);
+      const layout: Array<string | null> = [];
+      map.forEach((on, i) => {
+        if (!on) { layout.push(null); return; }
+        const code = `${d.prefix}${i + 1}`;
+        layout.push(code);
+        if (!seen.has(code)) seen.set(code, { code, c: d.prefix, n: i + 1 });
+      });
+      layouts.set(d.prefix, layout);
     }
     const spots = [...seen.values()].sort((a, b) => a.c.localeCompare(b.c) || a.n - b.n);
-    return { spots, occupied, all, defs };
+    return { spots, occupied, all, defs, layouts };
   }
   // --- Pricing (editable in Iestatījumi; falls back to the built-in tiers) ---
   // A tier matches the tire's WIDTH, inclusive at both ends; the widest tire in a
@@ -336,22 +344,33 @@ export function createApp(): express.Express {
 
   // Stats for dashboard + spots grid (design: containers, capacity, activity).
   app.get('/api/stats', requireAuth, asyncH(async (_req, res) => {
-    const { spots, occupied, all, defs } = await spotUniverse();
+    const { spots, occupied, all, defs, layouts } = await spotUniverse();
     const defByPrefix = new Map(defs.map((d) => [d.prefix, d]));
+    const spotView = (code: string) => {
+      const r = occupied.get(code);
+      return r
+        ? { code, occ: true, reserved: r.status === 'prepared', blocked: r.status === 'blocked', hasRims: !!r.rimNote, id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
+        : { code, occ: false };
+    };
     const byC = new Map<string, { letter: string; spots: unknown[]; occ: number }>();
     for (const s of spots) {
       if (!byC.has(s.c)) byC.set(s.c, { letter: s.c, spots: [], occ: 0 });
       const g = byC.get(s.c)!;
-      const r = occupied.get(s.code);
-      if (r) g.occ++;
-      g.spots.push(r
-        ? { code: s.code, occ: true, reserved: r.status === 'prepared', blocked: r.status === 'blocked', hasRims: !!r.rimNote, id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
-        : { code: s.code, occ: false });
+      if (occupied.get(s.code)) g.occ++;
+      g.spots.push(spotView(s.code));
     }
     const containers = [...byC.values()]
       .map((g) => {
         const d = defByPrefix.get(g.letter);
-        return { ...g, total: g.spots.length, cols: d?.cols ?? 4, label: d?.label ?? null, defId: d?.id ?? null };
+        // `cells` is the drawn grid in reading order — null where the rack has a
+        // hole — so the UI renders an L-shape as an L-shape. Containers that exist
+        // only because records mention them have no drawing, so cells === spots.
+        const layout = d ? layouts.get(d.prefix) : null;
+        const cells = layout ? layout.map((code) => (code ? spotView(code) : null)) : g.spots;
+        return {
+          ...g, cells, total: g.spots.length, cols: d?.cols ?? 4, rows: d?.rows ?? null,
+          label: d?.label ?? null, defId: d?.id ?? null, drawn: d?.cells ?? null,
+        };
       })
       .sort((a, b) => a.letter.localeCompare(b.letter));
     const occ = [...occupied.keys()].length;
@@ -942,25 +961,73 @@ export function createApp(): express.Express {
     const store = await getStore();
     res.json({ containers: await store.listContainers() });
   }));
-  app.post('/api/containers', requireAdmin, asyncH(async (req, res) => {
-    const store = await getStore();
-    const b = (req.body ?? {}) as { prefix?: unknown; label?: unknown; rows?: unknown; cols?: unknown };
-    const prefix = String(b.prefix ?? '').toUpperCase().replace(/\s+/g, '');
-    if (!/^[A-ZĀ-Ž]{1,4}$/.test(prefix)) return res.status(400).json({ error: { message: 'Prefikss: 1–4 burti (piem. D)' } });
+  // Validate a grid + drawn shape. `cells` arrives as a '1'/'0' string, one char
+  // per grid position; anything shorter is padded with "present".
+  const readGrid = (b: Record<string, unknown>) => {
     const rows = Math.trunc(Number(b.rows));
     const cols = Math.trunc(Number(b.cols));
-    if (!Number.isFinite(rows) || rows < 1 || rows > 99 || !Number.isFinite(cols) || cols < 1 || cols > 99)
-      return res.status(400).json({ error: { message: 'Rindas un kolonnas: 1–99' } });
-    if (rows * cols > 600) return res.status(400).json({ error: { message: 'Pārāk daudz vietu (maks. 600)' } });
+    if (!Number.isFinite(rows) || rows < 1 || rows > 99 || !Number.isFinite(cols) || cols < 1 || cols > 99) {
+      return { error: 'Rindas un kolonnas: 1–99' } as const;
+    }
+    if (rows * cols > 600) return { error: 'Pārāk liels konteiners (maks. 600 rūtiņas)' } as const;
+    const total = rows * cols;
+    let cells: string | null = null;
+    if (typeof b.cells === 'string' && b.cells.length) {
+      const raw = b.cells.replace(/[^01]/g, '');
+      cells = raw.length >= total ? raw.slice(0, total) : raw.padEnd(total, '1');
+      if (!cells.includes('1')) return { error: 'Jāatzīmē vismaz viena vieta' } as const;
+      if (!cells.includes('0')) cells = null; // a full grid needs no drawing stored
+    }
+    return { rows, cols, cells } as const;
+  };
+
+  app.post('/api/containers', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const prefix = String(b.prefix ?? '').toUpperCase().replace(/\s+/g, '');
+    if (!/^[A-ZĀ-Ž]{1,4}$/.test(prefix)) return res.status(400).json({ error: { message: 'Prefikss: 1–4 burti (piem. D)' } });
+    const grid = readGrid(b);
+    if ('error' in grid) return res.status(400).json({ error: { message: grid.error } });
     const label = typeof b.label === 'string' && b.label.trim() ? b.label.trim() : null;
     const existing = await store.listContainers();
     if (existing.some((c) => c.prefix === prefix)) return res.status(409).json({ error: { message: `Konteiners "${prefix}" jau eksistē` } });
     try {
-      const created = await store.createContainer({ prefix, label, rows, cols });
+      const created = await store.createContainer({ prefix, label, rows: grid.rows, cols: grid.cols, cells: grid.cells });
       res.status(201).json({ ok: true, container: created });
     } catch {
       res.status(409).json({ error: { message: `Konteiners "${prefix}" jau eksistē` } });
     }
+  }));
+
+  // Redraw an existing container. Refuses to remove a place that currently holds
+  // tires — the shape is a drawing of the rack, not a way to delete stock.
+  app.patch('/api/containers/:id', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const all = await store.listContainers();
+    const def = all.find((c) => String(c.id) === String(req.params.id));
+    if (!def) return res.status(404).json({ error: { message: 'Konteiners nav atrasts' } });
+    const grid = readGrid({ rows: b.rows ?? def.rows, cols: b.cols ?? def.cols, cells: b.cells });
+    if ('error' in grid) return res.status(400).json({ error: { message: grid.error } });
+
+    const survives = new Set<string>();
+    cellMap({ rows: grid.rows, cols: grid.cols, cells: grid.cells })
+      .forEach((on, i) => { if (on) survives.add(`${def.prefix}${i + 1}`); });
+    const { occupied } = await spotUniverse();
+    const lost = [...occupied.keys()]
+      .filter((code) => code.startsWith(def.prefix) && /^\D+\d+$/.test(code))
+      .filter((code) => code.replace(/\d+$/, '') === def.prefix && !survives.has(code));
+    if (lost.length) {
+      return res.status(409).json({
+        error: { message: `Šīs vietas ir aizņemtas un tās nevar noņemt: ${lost.slice(0, 12).join(', ')}${lost.length > 12 ? ` +${lost.length - 12}` : ''}` },
+      });
+    }
+    const label = b.label === undefined ? undefined : (typeof b.label === 'string' && b.label.trim() ? b.label.trim() : null);
+    const updated = await store.updateContainer(def.id, {
+      ...(label === undefined ? {} : { label }),
+      rows: grid.rows, cols: grid.cols, cells: grid.cells,
+    });
+    res.json({ ok: true, container: updated });
   }));
   app.delete('/api/containers/:id', requireAdmin, asyncH(async (req, res) => {
     const store = await getStore();

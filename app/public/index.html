@@ -489,39 +489,115 @@ function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capP
     ${(st.containers||[]).map(c=>`<div class="card" style="padding:var(--card);">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;">
         <h2 style="margin:0;font-size:15px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Konteiners ${esc(c.letter)}${c.label?` · <span style="font-weight:400;color:var(--ink-3);">${esc(c.label)}</span>`:''}</h2>
-        <span style="display:flex;align-items:center;gap:8px;flex:none;"><span class="mono" style="font-size:12px;color:var(--ink-3);">${c.occ}/${c.total}</span>${(isAdmin&&c.defId)?`<button data-delcont="${esc(c.defId)}" data-prefix="${esc(c.letter)}" title="Dzēst konteineru" style="width:22px;height:22px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:12px;line-height:1;">✕</button>`:''}</span></div>
-      <div style="display:grid;grid-template-columns:repeat(${c.cols||4},1fr);gap:6px;">${c.spots.map(spotBtn).join('')}</div>
+        <span style="display:flex;align-items:center;gap:8px;flex:none;"><span class="mono" style="font-size:12px;color:var(--ink-3);">${c.occ}/${c.total}</span>${(isAdmin&&c.defId)?`<button data-editcont="${esc(c.defId)}" data-prefix="${esc(c.letter)}" title="Rediģēt formu" style="width:22px;height:22px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:11px;line-height:1;">✎</button><button data-delcont="${esc(c.defId)}" data-prefix="${esc(c.letter)}" title="Dzēst konteineru" style="width:22px;height:22px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:12px;line-height:1;">✕</button>`:''}</span></div>
+      <div style="display:grid;grid-template-columns:repeat(${c.cols||4},1fr);gap:6px;">${(c.cells||c.spots).map(s=>s?spotBtn(s):'<div></div>').join('')}</div>
     </div>`).join('')}
   </div></div>`;}
 
-// Add a storage container: prefix + rows×cols → generated empty places (prefix1…prefixN).
+// ============ CONTAINER SHAPE EDITOR ============
+// Set a grid size, then click or drag over cells to switch places on and off, so
+// the drawing matches the real rack — L-shaped, with gaps, whatever it is. A place
+// is numbered by its POSITION (index+1), so switching a cell off never renumbers
+// the ones around it and can't silently rename a spot that holds someone's tires.
+const _cg={rows:4,cols:20,cells:[],paint:null};
+function cgTotal(){return _cg.rows*_cg.cols;}
+function cgString(){return _cg.cells.map(v=>v?'1':'0').join('');}
+function cgCount(){return _cg.cells.reduce((a,v)=>a+(v?1:0),0);}
+function cgResize(rows,cols,keep){
+  const old=_cg.cells,oc=_cg.cols;
+  _cg.rows=rows;_cg.cols=cols;
+  const next=[];
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+    // Preserve the drawing by grid position when the size changes.
+    next.push(keep&&old.length?(r*oc+c<old.length&&c<oc?!!old[r*oc+c]:false):true);
+  }
+  _cg.cells=next;}
+function cgRender(){
+  const box=document.getElementById('cg-grid');if(!box)return;
+  box.style.gridTemplateColumns=`repeat(${_cg.cols},minmax(0,1fr))`;
+  box.innerHTML=_cg.cells.map((on,i)=>`<button type="button" data-cg="${i}" title="${on?'Vieta':'Tukšums'}" style="aspect-ratio:1;min-width:0;border-radius:4px;cursor:pointer;font-size:8px;line-height:1;padding:0;overflow:hidden;${on
+    ?'background:var(--ok-soft);border:1px solid oklch(0.8 0.08 155);color:var(--ok);'
+    :'background:transparent;border:1px dashed var(--border-2);color:transparent;'}">${on?(i+1):''}</button>`).join('');
+  const n=document.getElementById('cg-count');
+  if(n)n.textContent=`${cgCount()} vietas no ${cgTotal()} rūtiņām`;
+  box.querySelectorAll('[data-cg]').forEach(el=>{
+    const i=Number(el.dataset.cg);
+    const set=v=>{if(_cg.cells[i]!==v){_cg.cells[i]=v;cgRender();}};
+    el.addEventListener('mousedown',e=>{e.preventDefault();_cg.paint=!_cg.cells[i];set(_cg.paint);});
+    el.addEventListener('mouseenter',()=>{if(_cg.paint!==null)set(_cg.paint);});
+    el.addEventListener('touchstart',e=>{e.preventDefault();set(!_cg.cells[i]);},{passive:false});
+  });}
+function cgStopPaint(){_cg.paint=null;}
+function cgFormHTML(opts){
+  const o=opts||{};
+  return `<div style="text-align:left;display:flex;flex-direction:column;gap:12px;">
+    ${o.prefix===undefined?`<div><label class="label" style="display:block;margin-bottom:5px;">Prefikss (burts)</label><input id="cg-prefix" class="swal2-input mono" placeholder="D" maxlength="4" style="margin:0;width:100%;text-transform:uppercase;"></div>`
+      :`<div style="font-size:13px;color:var(--ink-2);">Konteiners <b class="mono">${esc(o.prefix)}</b></div>`}
+    <div style="display:flex;gap:12px;">
+      <div style="flex:1;"><label class="label" style="display:block;margin-bottom:5px;">Rindas</label><input id="cg-rows" type="number" min="1" max="99" value="${_cg.rows}" class="swal2-input mono" style="margin:0;width:100%;"></div>
+      <div style="flex:1;"><label class="label" style="display:block;margin-bottom:5px;">Kolonnas</label><input id="cg-cols" type="number" min="1" max="99" value="${_cg.cols}" class="swal2-input mono" style="margin:0;width:100%;"></div>
+    </div>
+    <div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;gap:10px;flex-wrap:wrap;">
+        <span class="label">Uzzīmē formu</span>
+        <span style="display:flex;gap:6px;">
+          <button type="button" id="cg-all" style="height:26px;padding:0 9px;font-size:11px;border:1px solid var(--border-2);background:var(--surface);border-radius:6px;cursor:pointer;">Visas</button>
+          <button type="button" id="cg-none" style="height:26px;padding:0 9px;font-size:11px;border:1px solid var(--border-2);background:var(--surface);border-radius:6px;cursor:pointer;">Neviena</button>
+        </span>
+      </div>
+      <div style="color:var(--ink-3);font-size:11px;margin-bottom:8px;">Klikšķini vai velc pāri rūtiņām, lai ieslēgtu/izslēgtu vietas. Numuri paliek pēc pozīcijas, tāpēc esošās vietas nepārnumurējas.</div>
+      <div id="cg-grid" style="display:grid;gap:3px;max-height:290px;overflow:auto;padding:6px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;"></div>
+      <div id="cg-count" style="color:var(--ink-3);font-size:12px;margin-top:7px;"></div>
+    </div>
+    <div><label class="label" style="display:block;margin-bottom:5px;">Nosaukums (neobligāts)</label><input id="cg-label" class="swal2-input" value="${esc(o.label||'')}" placeholder="piem. Ziemas plaukts" style="margin:0;width:100%;"></div>
+  </div>`;}
+function cgWire(){
+  const sync=(keep)=>{
+    const r=Math.max(1,Math.min(99,parseInt(document.getElementById('cg-rows').value,10)||1));
+    const c=Math.max(1,Math.min(99,parseInt(document.getElementById('cg-cols').value,10)||1));
+    if(r*c>600){Swal.showValidationMessage('Pārāk liels konteiners (maks. 600 rūtiņas)');return;}
+    Swal.resetValidationMessage&&Swal.resetValidationMessage();
+    cgResize(r,c,keep);cgRender();};
+  ['cg-rows','cg-cols'].forEach(id=>document.getElementById(id).addEventListener('input',()=>sync(true)));
+  document.getElementById('cg-all').addEventListener('click',()=>{_cg.cells=_cg.cells.map(()=>true);cgRender();});
+  document.getElementById('cg-none').addEventListener('click',()=>{_cg.cells=_cg.cells.map(()=>false);cgRender();});
+  document.addEventListener('mouseup',cgStopPaint);
+  cgRender();}
 async function addContainerDialog(){
   if(!R1)return;
-  const {value:form}=await R1.fire({title:'Pievienot konteineru',width:470,
-    html:`<div style="text-align:left;display:flex;flex-direction:column;gap:12px;">
-      <div><label class="label" style="display:block;margin-bottom:5px;">Prefikss (burts)</label><input id="ac-prefix" class="swal2-input mono" placeholder="D" maxlength="4" style="margin:0;width:100%;text-transform:uppercase;"></div>
-      <div style="display:flex;gap:12px;">
-        <div style="flex:1;"><label class="label" style="display:block;margin-bottom:5px;">Rindas</label><input id="ac-rows" type="number" min="1" max="99" value="4" class="swal2-input mono" style="margin:0;width:100%;"></div>
-        <div style="flex:1;"><label class="label" style="display:block;margin-bottom:5px;">Kolonnas</label><input id="ac-cols" type="number" min="1" max="99" value="20" class="swal2-input mono" style="margin:0;width:100%;"></div>
-      </div>
-      <div style="color:var(--ink-3);font-size:12px;" id="ac-cap">&nbsp;</div>
-      <div><label class="label" style="display:block;margin-bottom:5px;">Nosaukums (neobligāts)</label><input id="ac-label" class="swal2-input" placeholder="piem. Ziemas plaukts" style="margin:0;width:100%;"></div>
-    </div>`,
+  cgResize(4,20,false);
+  const {value:form}=await R1.fire({title:'Pievienot konteineru',width:640,
+    html:cgFormHTML({}),
     showCancelButton:true,confirmButtonText:'Izveidot',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'},
-    didOpen:()=>{const upd=()=>{const p=(document.getElementById('ac-prefix').value||'D').toUpperCase();const r=+document.getElementById('ac-rows').value||0;const c=+document.getElementById('ac-cols').value||0;const cap=r*c;document.getElementById('ac-cap').textContent=cap?`Vietas: ${cap} (${p}1…${p}${cap})`:'Vietas: —';};
-      ['ac-prefix','ac-rows','ac-cols'].forEach(id=>document.getElementById(id).addEventListener('input',upd));upd();},
-    preConfirm:()=>{const prefix=(document.getElementById('ac-prefix').value||'').trim().toUpperCase();
-      const rows=parseInt(document.getElementById('ac-rows').value,10);const cols=parseInt(document.getElementById('ac-cols').value,10);
-      const label=document.getElementById('ac-label').value.trim();
+    didOpen:cgWire,willClose:cgStopPaint,
+    preConfirm:()=>{const prefix=(document.getElementById('cg-prefix').value||'').trim().toUpperCase();
       if(!/^[A-ZĀČĒĢĪĶĻŅŠŪŽ]{1,4}$/.test(prefix)){Swal.showValidationMessage('Prefikss: 1–4 burti (piem. D)');return false;}
-      if(!(rows>=1&&rows<=99&&cols>=1&&cols<=99)){Swal.showValidationMessage('Rindas/kolonnas: 1–99');return false;}
-      if(rows*cols>600){Swal.showValidationMessage('Pārāk daudz vietu (maks. 600)');return false;}
-      return {prefix,rows,cols,label:label||null};}});
+      if(!cgCount()){Swal.showValidationMessage('Jāatzīmē vismaz viena vieta');return false;}
+      return {prefix,rows:_cg.rows,cols:_cg.cols,cells:cgString(),label:document.getElementById('cg-label').value.trim()||null};}});
   if(!form)return;
   const res=await fetch('/api/containers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
   const data=await res.json().catch(()=>({}));
   if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās izveidot konteineru');return;}
   toast('Konteiners '+form.prefix+' izveidots');
+  await loadStats();render();}
+async function editContainerDialog(id,prefix){
+  if(!R1)return;
+  const c=((S.stats&&S.stats.containers)||[]).find(x=>String(x.defId)===String(id));
+  if(!c){alertErr('Konteineru var rediģēt tikai pēc tā izveides');return;}
+  const rows=c.rows||Math.ceil((c.total||1)/(c.cols||4)),cols=c.cols||4;
+  cgResize(rows,cols,false);
+  if(c.drawn)_cg.cells=_cg.cells.map((_,i)=>c.drawn[i]!=='0');
+  const {value:form}=await R1.fire({title:'Rediģēt konteineru',width:640,
+    html:cgFormHTML({prefix,label:c.label}),
+    showCancelButton:true,confirmButtonText:'Saglabāt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'},
+    didOpen:cgWire,willClose:cgStopPaint,
+    preConfirm:()=>{if(!cgCount()){Swal.showValidationMessage('Jāatzīmē vismaz viena vieta');return false;}
+      return {rows:_cg.rows,cols:_cg.cols,cells:cgString(),label:document.getElementById('cg-label').value.trim()||null};}});
+  if(!form)return;
+  const res=await fetch('/api/containers/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās saglabāt');return;}
+  toast('Konteiners '+prefix+' atjaunināts');
   await loadStats();render();}
 async function deleteContainerDialog(id,prefix){
   const r=await ask({icon:'warning',title:'Dzēst konteineru?',html:`Konteiners <b class="mono">${esc(prefix||'')}</b> tiks izņemts. Ieraksti, kas jau atrodas šajās vietās, <b>netiks dzēsti</b> — tikai tukšās vietas vairs nerādīsies.`,confirmButtonText:'Dzēst',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});
@@ -1503,6 +1579,7 @@ function bind(root){
   const rc=root.querySelector('#rec-comment');
   if(rc)rc.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addRecComment();}});
   root.querySelectorAll('[data-delcont]').forEach(el=>el.addEventListener('click',(e)=>{e.stopPropagation();deleteContainerDialog(el.dataset.delcont,el.dataset.prefix);}));
+  root.querySelectorAll('[data-editcont]').forEach(el=>el.addEventListener('click',(e)=>{e.stopPropagation();editContainerDialog(el.dataset.editcont,el.dataset.prefix);}));
   const impf=root.querySelector('#imp-file');
   if(impf)impf.addEventListener('change',async()=>{const file=impf.files&&impf.files[0];impf.value='';if(file)await doImport(file);});
   root.querySelectorAll('[data-pickspot]').forEach(el=>el.addEventListener('click',()=>{

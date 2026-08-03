@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS containers (
   cols       INTEGER NOT NULL DEFAULT 4,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE containers ADD COLUMN IF NOT EXISTS cells TEXT;
 
 CREATE TABLE IF NOT EXISTS record_events (
   id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -352,20 +353,39 @@ export class PostgresStore implements Store {
   }
 
   // --- Containers ---
+  private containerRow(r: ContainerRow): Container {
+    return {
+      id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols,
+      cells: r.cells ?? null, createdAt: r.created_at ? String(r.created_at) : null,
+    };
+  }
   async listContainers(): Promise<Container[]> {
     await this.init();
-    const res = await this.pool.query<{ id: number; prefix: string; label: string | null; rows: number; cols: number; created_at: string | null }>(
-      'SELECT id, prefix, label, rows, cols, created_at FROM containers ORDER BY prefix ASC');
-    return res.rows.map((r) => ({ id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols, createdAt: r.created_at ? String(r.created_at) : null }));
+    const res = await this.pool.query<ContainerRow>(
+      'SELECT id, prefix, label, rows, cols, cells, created_at FROM containers ORDER BY prefix ASC');
+    return res.rows.map((r) => this.containerRow(r));
   }
 
-  async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number }): Promise<Container> {
+  async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null }): Promise<Container> {
     await this.init();
-    const res = await this.pool.query<{ id: number; prefix: string; label: string | null; rows: number; cols: number; created_at: string | null }>(
-      'INSERT INTO containers (prefix, label, rows, cols) VALUES ($1,$2,$3,$4) RETURNING id, prefix, label, rows, cols, created_at',
-      [c.prefix, c.label, c.rows, c.cols]);
-    const r = res.rows[0];
-    return { id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols, createdAt: r.created_at ? String(r.created_at) : null };
+    const res = await this.pool.query<ContainerRow>(
+      'INSERT INTO containers (prefix, label, rows, cols, cells) VALUES ($1,$2,$3,$4,$5) RETURNING id, prefix, label, rows, cols, cells, created_at',
+      [c.prefix, c.label, c.rows, c.cols, c.cells]);
+    return this.containerRow(res.rows[0]);
+  }
+
+  async updateContainer(id: string, patch: { label?: string | null; rows?: number; cols?: number; cells?: string | null }): Promise<Container | null> {
+    await this.init();
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    for (const k of ['label', 'rows', 'cols', 'cells'] as const) {
+      if (Object.prototype.hasOwnProperty.call(patch, k)) { vals.push(patch[k]); sets.push(`${k} = $${vals.length}`); }
+    }
+    if (!sets.length) return null;
+    vals.push(Number(id));
+    const res = await this.pool.query<ContainerRow>(
+      `UPDATE containers SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING id, prefix, label, rows, cols, cells, created_at`, vals);
+    return res.rows[0] ? this.containerRow(res.rows[0]) : null;
   }
 
   async deleteContainer(id: string): Promise<boolean> {
@@ -543,6 +563,11 @@ interface TaskRow {
   id: number; kind: string; record_id: string | null; title: string; details: string | null;
   location: string | null; plate: string | null; status: string; created_by: string | null;
   created_at: string | Date | null; done_by: string | null; done_at: string | Date | null;
+}
+
+interface ContainerRow {
+  id: number; prefix: string; label: string | null; rows: number; cols: number;
+  cells: string | null; created_at: string | null;
 }
 
 interface PhotoRow {
