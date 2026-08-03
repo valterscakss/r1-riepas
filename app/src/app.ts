@@ -4,7 +4,7 @@ import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { IntakeInput, StorageRecord, Store, PricingConfig, PricingTier } from './types.js';
-import { DEFAULT_PRICING } from './types.js';
+import { DEFAULT_PRICING, matches } from './types.js';
 import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
 import {
@@ -981,6 +981,122 @@ export function createApp(): express.Express {
       preparedDate: r.preparedDate, intakeDate: r.intakeDate,
     }));
     res.json({ count: items.length, pending: items });
+  }));
+
+  // --- Excel export ----------------------------------------------------------
+  // Every list in the app can leave as a .xlsx. The export mirrors what is on
+  // screen — same filters, same column order — so what you downloaded matches
+  // what you were looking at.
+  const asSheet = async (rows: Array<Record<string, unknown>>, sheet: string, res: express.Response, file: string) => {
+    const XLSX = (await import('xlsx')).default;
+    const ws = XLSX.utils.json_to_sheet(rows);
+    // Roughly size columns to their content so the file opens readable.
+    const headers = Object.keys(rows[0] ?? {});
+    ws['!cols'] = headers.map((h) => ({
+      wch: Math.min(42, Math.max(h.length + 2, ...rows.slice(0, 400).map((r) => String(r[h] ?? '').length + 2))),
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, sheet.slice(0, 31));
+    const buf: Buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${file}"`);
+    res.send(buf);
+  };
+  const stamp = () => new Date().toISOString().slice(0, 10);
+  const yn = (b: boolean) => (b ? 'Jā' : 'Nē');
+  const STATUS_LV: Record<string, string> = {
+    active: 'Glabājas', prepared: 'Rezervēts', blocked: 'Bloķēts', released: 'Izsniegts', free: 'Brīva vieta',
+  };
+
+  app.get('/api/export/:what', requireAuth, asyncH(async (req, res) => {
+    const store = await getStore();
+    const what = req.params.what;
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+
+    if (what === 'storage') {
+      const status = req.query.status;
+      let rows = await store.list();
+      if (status === 'active' || status === 'released' || status === 'prepared') rows = rows.filter((r) => r.status === status);
+      if (q) rows = rows.filter((r) => matches(r, q));
+      const out = rows.map((r) => ({
+        Vieta: r.location ?? '', 'Auto nr.': r.plate ?? '', Nosaukums: r.makeModel ?? '',
+        Vārds: r.customerName ?? '', Uzņēmums: yn(r.isCompany), Telefons: r.phone ?? '',
+        Izmērs: r.size1 ?? '', '2. izmērs': r.size2 ?? '', Ražotājs: canonBrand(r.brand) ?? '',
+        Skaits: r.quantity ?? '', Diski: r.rimNote ?? '', Protektors: r.threadDepth ?? '',
+        'SMS kods': r.smsCode ?? '', Cena: r.feeEur ?? '', Piezīmes: r.notes ?? '',
+        Saņemts: r.intakeDate ?? '', Izsniegts: r.releaseDate ?? '',
+        Sezona: r.season ?? '', Statuss: STATUS_LV[r.status] ?? r.status,
+      }));
+      if (!out.length) return res.status(404).json({ error: { message: 'Nav ko eksportēt' } });
+      return asSheet(out, 'Tabula', res, `r1-tabula-${stamp()}.xlsx`);
+    }
+
+    if (what === 'customers') {
+      // One row per storage entry, grouped under its client — so the sheet can be
+      // pivoted or filtered per customer in Excel.
+      const all = await store.list(q ? { q } : undefined);
+      const out = all
+        .filter((r) => r.plate || r.customerName)
+        .map((r) => ({
+          Klients: r.customerName ?? '', Uzņēmums: yn(r.isCompany), Telefons: r.phone ?? '',
+          'Auto nr.': r.plate ?? '', Auto: r.makeModel ?? '',
+          Sezona: r.season ?? '', Vieta: r.location ?? '',
+          Riepas: [r.quantity ? `${r.quantity}×` : '', canonBrand(r.brand) ?? '', r.size1 ?? ''].filter(Boolean).join(' '),
+          '2. izmērs': r.size2 ?? '', Diski: r.rimNote ?? '', Protektors: r.threadDepth ?? '',
+          Cena: r.feeEur ?? '', 'SMS kods': r.smsCode ?? '',
+          Saņemts: r.intakeDate ?? '', Izsniegts: r.releaseDate ?? '',
+          Statuss: STATUS_LV[r.status] ?? r.status,
+        }))
+        .sort((a, b) => a.Klients.localeCompare(b.Klients, 'lv') || (b.Saņemts || '').localeCompare(a.Saņemts || ''));
+      if (!out.length) return res.status(404).json({ error: { message: 'Nav ko eksportēt' } });
+      return asSheet(out, 'Klienti', res, `r1-klienti-${stamp()}.xlsx`);
+    }
+
+    if (what === 'tasks') {
+      const s = req.query.status;
+      const status = s === 'done' ? 'done' : s === 'all' ? undefined : 'open';
+      const tasks = await store.listTasks({ status, limit: 500 });
+      const out = tasks.map((t) => ({
+        Veids: t.kind === 'prepare' ? 'Sagatavot riepas' : 'Pasūtījums',
+        Nosaukums: t.title, Apraksts: t.details ?? '', Vieta: t.location ?? '', 'Auto nr.': t.plate ?? '',
+        Statuss: t.status === 'done' ? 'Pabeigts' : 'Darāms',
+        Pieprasīja: t.createdBy ?? '', Izveidots: t.createdAt ?? '',
+        Pabeidza: t.doneBy ?? '', Pabeigts: t.doneAt ?? '',
+      }));
+      if (!out.length) return res.status(404).json({ error: { message: 'Nav ko eksportēt' } });
+      return asSheet(out, 'Noliktava', res, `r1-noliktava-${stamp()}.xlsx`);
+    }
+
+    if (what === 'pending') {
+      const recs = (await store.list({ status: 'prepared' }))
+        .sort((a, b) => (b.preparedDate ?? '').localeCompare(a.preparedDate ?? ''));
+      const out = recs.map((r) => ({
+        Vieta: r.location ?? '', 'Auto nr.': r.plate ?? '', Klients: r.customerName ?? '', Telefons: r.phone ?? '',
+        Riepas: [r.quantity ? `${r.quantity}×` : '', canonBrand(r.brand) ?? '', r.size1 ?? ''].filter(Boolean).join(' '),
+        '2. izmērs': r.size2 ?? '', Sezona: r.season ?? '',
+        Sagatavots: r.preparedDate ?? '', Saņemts: r.intakeDate ?? '',
+      }));
+      if (!out.length) return res.status(404).json({ error: { message: 'Nav sagatavotu riepu' } });
+      return asSheet(out, 'Sagatavotie', res, `r1-sagatavotie-${stamp()}.xlsx`);
+    }
+
+    if (what === 'spots') {
+      const { spots, occupied } = await spotUniverse();
+      const out = spots.map((s) => {
+        const r = occupied.get(s.code);
+        return {
+          Vieta: s.code, Konteiners: s.c,
+          Statuss: r ? (STATUS_LV[r.status] ?? r.status) : 'Brīvs',
+          'Auto nr.': r?.plate ?? '', Klients: r?.customerName ?? '',
+          Izmērs: r?.size1 ?? '', Ražotājs: canonBrand(r?.brand) ?? '',
+          Diski: r?.rimNote ?? '', 'SMS kods': r?.smsCode ?? '', Saņemts: r?.intakeDate ?? '',
+        };
+      });
+      if (!out.length) return res.status(404).json({ error: { message: 'Nav ko eksportēt' } });
+      return asSheet(out, 'Novietnes', res, `r1-novietnes-${stamp()}.xlsx`);
+    }
+
+    return res.status(400).json({ error: { message: 'Nezināms eksporta veids' } });
   }));
 
   // --- Excel import (admin only): parse the workbook and REPLACE the DB.

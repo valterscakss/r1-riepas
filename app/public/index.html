@@ -475,6 +475,7 @@ function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capP
   <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--pad);flex-wrap:wrap;gap:12px;">
     <div><h1 style="margin:0;font-size:24px;font-weight:600;">Novietnes</h1>
     <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${st.occ} / ${st.total} aizņemtas · ${st.capPct}% noslodze</div></div>
+    ${exportBtn('spots','','Excel')}
     ${isAdmin?`<button data-act="add-container" style="height:40px;padding:0 16px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">＋ Pievienot konteineru</button>`:''}
   </div>
   <div style="display:flex;gap:14px;font-size:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
@@ -536,6 +537,7 @@ function customersHTML(){
   <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
     <div><h1 style="margin:0;font-size:24px;font-weight:600;">Klienti</h1>
     <div style="color:var(--ink-3);font-size:13px;margin-top:4px;"><span id="cust-count">${S.customers.length}</span> rādīti</div></div>
+    ${exportBtn('customers',`q=${encodeURIComponent(S.custQ||'')}`,'Excel')}
     <input id="cust-q" value="${esc(S.custQ)}" placeholder="Meklēt pēc numura, vārda, telefona…" style="height:40px;width:300px;max-width:100%;padding:0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);">
   </div>
   <div id="cust-content">${custContentHTML()}</div></div>`;}
@@ -704,6 +706,7 @@ function tableHTML(){
         <div style="display:flex;gap:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px;">
           ${['active','released','all'].map(k=>`<button class="chip${S.tabStatus===k?' on':''}" data-tabstatus="${k}">${k==='active'?'Glabājas':k==='released'?'Izsniegti':'Visi'}</button>`).join('')}
         </div>
+        ${exportBtn('storage',`status=${encodeURIComponent(S.tabStatus)}&q=${encodeURIComponent(S.tabQ||'')}`,'Excel')}
         <input id="tab-q" value="${esc(S.tabQ)}" placeholder="Meklēt…" autocomplete="off" style="height:38px;width:240px;max-width:100%;padding:0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);">
         ${(S.auth&&S.auth.role==='admin')?`<button class="btn" data-act="import-xlsx" title="Augšupielādēt jaunu Excel tabulu (aizvietos visus datus)" style="height:38px;">⭱ Importēt Excel</button><input type="file" id="imp-file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none;">`:''}
       </div>
@@ -990,10 +993,35 @@ function pendingHTML(){
     </div>
   </div>`).join('');
   return `<div class="page" style="padding:var(--pad);max-width:1000px;margin:0 auto;">
-    <div style="margin-bottom:var(--pad);"><h1 style="margin:0;font-size:24px;font-weight:600;">Sagatavotie</h1>
-    <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Riepas izņemtas, vieta rezervēta — gaida sezonas maiņu</div></div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
+      <div><h1 style="margin:0;font-size:24px;font-weight:600;">Sagatavotie</h1>
+      <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Riepas izņemtas, vieta rezervēta — gaida sezonas maiņu</div></div>
+      ${list.length?exportBtn('pending','','Excel'):''}
+    </div>
     ${!S.pendingLoaded?'<div class="card" style="padding:24px;color:var(--ink-3);">Ielādē…</div>':(list.length?cards:'<div class="card" style="padding:30px;text-align:center;color:var(--ink-3);font-size:14px;">Nav sagatavotu riepu.<br><span style="font-size:13px;">Sadaļā <b>Izsniegšana</b> vai <b>Novietnes</b> nospied “Sagatavot”, lai izņemtu riepas un rezervētu vietu.</span></div>')}
   </div>`;}
+
+// ============ EXCEL EXPORT ============
+// The download goes through the patched fetch so it carries the auth header — a
+// plain <a download> would rely on the cookie alone and fail where it's blocked.
+const XLS_BTN='height:38px;padding:0 14px;background:var(--surface);border:1px solid var(--border-2);border-radius:9px;font-size:13px;font-weight:500;cursor:pointer;color:var(--ink-2);white-space:nowrap;';
+function exportBtn(what,params,label){
+  return `<button data-export="${esc(what)}" data-params="${esc(params||'')}" title="Lejupielādēt Excel failu" style="${XLS_BTN}">⭳ ${esc(label||'Excel')}</button>`;}
+async function downloadExport(what,params){
+  const url='/api/export/'+encodeURIComponent(what)+(params?('?'+params):'');
+  try{
+    const res=await fetch(url);
+    if(!res.ok){const d=await res.json().catch(()=>({}));alertErr(d.error?.message||'Neizdevās izveidot failu');return;}
+    const blob=await res.blob();
+    const cd=res.headers.get('Content-Disposition')||'';
+    const m=cd.match(/filename="([^"]+)"/);
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=m?m[1]:(what+'.xlsx');
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);
+    toast('Fails lejupielādēts');
+  }catch{alertErr('Neizdevās lejupielādēt');}}
 
 // ============ IESTATĪJUMI (pricing rules) ============
 // Prices are width ranges: "no 216 līdz 245 → 20 €". The widest tire in the set
@@ -1166,13 +1194,16 @@ function warehouseHTML(){
     new:'Pieprasi riepas vai citu preci no noliktavas',
     done:'Padarītie darbi — arhīvs'}[tab];
   const bell=(typeof Notification==='undefined'||Notification.permission==='granted')?'':
-    `<button data-act="enable-push" title="Ieslēgt paziņojumus uz šo ierīci" style="margin-left:auto;align-self:center;height:32px;padding:0 12px;background:var(--ink);color:#fff;border:0;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">🔔 Paziņojumi</button>`;
+    `<button data-act="enable-push" title="Ieslēgt paziņojumus uz šo ierīci" style="height:32px;padding:0 12px;background:var(--ink);color:#fff;border:0;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">🔔 Paziņojumi</button>`;
   return `<div class="page" style="padding:var(--pad);max-width:840px;margin:0 auto;">
     <h1 style="margin:0;font-size:24px;font-weight:600;">Noliktava</h1>
     <div id="task-sub" style="color:var(--ink-3);font-size:13px;margin-top:4px;">${esc(sub)}</div>
     <div class="subtabs" style="display:flex;gap:22px;align-items:stretch;border-bottom:1px solid var(--border);margin:16px 0 var(--gap);">
       ${TASK_TABS.map(([k,label])=>`<button class="subtab${tab===k?' on':''}" data-tasktab="${k}">${label}${(k==='open'&&n>0)?`<span style="margin-left:7px;font-size:10px;font-weight:700;background:var(--danger);color:#fff;border-radius:9px;padding:1px 7px;vertical-align:1px;">${n}</span>`:''}</button>`).join('')}
-      ${bell}
+      <span style="margin-left:auto;align-self:center;display:flex;gap:8px;">
+        ${tab!=='new'?`<button data-export="tasks" data-params="status=${tab==='done'?'done':'open'}" title="Lejupielādēt Excel failu" style="height:32px;padding:0 12px;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--ink-2);white-space:nowrap;">⭳ Excel</button>`:''}
+        ${bell}
+      </span>
     </div>
     <div id="task-body">${taskBodyHTML()}</div>
   </div>`;}
@@ -1487,6 +1518,7 @@ function bind(root){
   root.querySelectorAll('[data-taskdel]').forEach(el=>el.addEventListener('click',async()=>{
     const r=await ask({icon:'warning',title:'Dzēst uzdevumu?',confirmButtonText:'Dzēst',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});
     if(r.isConfirmed)await taskAction(el.dataset.taskdel,'del');}));
+  root.querySelectorAll('[data-export]').forEach(el=>el.addEventListener('click',()=>downloadExport(el.dataset.export,el.dataset.params)));
   root.querySelectorAll('[data-tasktab]').forEach(el=>el.addEventListener('click',async()=>{
     const k=el.dataset.tasktab;
     if((S.taskTab||'open')===k)return;
