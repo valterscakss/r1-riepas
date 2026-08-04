@@ -414,7 +414,7 @@ export class SqliteStore implements Store {
     return rows.map((r) => this.eventRow(r));
   }
   async recentEvents(limit: number): Promise<RecordEvent[]> {
-    const rows = this.db.prepare('SELECT * FROM record_events ORDER BY id DESC LIMIT ?').all(Math.max(1, Math.min(100, limit))) as never[];
+    const rows = this.db.prepare('SELECT * FROM record_events ORDER BY id DESC LIMIT ?').all(Math.max(1, Math.min(5000, limit))) as never[];
     return rows.map((r) => this.eventRow(r));
   }
   async updateEvent(id: string, comment: string | null): Promise<RecordEvent | null> {

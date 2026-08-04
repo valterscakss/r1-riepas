@@ -119,6 +119,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
     <button class="navbtn" data-nav="customers"><span>◉&nbsp; Klienti</span></button>
     <button class="navbtn" data-nav="table"><span>▤&nbsp; Tabula</span></button>
     <button class="navbtn" data-nav="analytics"><span>◫&nbsp; Analītika</span></button>
+    <button class="navbtn" data-nav="history"><span>≡&nbsp; Vēsture</span></button>
     <button class="navbtn" data-nav="users" id="nav-users" style="display:none;"><span>◔&nbsp; Lietotāji</span></button>
     <button class="navbtn" data-nav="settings" id="nav-settings" style="display:none;"><span>⚙&nbsp; Iestatījumi</span></button>
   </nav>
@@ -202,6 +203,7 @@ const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:n
   pending:[],pendingLoaded:false,swapFromId:null,recOpen:false,recData:null,
   tasks:[],tasksLoaded:false,taskTab:'open',taskDraft:'',taskDest:'',taskDestCustom:'',openTasks:0,pushOn:false,pushCfg:null,
   pricing:null,pricingDraft:null,pricingSaving:false,priceTest:'',
+  hist:{list:[],page:0,pages:1,total:0,from:'',to:'',type:'',q:'',loading:false},
   recEvents:[],recEventsLoading:false,
   recPhotos:[],recPhotosLoading:false,recPhotoBusy:'',photoBig:null,
   analytics:null,analyticsLoaded:false,anaSeason:'',anaStatus:'',anaCustomer:'',anaRims:''};
@@ -270,6 +272,7 @@ function nav(screen){S.screen=screen;S.selSpot=null;
   if(screen==='table'){render();if(!S.tableLoaded)loadTable().then(()=>{if(S.screen==='table')render();});return;}
   if(screen==='pending'){render();loadPending().then(()=>{if(S.screen==='pending')render();});return;}
   if(screen==='warehouse'){render();loadTasks().then(()=>{if(S.screen==='warehouse')render();});return;}
+  if(screen==='history'){S.hist.page=0;S.hist.list=[];render();loadHist(true);return;}
   if(screen==='settings'){
     // Edit a copy, so "Atcelt izmaiņas" can put the saved rules back.
     S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();refreshPushStatus();
@@ -295,6 +298,7 @@ function render(){
   else if(S.screen==='warehouse')v.innerHTML=warehouseHTML();
   else if(S.screen==='table')v.innerHTML=tableHTML();
   else if(S.screen==='analytics')v.innerHTML=analyticsHTML();
+  else if(S.screen==='history')v.innerHTML=historyHTML();
   else if(S.screen==='users')v.innerHTML=usersHTML();
   else if(S.screen==='settings')v.innerHTML=settingsHTML();
   bind(v);renderModal();
@@ -352,7 +356,7 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
   <div class="rgrid2" style="display:grid;grid-template-columns:1.6fr 1fr;gap:var(--gap);align-items:start;">
     <div class="card" style="overflow:hidden;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:16px var(--card);border-bottom:1px solid var(--border);">
-        <h2 style="margin:0;font-size:15px;font-weight:600;">Nesenās darbības</h2><span style="font-size:12px;color:var(--ink-3);">pēdējās</span></div>
+        <h2 style="margin:0;font-size:15px;font-weight:600;">Nesenās darbības</h2><button data-act="go-history" style="border:0;background:transparent;font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;">Skatīt visu →</button></div>
       <div>${S.activity.map(actRow).join('')||'<div style="padding:20px;color:var(--ink-3);font-size:13px;">Nav darbību</div>'}</div>
     </div>
     <div style="display:flex;flex-direction:column;gap:var(--gap);">
@@ -1156,6 +1160,74 @@ function pendingHTML(){
     ${!S.pendingLoaded?'<div class="card" style="padding:24px;color:var(--ink-3);">Ielādē…</div>':(list.length?cards:'<div class="card" style="padding:30px;text-align:center;color:var(--ink-3);font-size:14px;">Nav sagatavotu riepu.<br><span style="font-size:13px;">Sadaļā <b>Izsniegšana</b> vai <b>Novietnes</b> nospied “Sagatavot”, lai izņemtu riepas un rezervētu vietu.</span></div>')}
   </div>`;}
 
+// ============ VĒSTURE (full history) ============
+// The activity feed without its 12-row cap: everything that ever happened,
+// filterable by dates, action and text, grouped by day, pageable as far back as
+// the data goes. Every row opens its record — full data, comments, photos.
+const HIST_TYPES=[['','Visas darbības'],['in,created','Pieņemšana'],['out,released,swapped','Izsniegšana'],['prepared,unprepared','Sagatavošana'],['comment','Komentāri'],['photo','Bildes'],['edited,blocked,unblocked','Citas']];
+function histQS(page){const h=S.hist;const p=new URLSearchParams();
+  if(h.from)p.set('from',h.from);if(h.to)p.set('to',h.to);
+  if(h.type)p.set('types',h.type);if(h.q)p.set('q',h.q);
+  if(page)p.set('page',page);
+  return p.toString();}
+async function loadHist(reset){const h=S.hist;
+  if(h.loading)return;h.loading=true;updateHistList();
+  const page=reset?1:h.page+1;
+  try{const d=await(await fetch('/api/history?'+histQS(page))).json();
+    h.total=d.total;h.pages=d.pages;h.page=d.page;
+    h.list=reset?(d.events||[]):h.list.concat(d.events||[]);
+  }catch{if(reset)h.list=[];}
+  h.loading=false;updateHistList();}
+function histRow(e){const m=ACT_FEED[e.type]||['Darbība','var(--surface-2)','var(--ink-2)'];
+  const w=evWhen(e.d);
+  const openable=!!e.recordId;
+  const detail=[e.cust,e.tires].filter(Boolean).join(' · ');
+  return `<div ${openable?`data-openrec="${esc(e.recordId)}"`:''} class="custrow" style="display:grid;grid-template-columns:52px 104px 1fr auto;gap:10px;align-items:center;padding:11px var(--card);border-bottom:1px solid var(--border);${openable?'cursor:pointer;':''}">
+    <span class="mono" style="font-size:12px;font-weight:600;color:var(--ink-2);">${esc(w.t||'—')}</span>
+    <span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;text-align:center;background:${m[1]};color:${m[2]};white-space:nowrap;">${m[0]}</span>
+    <span style="min-width:0;">
+      <span style="display:flex;align-items:center;gap:9px;min-width:0;"><span class="mono" style="font-weight:600;font-size:13px;flex:none;">${esc(e.plate||'—')}</span>
+      ${e.loc?`<span class="mono" style="font-size:11px;color:var(--ink-3);flex:none;">${esc(e.loc)}</span>`:''}
+      ${detail?`<span style="color:var(--ink-3);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(detail)}</span>`:''}</span>
+      ${e.comment?`<span style="display:block;color:var(--ink-2);font-size:12px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">“${esc(e.comment)}”</span>`:''}
+    </span>
+    <span style="font-size:12px;color:var(--ink-3);white-space:nowrap;">${esc(e.actor||'R1')}</span>
+  </div>`;}
+function histListHTML(){const h=S.hist;
+  if(!h.list.length)return h.loading?'<div class="card" style="padding:24px;color:var(--ink-3);font-size:13px;">Ielādē…</div>'
+    :'<div class="card" style="padding:30px;text-align:center;color:var(--ink-3);font-size:14px;">Nekas netika atrasts ar šiem filtriem.</div>';
+  // Group under day headers so scanning by date is effortless.
+  const MON=['janvāris','februāris','marts','aprīlis','maijs','jūnijs','jūlijs','augusts','septembris','oktobris','novembris','decembris'];
+  const groups=[];let cur=null;
+  for(const e of h.list){
+    const w=evWhen(e.d);
+    if(!cur||cur.day!==w.d){cur={day:w.d,rows:[]};groups.push(cur);}
+    cur.rows.push(histRow(e));
+  }
+  const body=groups.map(g=>{const [dd,mm,yy]=g.day.split('.');
+    return `<div style="margin:16px 0 8px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);">${dd}. ${MON[Number(mm)-1]||mm} ${yy}</div><div class="card" style="overflow:hidden;">${g.rows.join('')}</div>`;}).join('');
+  const more=h.page<h.pages?`<button data-act="hist-more" ${h.loading?'disabled':''} style="width:100%;height:44px;margin-top:14px;background:var(--surface);border:1px solid var(--border-2);border-radius:11px;font-weight:600;cursor:pointer;color:var(--ink-2);">${h.loading?'Ielādē…':`Ielādēt vēl (${h.list.length} no ${h.total})`}</button>`
+    :`<div style="text-align:center;color:var(--ink-3);font-size:12px;margin-top:14px;">Parādīti visi ${h.total} ieraksti.</div>`;
+  return body+more;}
+function historyHTML(){const h=S.hist;
+  const dateCss='height:38px;padding:0 10px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);font-size:13px;color:var(--ink);';
+  return `<div class="page" style="padding:var(--pad);max-width:960px;margin:0 auto;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
+      <div><h1 style="margin:0;font-size:24px;font-weight:600;">Vēsture</h1>
+      <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Visas darbības — <span id="hist-count">${h.total}</span> notikumi</div></div>
+      ${exportBtn('history',histQS(),'Excel')}
+    </div>
+    <div class="card" style="padding:14px var(--card);margin-bottom:var(--gap);display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <select id="hist-type" style="${dateCss}cursor:pointer;">${HIST_TYPES.map(([k,l])=>`<option value="${esc(k)}"${h.type===k?' selected':''}>${l}</option>`).join('')}</select>
+      <span style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--ink-3);">No <input type="date" id="hist-from" value="${esc(h.from)}" style="${dateCss}"> līdz <input type="date" id="hist-to" value="${esc(h.to)}" style="${dateCss}"></span>
+      <input id="hist-q" value="${esc(h.q)}" placeholder="Numurs, klients, vieta…" style="${dateCss}flex:1;min-width:150px;">
+      ${(h.from||h.to||h.type||h.q)?'<button data-act="hist-clear" style="height:38px;padding:0 12px;background:transparent;border:1px solid var(--border-2);border-radius:9px;font-size:13px;cursor:pointer;color:var(--ink-3);">✕ Notīrīt</button>':''}
+    </div>
+    <div id="hist-list">${histListHTML()}</div>
+  </div>`;}
+function updateHistList(){const c=document.getElementById('hist-list');if(c){c.innerHTML=histListHTML();bind(c);}
+  const n=document.getElementById('hist-count');if(n)n.textContent=S.hist.total;}
+
 // ============ EXCEL EXPORT ============
 // The download goes through the patched fetch so it carries the auth header — a
 // plain <a download> would rely on the cookie alone and fail where it's blocked.
@@ -1666,6 +1738,9 @@ function bind(root){
     else if(a==='price-reset'){S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();toast('Izmaiņas atceltas','info');}
     else if(a==='price-recalc')await recalcPrices();
     else if(a==='push-test')await sendTestPush();
+    else if(a==='hist-more')await loadHist(false);
+    else if(a==='hist-clear'){Object.assign(S.hist,{from:'',to:'',type:'',q:'',page:0,list:[]});render();await loadHist(true);}
+    else if(a==='go-history')nav('history');
     else if(a==='rel-search'){const q=document.getElementById('rel-q');S.relQ=q?q.value:S.relQ;await loadRelease();updateReleaseContent();}
     else if(a==='pick-spot'){grab();S.spotPickOpen=true;renderModal();}
     else if(a==='sms-done'){S.smsOpen=false;S.smsRec=null;resetIntake();await Promise.all([loadStats(),loadActivity()]);nav('home');}
@@ -1734,6 +1809,11 @@ function bind(root){
     const d=document.getElementById('task-draft');if(d)S.taskDraft=d.value;
     S.taskDest=el.dataset.taskdest;render();
     const t=document.getElementById('task-draft');if(t)t.focus();}));
+  const hq=root.querySelector('#hist-q');
+  if(hq){let t;hq.addEventListener('input',()=>{clearTimeout(t);S.hist.q=hq.value;t=setTimeout(()=>loadHist(true),350);});}
+  [['#hist-from','from'],['#hist-to','to'],['#hist-type','type']].forEach(([sel,key])=>{
+    const el=root.querySelector(sel);
+    if(el)el.addEventListener('change',()=>{S.hist[key]=el.value;render();loadHist(true);});});
   const td=root.querySelector('#task-draft');
   if(td){td.addEventListener('input',()=>{S.taskDraft=td.value;});
     td.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendTask();}});}
@@ -2153,7 +2233,7 @@ function hideLogin(){const g=$('#gate');if(g){g.innerHTML='';g.style.cssText='';
 
 // The warehouse phone lives on one screen — reopen where the user left off, and
 // let ?view= (notification click / home-screen shortcut) jump straight there.
-const SCREENS=['home','warehouse','intake','release','pending','spots','customers','table','analytics','users','settings'];
+const SCREENS=['home','warehouse','intake','release','pending','spots','customers','table','analytics','history','users','settings'];
 const ADMIN_SCREENS=['users','settings']; // never the screen a session reopens on
 const LAST_KEY='r1_last_view';
 function openView(v){if(SCREENS.includes(v)){document.body.classList.remove('nav-open');nav(v);}}

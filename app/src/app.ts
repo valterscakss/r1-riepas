@@ -600,6 +600,59 @@ export function createApp(): express.Express {
     res.json({ events: ev.slice(0, 12) });
   }));
 
+  // Full history — the activity feed without its 12-row cap. Everything that ever
+  // happened, filterable by date range, action type and free text, paged so the
+  // client can scroll back as far as the data goes. Each entry carries recordId so
+  // the UI can open the full record (data, comments, photos) behind it.
+  const buildHistory = async (req: express.Request) => {
+    const store = await getStore();
+    const all = await store.list();
+    const byId = new Map(all.map((r) => [String(r.id), r]));
+    type H = { type: string; d: string; plate: string | null; loc: string | null; recordId: string | null; comment: string | null; actor: string | null; cust: string | null; tires: string | null };
+    const ev: H[] = [];
+    const tiresOf = (r?: StorageRecord) => r ? [r.quantity ? `${r.quantity}×` : '', canonBrand(r.brand) ?? '', r.size1 ?? ''].filter(Boolean).join(' ') || null : null;
+    const events = await store.recentEvents(5000);
+    const hasCreated = new Set<string>();
+    const hasReleased = new Set<string>();
+    for (const e of events) {
+      const r = byId.get(String(e.recordId));
+      if (e.action === 'created') hasCreated.add(String(e.recordId));
+      if (e.action === 'released' || e.action === 'swapped') hasReleased.add(String(e.recordId));
+      ev.push({ type: e.action, d: e.createdAt ?? '', plate: r?.plate ?? null, loc: r?.location ?? null, recordId: r ? String(r.id) : null, comment: e.comment, actor: e.actor, cust: r?.customerName ?? null, tires: tiresOf(r) });
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    for (const r of all) {
+      if (r.intakeDate && r.intakeDate <= today && !hasCreated.has(String(r.id)))
+        ev.push({ type: 'in', d: r.intakeDate, plate: r.plate, loc: r.location, recordId: String(r.id), comment: null, actor: null, cust: r.customerName, tires: tiresOf(r) });
+      if (r.releaseDate && r.releaseDate <= today && !hasReleased.has(String(r.id)))
+        ev.push({ type: 'out', d: r.releaseDate, plate: r.plate, loc: r.location, recordId: String(r.id), comment: null, actor: null, cust: r.customerName, tires: tiresOf(r) });
+    }
+    // Filters. Dates compare on the date part, so a full-timestamp event on the
+    // "to" day is still included.
+    const from = typeof req.query.from === 'string' ? req.query.from : '';
+    const to = typeof req.query.to === 'string' ? req.query.to : '';
+    const types = typeof req.query.types === 'string' && req.query.types ? new Set(req.query.types.split(',')) : null;
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().toUpperCase() : '';
+    let list = ev;
+    if (from) list = list.filter((e) => e.d.slice(0, 10) >= from);
+    if (to) list = list.filter((e) => e.d.slice(0, 10) <= to);
+    if (types) list = list.filter((e) => types.has(e.type));
+    if (q) list = list.filter((e) => [e.plate, e.loc, e.cust, e.comment, e.actor].some((f) => (f ?? '').toUpperCase().includes(q)));
+    const tms = (d: string) => { const t = Date.parse(/[TZ]/.test(d) ? d : `${d}T00:00:00Z`); return Number.isNaN(t) ? 0 : t; };
+    list.sort((a, b) => tms(b.d) - tms(a.d));
+    return list;
+  };
+
+  app.get('/api/history', requireAuth, asyncH(async (req, res) => {
+    const list = await buildHistory(req);
+    const PAGE = 50;
+    const page = Math.max(1, Math.trunc(Number(req.query.page)) || 1);
+    res.json({
+      total: list.length, page, pages: Math.max(1, Math.ceil(list.length / PAGE)),
+      events: list.slice((page - 1) * PAGE, page * PAGE),
+    });
+  }));
+
   // Customers view: grouped by name+plate with storage history.
   app.get('/api/customers', requireAuth, asyncH(async (req, res) => {
     const store = await getStore();
@@ -1259,6 +1312,22 @@ export function createApp(): express.Express {
       }));
       if (!out.length) return res.status(404).json({ error: { message: 'Nav ko eksportēt' } });
       return asSheet(out, 'Tabula', res, `r1-tabula-${stamp()}.xlsx`);
+    }
+
+    if (what === 'history') {
+      const ACTION_LV: Record<string, string> = {
+        in: 'Pieņemšana', created: 'Pieņemšana', out: 'Izsniegšana', released: 'Izsniegšana',
+        swapped: 'Maiņa', prepared: 'Sagatavots', unprepared: 'Atpakaļ vietā',
+        blocked: 'Bloķēts', unblocked: 'Atbloķēts', edited: 'Rediģēts', comment: 'Komentārs', photo: 'Bilde',
+      };
+      const list = await buildHistory(req);
+      const out = list.map((e) => ({
+        Datums: e.d, Darbība: ACTION_LV[e.type] ?? e.type, 'Auto nr.': e.plate ?? '',
+        Klients: e.cust ?? '', Vieta: e.loc ?? '', Riepas: e.tires ?? '',
+        Komentārs: e.comment ?? '', Veica: e.actor ?? '',
+      }));
+      if (!out.length) return res.status(404).json({ error: { message: 'Nav ko eksportēt' } });
+      return asSheet(out, 'Vēsture', res, `r1-vesture-${stamp()}.xlsx`);
     }
 
     if (what === 'analytics') {
