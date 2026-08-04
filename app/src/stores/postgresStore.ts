@@ -134,6 +134,9 @@ interface Row {
   thread_depth?: string | null; sms_code?: string | null; fee_eur?: string | null; prepared_date?: string | null;
 }
 
+const normRole = (r: string): 'admin' | 'staff' | 'warehouse' =>
+  r === 'admin' ? 'admin' : r === 'warehouse' ? 'warehouse' : 'staff';
+
 const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' | 'free' =>
   s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : s === 'blocked' ? 'blocked'
     : s === 'free' ? 'free' : 'active';
@@ -333,10 +336,10 @@ export class PostgresStore implements Store {
     const res = await this.pool.query<{ id: number; username: string; name: string; password_hash: string; role: string }>(
       'SELECT * FROM users WHERE username = $1', [username]);
     const r = res.rows[0];
-    return r ? { id: String(r.id), username: r.username, name: r.name, passwordHash: r.password_hash, role: r.role === 'admin' ? 'admin' : 'staff' } : null;
+    return r ? { id: String(r.id), username: r.username, name: r.name, passwordHash: r.password_hash, role: normRole(r.role) } : null;
   }
 
-  async createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' }): Promise<void> {
+  async createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' | 'warehouse' }): Promise<void> {
     await this.init();
     await this.pool.query('INSERT INTO users (username, name, password_hash, role) VALUES ($1,$2,$3,$4)',
       [u.username.toLowerCase(), u.name, u.passwordHash, u.role]);
@@ -354,13 +357,13 @@ export class PostgresStore implements Store {
     return Number(res.rows[0].n);
   }
 
-  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff'; createdAt: string | null }>> {
+  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; createdAt: string | null }>> {
     await this.init();
     const res = await this.pool.query<{ id: number; username: string; name: string; role: string; created_at: string | null }>(
       'SELECT id, username, name, role, created_at FROM users ORDER BY created_at ASC, id ASC');
     return res.rows.map((r) => ({
       id: String(r.id), username: r.username, name: r.name,
-      role: r.role === 'admin' ? 'admin' : 'staff', createdAt: r.created_at ? String(r.created_at) : null,
+      role: normRole(r.role), createdAt: r.created_at ? String(r.created_at) : null,
     }));
   }
 

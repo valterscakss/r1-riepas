@@ -8,7 +8,7 @@ import { DEFAULT_PRICING, matches, cellMap, parseZones } from './types.js';
 import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
 import {
-  COOKIE, signToken, verifyPassword, hashPassword, currentUser, requireAuth, requireAdmin, toSession,
+  COOKIE, signToken, verifyPassword, hashPassword, currentUser, requireAuth, requireStaff, requireAdmin, toSession,
   AUTH_DISABLED, DEMO_USER,
 } from './auth.js';
 import { pushToAll, pushEnabled, vapidPublicKey } from './push.js';
@@ -72,7 +72,7 @@ export function createApp(): express.Express {
   }));
 
   // --- Data (auth required) ---
-  app.get('/api/storage', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/storage', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const status = req.query.status === 'released' ? 'released' : req.query.status === 'active' ? 'active' : undefined;
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
@@ -88,7 +88,7 @@ export function createApp(): express.Express {
   }));
 
   // Manual edit of a record's data fields (Tabula). Only allowlisted keys are applied.
-  app.patch('/api/storage/:id', requireAuth, asyncH(async (req, res) => {
+  app.patch('/api/storage/:id', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const EDITABLE = ['season', 'location', 'plate', 'makeModel', 'customerName', 'phone',
       'size1', 'brand', 'quantity', 'size2', 'rimNote', 'notes', 'intakeDate', 'releaseDate',
@@ -132,7 +132,7 @@ export function createApp(): express.Express {
     res.json({ ok: true, record: rec });
   }));
 
-  app.get('/api/lookup', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/lookup', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const raw = typeof req.query.plate === 'string' ? req.query.plate : '';
     const plate = raw.toUpperCase().replace(/\s+/g, '');
@@ -156,7 +156,7 @@ export function createApp(): express.Express {
   }));
 
   // Live plate suggestions for the intake typeahead dropdown.
-  app.get('/api/plate-suggest', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/plate-suggest', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
     if (q.length < 2) return res.json({ suggestions: [] });
@@ -184,7 +184,7 @@ export function createApp(): express.Express {
 
   // Company typeahead for intake: distinct company names already on file, so a
   // returning company is picked rather than retyped into a second spelling.
-  app.get('/api/company-suggest', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/company-suggest', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase();
     const all = await store.list();
@@ -392,7 +392,7 @@ export function createApp(): express.Express {
   };
 
   // Stats for dashboard + spots grid (design: containers, capacity, activity).
-  app.get('/api/stats', requireAuth, asyncH(async (_req, res) => {
+  app.get('/api/stats', requireStaff, asyncH(async (_req, res) => {
     const { spots, occupied, all, defs, layouts, zoneCaps, zoneLoad } = await spotUniverse();
     const defByPrefix = new Map(defs.map((d) => [d.prefix, d]));
     const spotView = (code: string, zone?: { name: string; cap: number; span: number; hspan: number }) => {
@@ -564,12 +564,12 @@ export function createApp(): express.Express {
     };
   };
 
-  app.get('/api/analytics', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/analytics', requireStaff, asyncH(async (req, res) => {
     res.json(await analyticsData(req));
   }));
 
   // Recent activity feed (intakes + releases by date).
-  app.get('/api/activity', requireAuth, asyncH(async (_req, res) => {
+  app.get('/api/activity', requireStaff, asyncH(async (_req, res) => {
     const store = await getStore();
     const all = await store.list();
     const byId = new Map(all.map((r) => [String(r.id), r]));
@@ -643,7 +643,7 @@ export function createApp(): express.Express {
     return list;
   };
 
-  app.get('/api/history', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/history', requireStaff, asyncH(async (req, res) => {
     const list = await buildHistory(req);
     const PAGE = 50;
     const page = Math.max(1, Math.trunc(Number(req.query.page)) || 1);
@@ -654,7 +654,7 @@ export function createApp(): express.Express {
   }));
 
   // Customers view: grouped by name+plate with storage history.
-  app.get('/api/customers', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/customers', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const q = typeof req.query.q === 'string' ? req.query.q.trim().toUpperCase() : '';
     const type = typeof req.query.type === 'string' ? req.query.type : '';
@@ -706,7 +706,7 @@ export function createApp(): express.Express {
   // Reclassify a whole customer at once. The importer guesses company-vs-private
   // from the sheet and gets it wrong for names like "Sandijs"; a customer with
   // hundreds of visits can't be corrected record by record.
-  app.post('/api/customers/type', requireAuth, asyncH(async (req, res) => {
+  app.post('/api/customers/type', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     if (!name) return res.status(400).json({ error: { message: 'Trūkst klienta vārda' } });
@@ -716,7 +716,7 @@ export function createApp(): express.Express {
   }));
 
   // Full storage history for a single vehicle (all seasons), for the spot panel.
-  app.get('/api/vehicle', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/vehicle', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const plate = String(req.query.plate ?? '').toUpperCase().replace(/\s+/g, '');
     if (!plate) return res.status(400).json({ error: { message: 'plate is required' } });
@@ -733,7 +733,7 @@ export function createApp(): express.Express {
   }));
 
   // Release lookup: find ACTIVE stored sets by SMS code, plate, or location.
-  app.get('/api/release-lookup', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/release-lookup', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
     if (!q) return res.json({ q: '', results: [] });
@@ -753,7 +753,7 @@ export function createApp(): express.Express {
     res.json({ q, results });
   }));
 
-  app.post('/api/intake', requireAuth, asyncH(async (req, res) => {
+  app.post('/api/intake', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const b = req.body ?? {};
     if (!b.plate) {
@@ -809,7 +809,7 @@ export function createApp(): express.Express {
     res.status(201).json(rec);
   }));
 
-  app.post('/api/storage/:id/release', requireAuth, asyncH(async (req, res) => {
+  app.post('/api/storage/:id/release', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.release(req.params.id, { releaseDate: req.body?.releaseDate });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -820,7 +820,7 @@ export function createApp(): express.Express {
   }));
 
   // Stage a set for a seasonal swap: tires out, spot stays reserved ('prepared').
-  app.post('/api/storage/:id/prepare', requireAuth, asyncH(async (req, res) => {
+  app.post('/api/storage/:id/prepare', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.prepare(req.params.id, {});
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -839,7 +839,7 @@ export function createApp(): express.Express {
     res.json({ ...rec, task });
   }));
   // Undo a prepare — put the set back in its spot ('active').
-  app.post('/api/storage/:id/unprepare', requireAuth, asyncH(async (req, res) => {
+  app.post('/api/storage/:id/unprepare', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.prepare(req.params.id, { active: true });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -883,7 +883,7 @@ export function createApp(): express.Express {
   }));
 
   // Manually block/reserve an empty spot (no tires) so it's unavailable.
-  app.post('/api/spots/:code/block', requireAuth, asyncH(async (req, res) => {
+  app.post('/api/spots/:code/block', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const code = String(req.params.code).toUpperCase().replace(/\s+/g, '');
     if (!SPOT_RE.test(code)) return res.status(400).json({ error: { message: 'Nederīga vietas norāde' } });
@@ -895,7 +895,7 @@ export function createApp(): express.Express {
     res.status(201).json(rec);
   }));
   // Unblock: remove the placeholder that was holding the spot.
-  app.post('/api/storage/:id/unblock', requireAuth, asyncH(async (req, res) => {
+  app.post('/api/storage/:id/unblock', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.get(req.params.id);
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -1006,7 +1006,7 @@ export function createApp(): express.Express {
   // --- Pricing settings (Iestatījumi) ---------------------------------------
   // Everyone may READ the rules (the intake screen mirrors them live); only an
   // admin may change them or reprice stored sets.
-  app.get('/api/pricing', requireAuth, asyncH(async (_req, res) => {
+  app.get('/api/pricing', requireStaff, asyncH(async (_req, res) => {
     res.json({ pricing: await loadPricing(), defaults: DEFAULT_PRICING });
   }));
 
@@ -1136,7 +1136,7 @@ export function createApp(): express.Express {
   }));
 
   // --- Storage containers (user-defined shelves/racks) ---
-  app.get('/api/containers', requireAuth, asyncH(async (_req, res) => {
+  app.get('/api/containers', requireStaff, asyncH(async (_req, res) => {
     const store = await getStore();
     res.json({ containers: await store.listContainers() });
   }));
@@ -1253,7 +1253,7 @@ export function createApp(): express.Express {
   }));
 
   // Pending swaps: every 'prepared' set, newest first, shaped for the sidebar.
-  app.get('/api/pending', requireAuth, asyncH(async (_req, res) => {
+  app.get('/api/pending', requireStaff, asyncH(async (_req, res) => {
     const store = await getStore();
     const recs = (await store.list({ status: 'prepared' }))
       .sort((a, b) => (b.preparedDate ?? '').localeCompare(a.preparedDate ?? ''));
@@ -1291,7 +1291,7 @@ export function createApp(): express.Express {
     active: 'Glabājas', prepared: 'Rezervēts', blocked: 'Bloķēts', released: 'Izsniegts', free: 'Brīva vieta',
   };
 
-  app.get('/api/export/:what', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/export/:what', requireStaff, asyncH(async (req, res) => {
     const store = await getStore();
     const what = req.params.what;
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
@@ -1456,7 +1456,7 @@ export function createApp(): express.Express {
     const { username, name, role, password } = req.body ?? {};
     const u = String(username ?? '').trim().toLowerCase();
     const nm = String(name ?? '').trim();
-    const rl: 'admin' | 'staff' = role === 'admin' ? 'admin' : 'staff';
+    const rl: 'admin' | 'staff' | 'warehouse' = role === 'admin' ? 'admin' : role === 'warehouse' ? 'warehouse' : 'staff';
     if (!USERNAME_RE.test(u)) return res.status(400).json({ error: { message: 'Lietotājvārds: 3–32 rakstzīmes (a–z, 0–9, . _ -)' } });
     if (!nm) return res.status(400).json({ error: { message: 'Vārds ir obligāts' } });
     if (String(password ?? '').length < MIN_PW) return res.status(400).json({ error: { message: `Parolei jābūt vismaz ${MIN_PW} rakstzīmes` } });

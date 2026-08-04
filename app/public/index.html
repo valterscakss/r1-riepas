@@ -256,8 +256,13 @@ function paintHeader(){
   // Demo mode (AUTH_DISABLED on the server) returns a "demo" user — hide the
   // auth UI (users, logout, change-password) so it only appears with real login.
   const demo=!!(S.auth&&S.auth.username==='demo');
+  // The warehouse role lives on one screen: hide every other nav entry and the
+  // capacity meter (its stats endpoint is desk-only anyway).
+  const wh=isWarehouse();
+  document.querySelectorAll('[data-nav]').forEach(b=>{if(b.dataset.nav!=='warehouse')b.style.display=wh?'none':'';});
+  const cap=document.querySelector('aside > div:last-child');if(cap)cap.style.display=wh?'none':'';
   const name=S.auth?(S.auth.name||S.auth.username||'—'):'—';
-  const role=S.auth&&!demo?(S.auth.role==='admin'?'Administrators':'Personāls'):'';
+  const role=S.auth&&!demo?(S.auth.role==='admin'?'Administrators':S.auth.role==='warehouse'?'Noliktava':'Personāls'):'';
   const set=(id,v)=>{const el=$(id);if(el)el.textContent=v;};
   const show=(id,on)=>{const el=$(id);if(el)el.style.display=on?'':'none';};
   set('#hdr-name',demo?'':name);set('#hdr-role',role);set('#hdr-init',demo?'':initialsOf(name));
@@ -266,7 +271,7 @@ function paintHeader(){
   show('#nav-settings',S.auth&&S.auth.role==='admin');
   show('#btn-logout',!demo&&!!S.auth);show('#btn-changepass',!demo&&!!S.auth);}
 
-function nav(screen){S.screen=screen;S.selSpot=null;
+function nav(screen){if(isWarehouse())screen='warehouse';S.screen=screen;S.selSpot=null;
   try{localStorage.setItem('r1_last_view',screen);}catch{}
   if(screen==='users'){render();if(!S.usersLoaded)loadUsers().then(()=>{if(S.screen==='users')render();});return;}
   if(screen==='table'){render();if(!S.tableLoaded)loadTable().then(()=>{if(S.screen==='table')render();});return;}
@@ -1428,7 +1433,7 @@ function warehouseHTML(){
     <div class="subtabs" style="display:flex;gap:22px;align-items:stretch;border-bottom:1px solid var(--border);margin:16px 0 var(--gap);">
       ${TASK_TABS.map(([k,label])=>`<button class="subtab${tab===k?' on':''}" data-tasktab="${k}">${label}${(k==='open'&&n>0)?`<span style="margin-left:7px;font-size:10px;font-weight:700;background:var(--danger);color:#fff;border-radius:9px;padding:1px 7px;vertical-align:1px;">${n}</span>`:''}</button>`).join('')}
       <span style="margin-left:auto;align-self:center;display:flex;gap:8px;">
-        ${tab!=='new'?`<button data-export="tasks" data-params="status=${tab==='done'?'done':'open'}" title="Lejupielādēt Excel failu" style="height:32px;padding:0 12px;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--ink-2);white-space:nowrap;">⭳ Excel</button>`:''}
+        ${(tab!=='new'&&!isWarehouse())?`<button data-export="tasks" data-params="status=${tab==='done'?'done':'open'}" title="Lejupielādēt Excel failu" style="height:32px;padding:0 12px;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--ink-2);white-space:nowrap;">⭳ Excel</button>`:''}
         ${bell}
       </span>
     </div>
@@ -1708,9 +1713,9 @@ function renderModal(){const m=$('#modal');
           <div class="label" style="margin-bottom:6px;">Vēsture un komentāri</div>
           <div id="rec-history">${recEventsHTML()}</div>
         </div>
-        <div style="padding:0 24px 22px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:16px;">${acts}
+        ${isWarehouse()?'':`<div style="padding:0 24px 22px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:16px;">${acts}
           <button data-recact="edit" style="height:40px;background:transparent;border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--ink-2);">✎ Rediģēt datus</button>
-        </div>
+        </div>`}
       </div></div>`;
   } else m.innerHTML='';
   bind(m);
@@ -2073,7 +2078,7 @@ function usersHTML(){
       <span style="width:34px;height:34px;flex:none;border-radius:9px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;color:var(--ink-2);">${esc(initialsOf(u.name))}</span>
       <span style="min-width:0;"><span style="display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(u.name)}</span><span class="mono" style="display:block;font-size:11px;color:var(--ink-3);">@${esc(u.username)}</span></span>
     </div>
-    <span><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;${u.role==='admin'?'background:var(--accent-soft);color:var(--accent-2);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${u.role==='admin'?'Administrators':'Personāls'}</span></span>
+    <span><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;${u.role==='admin'?'background:var(--accent-soft);color:var(--accent-2);':u.role==='warehouse'?'background:oklch(0.95 0.03 285);color:oklch(0.45 0.15 285);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${u.role==='admin'?'Administrators':u.role==='warehouse'?'Noliktava':'Personāls'}</span></span>
     <button data-reset-user="${esc(u.username)}" data-name="${esc(u.name)}" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Atiestatīt paroli</button>
     <button data-del-user="${esc(u.username)}" data-name="${esc(u.name)}" title="Dzēst lietotāju" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:13px;padding:7px 11px;cursor:pointer;color:var(--danger);">✕</button>
   </div>`).join('');
@@ -2122,7 +2127,7 @@ async function newUserDialog(){
     html:`<div style="text-align:left;display:flex;flex-direction:column;gap:12px;">
       <div><label class="label" style="display:block;margin-bottom:5px;">Vārds</label><input id="nu-name" class="swal2-input" placeholder="Jānis Bērziņš" style="margin:0;width:100%;"></div>
       <div><label class="label" style="display:block;margin-bottom:5px;">Lietotājvārds</label><input id="nu-user" class="swal2-input mono" placeholder="janis" autocapitalize="none" autocorrect="off" style="margin:0;width:100%;"></div>
-      <div><label class="label" style="display:block;margin-bottom:5px;">Loma</label><select id="nu-role" class="swal2-input" style="margin:0;width:100%;"><option value="staff">Personāls</option><option value="admin">Administrators</option></select></div>
+      <div><label class="label" style="display:block;margin-bottom:5px;">Loma</label><select id="nu-role" class="swal2-input" style="margin:0;width:100%;"><option value="staff">Personāls</option><option value="warehouse">Noliktava (tikai uzdevumi)</option><option value="admin">Administrators</option></select></div>
       <div><label class="label" style="display:block;margin-bottom:5px;">Parole</label>${passRow('nu-pass')}</div>
     </div>`,
     showCancelButton:true,confirmButtonText:'Izveidot',cancelButtonText:'Atcelt',
@@ -2238,15 +2243,23 @@ const ADMIN_SCREENS=['users','settings']; // never the screen a session reopens 
 const LAST_KEY='r1_last_view';
 function openView(v){if(SCREENS.includes(v)){document.body.classList.remove('nav-open');nav(v);}}
 function initialScreen(){
+  if(isWarehouse())return 'warehouse';
   const p=new URLSearchParams(location.search).get('view');
   if(p&&SCREENS.includes(p))return p;
   try{const v=localStorage.getItem(LAST_KEY);if(v&&SCREENS.includes(v)&&!ADMIN_SCREENS.includes(v))return v;}catch{}
   return 'home';}
 
+function isWarehouse(){return !!(S.auth&&S.auth.role==='warehouse');}
 async function startApp(){
   S.role=(S.auth&&S.auth.role==='admin')?'owner':'staff';
   paintHeader();
   nav(initialScreen());
+  if(isWarehouse()){
+    // Only the queue — every desk endpoint would 403 for this role anyway.
+    await pollTasks();
+    render();startTaskPolling();subscribePush();
+    return;
+  }
   await Promise.all([loadStats(),loadActivity(),loadCustomers(),loadPending(),pollTasks(),loadPricing()]);
   render();
   startTaskPolling();

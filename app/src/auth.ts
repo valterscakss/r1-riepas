@@ -11,7 +11,7 @@ if (SECRET === DEV_SECRET) {
   console.warn('[auth] AUTH_SECRET not set — using an insecure dev secret. Set AUTH_SECRET in production.');
 }
 
-export interface SessionUser { id: string; username: string; name: string; role: 'admin' | 'staff'; }
+export interface SessionUser { id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; }
 
 /** Settings key holding a fingerprint of the ADMIN_PASSWORD already applied. */
 const ADMIN_PW_KEY = 'admin_password_applied';
@@ -56,6 +56,20 @@ export function requireAuth(req: express.Request, res: express.Response, next: e
   if (AUTH_DISABLED()) { (req as express.Request & { user?: SessionUser }).user = DEMO_USER; return next(); }
   const u = currentUser(req);
   if (!u) return res.status(401).json({ error: { message: 'Authentication required' } });
+  (req as express.Request & { user?: SessionUser }).user = u;
+  next();
+}
+
+/**
+ * Middleware: require a desk user (admin or staff). The 'warehouse' role stops
+ * here — it may only reach the endpoints that stay on plain requireAuth: the job
+ * queue, single records, photos, comments, and push registration.
+ */
+export function requireStaff(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (AUTH_DISABLED()) { (req as express.Request & { user?: SessionUser }).user = DEMO_USER; return next(); }
+  const u = currentUser(req);
+  if (!u) return res.status(401).json({ error: { message: 'Authentication required' } });
+  if (u.role === 'warehouse') return res.status(403).json({ error: { message: 'Šī sadaļa nav pieejama noliktavas lietotājam' } });
   (req as express.Request & { user?: SessionUser }).user = u;
   next();
 }

@@ -133,6 +133,9 @@ interface Row {
   threadDepth?: string | null; smsCode?: string | null; feeEur?: string | null; preparedDate?: string | null;
 }
 
+const normRole = (r: string): 'admin' | 'staff' | 'warehouse' =>
+  r === 'admin' ? 'admin' : r === 'warehouse' ? 'warehouse' : 'staff';
+
 const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' | 'free' =>
   s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : s === 'blocked' ? 'blocked'
     : s === 'free' ? 'free' : 'active';
@@ -329,10 +332,10 @@ export class SqliteStore implements Store {
   async getUserByUsername(username: string): Promise<User | null> {
     const r = this.db.prepare('SELECT * FROM users WHERE username = ?').get(username) as
       | { id: number; username: string; name: string; password_hash: string; role: string } | undefined;
-    return r ? { id: String(r.id), username: r.username, name: r.name, passwordHash: r.password_hash, role: r.role === 'admin' ? 'admin' : 'staff' } : null;
+    return r ? { id: String(r.id), username: r.username, name: r.name, passwordHash: r.password_hash, role: normRole(r.role) } : null;
   }
 
-  async createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' }): Promise<void> {
+  async createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' | 'warehouse' }): Promise<void> {
     this.db.prepare('INSERT INTO users (username, name, password_hash, role) VALUES (?,?,?,?)')
       .run(u.username.toLowerCase(), u.name, u.passwordHash, u.role);
   }
@@ -346,12 +349,12 @@ export class SqliteStore implements Store {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
   }
 
-  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff'; createdAt: string | null }>> {
+  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; createdAt: string | null }>> {
     const rows = this.db.prepare('SELECT id, username, name, role, created_at FROM users ORDER BY created_at ASC, id ASC')
       .all() as Array<{ id: number; username: string; name: string; role: string; created_at: string | null }>;
     return rows.map((r) => ({
       id: String(r.id), username: r.username, name: r.name,
-      role: (r.role === 'admin' ? 'admin' : 'staff') as 'admin' | 'staff', createdAt: r.created_at ?? null,
+      role: (normRole(r.role)) as 'admin' | 'staff', createdAt: r.created_at ?? null,
     }));
   }
 

@@ -37,7 +37,8 @@ export interface User {
   username: string;
   name: string;
   passwordHash: string;
-  role: 'admin' | 'staff';
+  // 'warehouse' sees only the job queue and may attach photos/comments to records.
+  role: 'admin' | 'staff' | 'warehouse';
 }
 
 /** One entry in a record's action history (audit trail + comments). */
@@ -221,11 +222,11 @@ export interface Store {
   /** Create the users table if needed and seed an admin from env when empty. */
   ensureAuth(): Promise<void>;
   getUserByUsername(username: string): Promise<User | null>;
-  createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' }): Promise<void>;
+  createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' | 'warehouse' }): Promise<void>;
   setPasswordByUsername(username: string, passwordHash: string): Promise<boolean>;
   countUsers(): Promise<number>;
   /** List users WITHOUT password hashes — for admin user management. */
-  listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff'; createdAt: string | null }>>;
+  listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; createdAt: string | null }>>;
   /** Delete a user by username. Returns true if a row was removed. */
   deleteUserByUsername(username: string): Promise<boolean>;
 
