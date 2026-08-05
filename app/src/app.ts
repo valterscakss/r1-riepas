@@ -816,6 +816,16 @@ export function createApp(): express.Express {
     }
     const rec = await store.create(input);
     await logEvent(store, rec.id, 'created', b.notes, req);
+    // Hand the shelving to the warehouse: a 'store' job saying which place this
+    // set must go INTO. Ticking it done = the tires are physically on the shelf.
+    try {
+      const task = await store.createTask({
+        kind: 'store', recordId: String(rec.id), title: taskTitleFor(rec),
+        details: taskDetailsFor(rec), location: rec.location, plate: rec.plate,
+        createdBy: actorOf(req),
+      });
+      announceTask(task);
+    } catch (e) { console.error('[tasks] could not queue store job:', e); }
     res.status(201).json(rec);
   }));
 
@@ -956,7 +966,7 @@ export function createApp(): express.Express {
   };
   /** Announce a new job to every subscribed device. Fire-and-forget. */
   const announceTask = (t: { title: string; details: string | null; location: string | null; kind: string }) => {
-    const what = t.kind === 'prepare' ? 'Sagatavot riepas' : 'Jauns pasūtījums';
+    const what = t.kind === 'prepare' ? 'Sagatavot riepas' : t.kind === 'store' ? 'Novietot glabāšanā' : 'Jauns pasūtījums';
     const body = [t.location ? (t.kind === 'prepare' ? `Vieta ${t.location}` : t.location) : null, t.title, t.details].filter(Boolean).join(' · ');
     getStore()
       .then((s) => pushToAll(s, { title: `R1 · ${what}`, body: body.slice(0, 160), url: '/?view=warehouse', tag: 'r1-task' }))
@@ -1382,7 +1392,7 @@ export function createApp(): express.Express {
       const status = s === 'done' ? 'done' : s === 'all' ? undefined : 'open';
       const tasks = await store.listTasks({ status, limit: 500 });
       const out = tasks.map((t) => ({
-        Veids: t.kind === 'prepare' ? 'Sagatavot riepas' : 'Pasūtījums',
+        Veids: t.kind === 'prepare' ? 'Sagatavot riepas' : t.kind === 'store' ? 'Novietot glabāšanā' : 'Pasūtījums',
         Nosaukums: t.title, Apraksts: t.details ?? '', Vieta: t.location ?? '', 'Auto nr.': t.plate ?? '',
         Statuss: t.status === 'done' ? 'Pabeigts' : 'Darāms',
         Pieprasīja: t.createdBy ?? '', Izveidots: t.createdAt ?? '',

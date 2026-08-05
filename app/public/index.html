@@ -1388,7 +1388,7 @@ async function recalcPrices(){
 function paintTaskBadge(){const b=document.getElementById('nav-task-badge');if(!b)return;
   const n=S.openTasks||0;
   if(n>0){b.textContent=n;b.style.display='';}else b.style.display='none';}
-const TASK_KIND={prepare:['Sagatavot riepas','var(--warn-soft)','var(--warn)'],order:['Pasūtījums','var(--accent-soft)','var(--accent-2)']};
+const TASK_KIND={prepare:['Sagatavot riepas','var(--warn-soft)','var(--warn)'],store:['Novietot glabāšanā','var(--ok-soft)','var(--ok)'],order:['Pasūtījums','var(--accent-soft)','var(--accent-2)']};
 function taskCard(t){
   const [lbl,bg,fg]=TASK_KIND[t.kind]||TASK_KIND.order;
   const w=evWhen(t.status==='done'?(t.doneAt||t.createdAt):t.createdAt);
@@ -1401,7 +1401,7 @@ function taskCard(t){
           <span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;background:${bg};color:${fg};white-space:nowrap;">${lbl}</span>
           ${t.location?`<span class="mono" style="font-size:12px;font-weight:600;padding:3px 9px;border-radius:6px;background:var(--ink);color:#fff;">${esc(t.location)}</span>`:''}
         </div>
-        <div style="font-weight:600;font-size:17px;word-break:break-word;${t.kind==='prepare'?"font-family:'IBM Plex Mono',monospace;":''}${done?'text-decoration:line-through;':''}">${esc(t.title)}${t.recordId
+        <div style="font-weight:600;font-size:17px;word-break:break-word;${(t.kind==='prepare'||t.kind==='store')?"font-family:'IBM Plex Mono',monospace;":''}${done?'text-decoration:line-through;':''}">${esc(t.title)}${t.recordId
           ? `<button data-taskrec="${esc(t.recordId)}" title="Atvērt ierakstu — dati un bildes" style="margin-left:9px;vertical-align:2px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-2);cursor:pointer;">Atvērt ↗</button>`
           : ''}</div>
         ${t.details?`<div style="color:var(--ink-2);font-size:14px;margin-top:4px;word-break:break-word;white-space:pre-wrap;">${esc(t.details)}</div>`:''}

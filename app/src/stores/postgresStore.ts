@@ -472,7 +472,7 @@ export class PostgresStore implements Store {
       return isNaN(d.getTime()) ? String(v) : d.toISOString();
     };
     return {
-      id: String(r.id), kind: r.kind === 'prepare' ? 'prepare' : 'order', recordId: r.record_id,
+      id: String(r.id), kind: r.kind === 'prepare' ? 'prepare' : r.kind === 'store' ? 'store' : 'order', recordId: r.record_id,
       title: r.title, details: r.details, location: r.location, plate: r.plate,
       status: r.status === 'done' ? 'done' : 'open', createdBy: r.created_by,
       createdAt: iso(r.created_at), doneBy: r.done_by, doneAt: iso(r.done_at),

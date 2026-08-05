@@ -52,15 +52,15 @@ export interface RecordEvent {
 }
 
 /**
- * A job for the warehouse worker. Two sources feed the same queue:
- *  - 'prepare' — created automatically when staff stage a set for a swap, so the
- *    warehouse knows which spot to fetch tires from;
+ * A job for the warehouse worker. Three sources feed the same queue:
+ *  - 'store'   — a new intake: put this set INTO its assigned place;
+ *  - 'prepare' — staff staged a set for a swap: fetch it OUT of its place;
  *  - 'order'   — a free-text request typed into the warehouse chat box.
  * The warehouse view shows only OPEN tasks; ticking one done makes it disappear.
  */
 export interface Task {
   id: string;
-  kind: 'prepare' | 'order';
+  kind: 'prepare' | 'order' | 'store';
   recordId: string | null;  // linked storage record (prepare tasks)
   title: string;            // headline: plate for prepares, first line for orders
   details: string | null;   // tires/notes, or the typed order text
