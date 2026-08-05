@@ -166,6 +166,7 @@ export class SqliteStore implements Store {
     try { this.db.exec('ALTER TABLE containers ADD COLUMN cells TEXT'); } catch { /* exists */ }
     try { this.db.exec('ALTER TABLE containers ADD COLUMN names TEXT'); } catch { /* exists */ }
     try { this.db.exec('ALTER TABLE containers ADD COLUMN zones TEXT'); } catch { /* exists */ }
+    try { this.db.exec('ALTER TABLE users ADD COLUMN perms TEXT'); } catch { /* exists */ }
     const count = (this.db.prepare('SELECT COUNT(*) AS n FROM storage').get() as { n: number }).n;
     if (count === 0 && seedFile && existsSync(seedFile)) this.seed(seedFile);
     // Runs after seeding too — a JSON seed predates the importer's free-spot fix.
@@ -349,13 +350,22 @@ export class SqliteStore implements Store {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
   }
 
-  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; createdAt: string | null }>> {
-    const rows = this.db.prepare('SELECT id, username, name, role, created_at FROM users ORDER BY created_at ASC, id ASC')
-      .all() as Array<{ id: number; username: string; name: string; role: string; created_at: string | null }>;
+  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; perms: string | null; createdAt: string | null }>> {
+    const rows = this.db.prepare('SELECT id, username, name, role, perms, created_at FROM users ORDER BY created_at ASC, id ASC')
+      .all() as Array<{ id: number; username: string; name: string; role: string; perms: string | null; created_at: string | null }>;
     return rows.map((r) => ({
       id: String(r.id), username: r.username, name: r.name,
-      role: (normRole(r.role)) as 'admin' | 'staff', createdAt: r.created_at ?? null,
+      role: normRole(r.role), perms: r.perms ?? null, createdAt: r.created_at ?? null,
     }));
+  }
+
+  async getUserPerms(username: string): Promise<string | null> {
+    const r = this.db.prepare('SELECT perms FROM users WHERE username = ?').get(username.toLowerCase()) as { perms: string | null } | undefined;
+    return r?.perms ?? null;
+  }
+
+  async setUserPerms(username: string, permsJson: string | null): Promise<boolean> {
+    return this.db.prepare('UPDATE users SET perms = ? WHERE username = ?').run(permsJson, username.toLowerCase()).changes > 0;
   }
 
   async deleteUserByUsername(username: string): Promise<boolean> {

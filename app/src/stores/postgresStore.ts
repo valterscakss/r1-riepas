@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS containers (
 ALTER TABLE containers ADD COLUMN IF NOT EXISTS cells TEXT;
 ALTER TABLE containers ADD COLUMN IF NOT EXISTS names TEXT;
 ALTER TABLE containers ADD COLUMN IF NOT EXISTS zones TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS perms TEXT;
 
 CREATE TABLE IF NOT EXISTS record_events (
   id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -357,19 +358,31 @@ export class PostgresStore implements Store {
     return Number(res.rows[0].n);
   }
 
-  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; createdAt: string | null }>> {
+  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; perms: string | null; createdAt: string | null }>> {
     await this.init();
-    const res = await this.pool.query<{ id: number; username: string; name: string; role: string; created_at: string | null }>(
-      'SELECT id, username, name, role, created_at FROM users ORDER BY created_at ASC, id ASC');
+    const res = await this.pool.query<{ id: number; username: string; name: string; role: string; perms: string | null; created_at: string | null }>(
+      'SELECT id, username, name, role, perms, created_at FROM users ORDER BY created_at ASC, id ASC');
     return res.rows.map((r) => ({
       id: String(r.id), username: r.username, name: r.name,
-      role: normRole(r.role), createdAt: r.created_at ? String(r.created_at) : null,
+      role: normRole(r.role), perms: r.perms ?? null, createdAt: r.created_at ? String(r.created_at) : null,
     }));
   }
 
   async deleteUserByUsername(username: string): Promise<boolean> {
     await this.init();
     const res = await this.pool.query('DELETE FROM users WHERE username = $1', [username.toLowerCase()]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async getUserPerms(username: string): Promise<string | null> {
+    await this.init();
+    const res = await this.pool.query<{ perms: string | null }>('SELECT perms FROM users WHERE username = $1', [username.toLowerCase()]);
+    return res.rows[0]?.perms ?? null;
+  }
+
+  async setUserPerms(username: string, permsJson: string | null): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('UPDATE users SET perms = $1 WHERE username = $2', [permsJson, username.toLowerCase()]);
     return (res.rowCount ?? 0) > 0;
   }
 

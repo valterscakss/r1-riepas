@@ -151,8 +151,10 @@ export class SheetsStore implements Store {
   async createUser(): Promise<void> { return this.unsupported(); }
   async setPasswordByUsername(): Promise<boolean> { return this.unsupported(); }
   async countUsers(): Promise<number> { return 0; }
-  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff'; createdAt: string | null }>> { return this.unsupported(); }
+  async listUsers(): Promise<never> { return this.unsupported(); }
   async deleteUserByUsername(): Promise<boolean> { return this.unsupported(); }
+  async getUserPerms(): Promise<null> { return null; }
+  async setUserPerms(): Promise<boolean> { return false; }
   async listContainers(): Promise<[]> { return []; }
   async createContainer(): Promise<never> { return this.unsupported(); }
   async updateContainer(): Promise<null> { return null; }

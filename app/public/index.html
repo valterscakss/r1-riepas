@@ -256,11 +256,11 @@ function paintHeader(){
   // Demo mode (AUTH_DISABLED on the server) returns a "demo" user — hide the
   // auth UI (users, logout, change-password) so it only appears with real login.
   const demo=!!(S.auth&&S.auth.username==='demo');
-  // The warehouse role lives on one screen: hide every other nav entry and the
-  // capacity meter (its stats endpoint is desk-only anyway).
-  const wh=isWarehouse();
-  document.querySelectorAll('[data-nav]').forEach(b=>{if(b.dataset.nav!=='warehouse')b.style.display=wh?'none':'';});
-  const cap=document.querySelector('aside > div:last-child');if(cap)cap.style.display=wh?'none':'';
+  // Nav follows the permission checklist: a section the user can't open isn't shown.
+  document.querySelectorAll('[data-nav]').forEach(b=>{
+    const k=NAV_PERM[b.dataset.nav];
+    if(k)b.style.display=can(k)?'':'none';});
+  const cap=document.querySelector('aside > div:last-child');if(cap)cap.style.display=can('screen.home')||can('screen.spots')?'':'none';
   const name=S.auth?(S.auth.name||S.auth.username||'—'):'—';
   const role=S.auth&&!demo?(S.auth.role==='admin'?'Administrators':S.auth.role==='warehouse'?'Noliktava':'Personāls'):'';
   const set=(id,v)=>{const el=$(id);if(el)el.textContent=v;};
@@ -271,7 +271,7 @@ function paintHeader(){
   show('#nav-settings',S.auth&&S.auth.role==='admin');
   show('#btn-logout',!demo&&!!S.auth);show('#btn-changepass',!demo&&!!S.auth);}
 
-function nav(screen){if(isWarehouse())screen='warehouse';S.screen=screen;S.selSpot=null;
+function nav(screen){const k=NAV_PERM[screen];if(k&&!can(k)){screen=firstScreen();}S.screen=screen;S.selSpot=null;
   try{localStorage.setItem('r1_last_view',screen);}catch{}
   if(screen==='users'){render();if(!S.usersLoaded)loadUsers().then(()=>{if(S.screen==='users')render();});return;}
   if(screen==='table'){render();if(!S.tableLoaded)loadTable().then(()=>{if(S.screen==='table')render();});return;}
@@ -1075,16 +1075,17 @@ function recPhotosHTML(){
   const tiles=ps.map(p=>`<div style="position:relative;">
     <img data-photobig="${esc(p.src||p.url)}" src="${esc(p.src||p.url)}" alt="Riepu foto" title="${esc(kb(p.bytes))}${p.createdBy?' · '+esc(p.createdBy):''}" loading="lazy"
       style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);cursor:zoom-in;display:block;">
-    <button data-photodel="${esc(p.id)}" title="Dzēst bildi" style="position:absolute;top:5px;right:5px;width:26px;height:26px;border-radius:7px;border:0;background:oklch(0.2 0.02 260 / .6);color:#fff;cursor:pointer;font-size:13px;line-height:1;">✕</button>
+    ${media?`<button data-photodel="${esc(p.id)}" title="Dzēst bildi" style="position:absolute;top:5px;right:5px;width:26px;height:26px;border-radius:7px;border:0;background:oklch(0.2 0.02 260 / .6);color:#fff;cursor:pointer;font-size:13px;line-height:1;">✕</button>`:''}
   </div>`).join('');
+  const media=can('act.media');
   return `<div>
     ${S.recPhotosLoading&&!ps.length?'<div style="color:var(--ink-3);font-size:12px;padding:4px 0;">Ielādē bildes…</div>':''}
     ${ps.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px;margin-bottom:10px;">${tiles}</div>`:''}
     ${S.recPhotoBusy?`<div style="color:var(--accent-2);font-size:12px;margin-bottom:8px;">${esc(S.recPhotoBusy)}</div>`:''}
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    ${media?`<div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button data-act="photo-camera" style="flex:1;min-width:130px;height:40px;background:var(--ink);color:#fff;border:0;border-radius:9px;font-weight:600;font-size:13px;cursor:pointer;">📷 Uzņemt bildi</button>
       <button data-act="photo-pick" style="flex:1;min-width:130px;height:40px;background:var(--surface);border:1px solid var(--border-2);border-radius:9px;font-weight:500;font-size:13px;cursor:pointer;color:var(--ink-2);">⭱ Izvēlēties failu</button>
-    </div>
+    </div>`:''}
     <input type="file" id="photo-cam" accept="image/*" capture="environment" style="display:none;">
     <input type="file" id="photo-file" accept="image/*" multiple style="display:none;">
     ${!ps.length&&!S.recPhotosLoading?'<div style="color:var(--ink-3);font-size:12px;margin-top:8px;">Vēl nav bilžu. Nofotografē protektoru, bojājumus vai diskus — bilde paliks pie šī ieraksta.</div>':''}
@@ -1114,13 +1115,13 @@ function recEventsHTML(){
           <span style="font-weight:600;font-size:13px;">${esc(lbl)}</span>
           <span style="font-size:11px;color:var(--ink-3);white-space:nowrap;">${esc(fmtEvDate(e.createdAt))}${e.actor?' · '+esc(e.actor):''}</span></div>
         ${e.comment?`<div style="font-size:13px;color:var(--ink-2);margin-top:2px;word-break:break-word;">${esc(e.comment)}</div>`:''}
-        ${isC?`<div style="display:flex;gap:12px;margin-top:3px;"><button data-evedit="${esc(e.id)}" style="font-size:11px;color:var(--accent);background:none;border:0;cursor:pointer;padding:0;">Labot</button><button data-evdel="${esc(e.id)}" style="font-size:11px;color:var(--danger);background:none;border:0;cursor:pointer;padding:0;">Dzēst</button></div>`:''}
+        ${(isC&&can('act.media'))?`<div style="display:flex;gap:12px;margin-top:3px;"><button data-evedit="${esc(e.id)}" style="font-size:11px;color:var(--accent);background:none;border:0;cursor:pointer;padding:0;">Labot</button><button data-evdel="${esc(e.id)}" style="font-size:11px;color:var(--danger);background:none;border:0;cursor:pointer;padding:0;">Dzēst</button></div>`:''}
       </div></div>`;}).join('');
   return `<div>${rows||'<div style="color:var(--ink-3);font-size:12px;padding:4px 0;">Nav darbību vēstures.</div>'}
-    <div style="display:flex;gap:8px;margin-top:10px;">
+    ${can('act.media')?`<div style="display:flex;gap:8px;margin-top:10px;">
       <input id="rec-comment" placeholder="Pievienot komentāru…" autocomplete="off" style="flex:1;min-width:0;height:38px;padding:0 12px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);font-size:13px;">
       <button data-act="rec-addcomment" style="height:38px;padding:0 14px;flex:none;background:var(--accent);color:#fff;border:0;border-radius:9px;font-weight:600;cursor:pointer;">Pievienot</button>
-    </div></div>`;}
+    </div>`:''}</div>`;}
 async function addRecComment(){const r=S.recData;if(!r)return;const el=document.getElementById('rec-comment');const c=(el&&el.value||'').trim();if(!c)return;
   const res=await fetch('/api/storage/'+encodeURIComponent(r.id)+'/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({comment:c})});
   const data=await res.json().catch(()=>({}));if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās pievienot');return;}
@@ -1238,6 +1239,7 @@ function updateHistList(){const c=document.getElementById('hist-list');if(c){c.i
 // plain <a download> would rely on the cookie alone and fail where it's blocked.
 const XLS_BTN='height:38px;padding:0 14px;background:var(--surface);border:1px solid var(--border-2);border-radius:9px;font-size:13px;font-weight:500;cursor:pointer;color:var(--ink-2);white-space:nowrap;';
 function exportBtn(what,params,label){
+  if(!can('act.export'))return '';
   return `<button data-export="${esc(what)}" data-params="${esc(params||'')}" title="Lejupielādēt Excel failu" style="${XLS_BTN}">⭳ ${esc(label||'Excel')}</button>`;}
 async function downloadExport(what,params){
   const url='/api/export/'+encodeURIComponent(what)+(params?('?'+params):'');
@@ -1433,7 +1435,7 @@ function warehouseHTML(){
     <div class="subtabs" style="display:flex;gap:22px;align-items:stretch;border-bottom:1px solid var(--border);margin:16px 0 var(--gap);">
       ${TASK_TABS.map(([k,label])=>`<button class="subtab${tab===k?' on':''}" data-tasktab="${k}">${label}${(k==='open'&&n>0)?`<span style="margin-left:7px;font-size:10px;font-weight:700;background:var(--danger);color:#fff;border-radius:9px;padding:1px 7px;vertical-align:1px;">${n}</span>`:''}</button>`).join('')}
       <span style="margin-left:auto;align-self:center;display:flex;gap:8px;">
-        ${(tab!=='new'&&!isWarehouse())?`<button data-export="tasks" data-params="status=${tab==='done'?'done':'open'}" title="Lejupielādēt Excel failu" style="height:32px;padding:0 12px;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--ink-2);white-space:nowrap;">⭳ Excel</button>`:''}
+        ${(tab!=='new'&&can('act.export'))?`<button data-export="tasks" data-params="status=${tab==='done'?'done':'open'}" title="Lejupielādēt Excel failu" style="height:32px;padding:0 12px;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--ink-2);white-space:nowrap;">⭳ Excel</button>`:''}
         ${bell}
       </span>
     </div>
@@ -1713,9 +1715,9 @@ function renderModal(){const m=$('#modal');
           <div class="label" style="margin-bottom:6px;">Vēsture un komentāri</div>
           <div id="rec-history">${recEventsHTML()}</div>
         </div>
-        ${isWarehouse()?'':`<div style="padding:0 24px 22px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:16px;">${acts}
-          <button data-recact="edit" style="height:40px;background:transparent;border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--ink-2);">✎ Rediģēt datus</button>
-        </div>`}
+        ${can('act.operate')||can('act.edit')?`<div style="padding:0 24px 22px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:16px;">${can('act.operate')?acts:''}
+          ${can('act.edit')?`<button data-recact="edit" style="height:40px;background:transparent;border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--ink-2);">✎ Rediģēt datus</button>`:''}
+        </div>`:''}
       </div></div>`;
   } else m.innerHTML='';
   bind(m);
@@ -1825,6 +1827,7 @@ function bind(root){
   root.querySelectorAll('[data-sort]').forEach(el=>el.addEventListener('click',()=>{const k=el.dataset.sort;
     if(S.tabSort.col===k)S.tabSort.dir=S.tabSort.dir==='asc'?'desc':'asc';else S.tabSort={col:k,dir:'asc'};updateTabContent();}));
   root.querySelectorAll('[data-reset-user]').forEach(el=>el.addEventListener('click',()=>resetUserDialog(el.dataset.resetUser,el.dataset.name)));
+  root.querySelectorAll('[data-perms-user]').forEach(el=>el.addEventListener('click',()=>permsDialog(el.dataset.permsUser,el.dataset.name)));
   root.querySelectorAll('[data-del-user]').forEach(el=>el.addEventListener('click',()=>deleteUserDialog(el.dataset.delUser,el.dataset.name)));
   root.querySelectorAll('[data-rel-issue]').forEach(el=>el.addEventListener('click',async()=>{
     const r=await ask({icon:'question',title:'Izsniegt riepas?',html:`<b class="mono">${esc(el.dataset.plate||'')}</b> · vieta ${esc(el.dataset.loc||'')}`,confirmButtonText:'Izsniegt'});
@@ -2079,7 +2082,9 @@ function usersHTML(){
       <span style="min-width:0;"><span style="display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(u.name)}</span><span class="mono" style="display:block;font-size:11px;color:var(--ink-3);">@${esc(u.username)}</span></span>
     </div>
     <span><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;${u.role==='admin'?'background:var(--accent-soft);color:var(--accent-2);':u.role==='warehouse'?'background:oklch(0.95 0.03 285);color:oklch(0.45 0.15 285);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${u.role==='admin'?'Administrators':u.role==='warehouse'?'Noliktava':'Personāls'}</span></span>
-    <button data-reset-user="${esc(u.username)}" data-name="${esc(u.name)}" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Atiestatīt paroli</button>
+    <span style="display:flex;gap:6px;">
+    ${u.role!=='admin'?`<button data-perms-user="${esc(u.username)}" data-name="${esc(u.name)}" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Tiesības</button>`:''}
+    <button data-reset-user="${esc(u.username)}" data-name="${esc(u.name)}" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Atiestatīt paroli</button></span>
     <button data-del-user="${esc(u.username)}" data-name="${esc(u.name)}" title="Dzēst lietotāju" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:13px;padding:7px 11px;cursor:pointer;color:var(--danger);">✕</button>
   </div>`).join('');
   return `<div class="page" style="padding:var(--pad);max-width:900px;margin:0 auto;">
@@ -2148,6 +2153,43 @@ async function newUserDialog(){
   if(!res.ok){alertErr(data.error?.message||'Neizdevās izveidot lietotāju');return;}
   await loadUsers();render();
   await showCredentials('Lietotājs izveidots',form.username,form.password);}
+
+// ---- Per-user permission checklist (admin) ----
+// Tick exactly what this user sees and does; unticked = hidden AND blocked
+// server-side, including the data fields (phone, names, prices, SMS codes).
+const PERM_GROUPS=[
+ ['Sadaļas',[['screen.home','Sākums'],['screen.warehouse','Noliktava'],['screen.intake','Pieņemšana'],['screen.release','Izsniegšana'],['screen.pending','Sagatavotie'],['screen.spots','Novietnes'],['screen.customers','Klienti'],['screen.table','Tabula'],['screen.analytics','Analītika'],['screen.history','Vēsture']]],
+ ['Darbības',[['act.operate','Pieņemt / izsniegt / sagatavot'],['act.edit','Rediģēt ierakstu datus'],['act.media','Pievienot bildes un komentārus'],['act.export','Eksportēt Excel']]],
+ ['Redzamie dati',[['field.customer','Klientu vārdi'],['field.phone','Telefona numuri'],['field.price','Cenas'],['field.sms','SMS kodi']]],
+];
+async function permsDialog(username,name){
+  if(!R1)return;
+  let data;
+  try{const res=await fetch('/api/users/'+encodeURIComponent(username)+'/perms');
+    data=await res.json();if(!res.ok)throw new Error(data.error?.message);}
+  catch(e){alertErr(e.message||'Neizdevās ielādēt tiesības');return;}
+  const box=(k,label)=>{const on=!!data.effective[k];const dev=data.defaults[k]!==on;
+    return `<label style="display:flex;align-items:center;gap:9px;padding:6px 4px;cursor:pointer;font-size:13px;${dev?'font-weight:600;':''}">
+      <input type="checkbox" data-pk="${k}" ${on?'checked':''} style="width:17px;height:17px;accent-color:var(--accent);cursor:pointer;">
+      <span>${label}${dev?' <span style="font-size:10px;color:var(--accent-2);">(mainīts)</span>':''}</span></label>`;};
+  const html=`<div style="text-align:left;max-height:56vh;overflow:auto;">
+    <div style="color:var(--ink-3);font-size:12px;margin-bottom:12px;">Loma: <b>${data.role==='warehouse'?'Noliktava':'Personāls'}</b> — atzīmētais nosaka, ko <b>@${esc(username)}</b> redz un drīkst. Neatzīmētie dati (telefoni, vārdi, cenas) tiek slēpti arī no servera atbildēm.</div>
+    ${PERM_GROUPS.map(([g,items])=>`<div style="margin-bottom:12px;"><div class="label" style="margin-bottom:4px;">${g}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px;">${items.map(([k,l])=>box(k,l)).join('')}</div></div>`).join('')}
+  </div>`;
+  const r=await R1.fire({title:'Tiesības · '+(name||username),width:560,html,
+    showCancelButton:true,showDenyButton:true,
+    confirmButtonText:'Saglabāt',denyButtonText:'Lomas noklusējumi',cancelButtonText:'Atcelt',
+    preConfirm:()=>{const out={};document.querySelectorAll('[data-pk]').forEach(el=>{out[el.dataset.pk]=el.checked;});return out;}});
+  if(r.isDenied){
+    const res=await fetch('/api/users/'+encodeURIComponent(username)+'/perms',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data.defaults)});
+    if(res.ok)toast('Atjaunoti lomas noklusējumi');else alertErr('Neizdevās saglabāt');
+    return;}
+  if(!r.isConfirmed||!r.value)return;
+  const res=await fetch('/api/users/'+encodeURIComponent(username)+'/perms',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(r.value)});
+  const d=await res.json().catch(()=>({}));
+  if(!res.ok||!d.ok){alertErr(d.error?.message||'Neizdevās saglabāt');return;}
+  toast('Tiesības saglabātas · stājas spēkā uzreiz');}
 
 async function resetUserDialog(username,name){
   if(!R1)return;
@@ -2226,7 +2268,7 @@ function showLogin(){
     try{const res=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
       const data=await res.json().catch(()=>({}));
       if(!res.ok){err.textContent=data.error?.message||'Neizdevās pieteikties';return;}
-      setToken(data.token||'');S.auth=data.user;_reauth=false;
+      setToken(data.token||'');S.auth=data.user;S.perms=data.perms||null;_reauth=false;
       hideLogin();await startApp();
     }catch(e){err.textContent='Savienojuma kļūda';}};
   $('#lg-submit').addEventListener('click',submit);
@@ -2242,25 +2284,28 @@ const SCREENS=['home','warehouse','intake','release','pending','spots','customer
 const ADMIN_SCREENS=['users','settings']; // never the screen a session reopens on
 const LAST_KEY='r1_last_view';
 function openView(v){if(SCREENS.includes(v)){document.body.classList.remove('nav-open');nav(v);}}
+function firstScreen(){for(const v of ['home','warehouse','table','history','spots','customers']){if(can(NAV_PERM[v]))return v;}return 'warehouse';}
 function initialScreen(){
-  if(isWarehouse())return 'warehouse';
   const p=new URLSearchParams(location.search).get('view');
   if(p&&SCREENS.includes(p))return p;
-  try{const v=localStorage.getItem(LAST_KEY);if(v&&SCREENS.includes(v)&&!ADMIN_SCREENS.includes(v))return v;}catch{}
-  return 'home';}
+  try{const v=localStorage.getItem(LAST_KEY);if(v&&SCREENS.includes(v)&&!ADMIN_SCREENS.includes(v)&&(!NAV_PERM[v]||can(NAV_PERM[v])))return v;}catch{}
+  return firstScreen();}
 
 function isWarehouse(){return !!(S.auth&&S.auth.role==='warehouse');}
+// Effective permissions from the server; admin is always all-on.
+function can(key){if(S.auth&&S.auth.role==='admin')return true;return !!(S.perms&&S.perms[key]);}
+const NAV_PERM={home:'screen.home',warehouse:'screen.warehouse',intake:'screen.intake',release:'screen.release',pending:'screen.pending',spots:'screen.spots',customers:'screen.customers',table:'screen.table',analytics:'screen.analytics',history:'screen.history'};
 async function startApp(){
   S.role=(S.auth&&S.auth.role==='admin')?'owner':'staff';
   paintHeader();
   nav(initialScreen());
-  if(isWarehouse()){
-    // Only the queue — every desk endpoint would 403 for this role anyway.
-    await pollTasks();
-    render();startTaskPolling();subscribePush();
-    return;
-  }
-  await Promise.all([loadStats(),loadActivity(),loadCustomers(),loadPending(),pollTasks(),loadPricing()]);
+  const loads=[pollTasks()];
+  if(can('screen.home')||can('screen.spots')||can('screen.intake'))loads.push(loadStats());
+  if(can('screen.home'))loads.push(loadActivity());
+  if(can('screen.customers'))loads.push(loadCustomers());
+  if(can('screen.pending'))loads.push(loadPending());
+  if(can('act.operate'))loads.push(loadPricing());
+  await Promise.all(loads);
   render();
   startTaskPolling();
   subscribePush(); // silently re-attaches an already-granted device after a reload
@@ -2284,7 +2329,7 @@ function registerSW(){
   bindTopbar();registerSW();
   try{
     const res=await fetch('/api/me');
-    if(res.ok){const d=await res.json();S.auth=d.user;hideLogin();await startApp();}
+    if(res.ok){const d=await res.json();S.auth=d.user;S.perms=d.perms||null;hideLogin();await startApp();}
     else showLogin();
   }catch{showLogin();}
 })();

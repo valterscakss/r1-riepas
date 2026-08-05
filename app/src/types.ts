@@ -226,9 +226,12 @@ export interface Store {
   setPasswordByUsername(username: string, passwordHash: string): Promise<boolean>;
   countUsers(): Promise<number>;
   /** List users WITHOUT password hashes — for admin user management. */
-  listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; createdAt: string | null }>>;
+  listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; perms: string | null; createdAt: string | null }>>;
   /** Delete a user by username. Returns true if a row was removed. */
   deleteUserByUsername(username: string): Promise<boolean>;
+  /** Per-user permission overrides (JSON of {key: boolean}), null = role defaults. */
+  getUserPerms(username: string): Promise<string | null>;
+  setUserPerms(username: string, permsJson: string | null): Promise<boolean>;
 
   // --- Storage containers (user-defined shelves/racks) ---
   /** List all defined containers, ordered by prefix. */

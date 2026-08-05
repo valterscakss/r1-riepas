@@ -12,6 +12,7 @@ import {
   AUTH_DISABLED, DEMO_USER,
 } from './auth.js';
 import { pushToAll, pushEnabled, vapidPublicKey } from './push.js';
+import { PERM_KEYS, ROLE_DEFAULTS, effectivePerms, bustPerms, requirePerm, requireAnyPerm, attachPerms, permsOf, redactRecord, redactAll, type PermKey } from './perms.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -33,6 +34,10 @@ const cookieOpts = {
 
 export function createApp(): express.Express {
   const app = express();
+  // Permission gates bound to this app's store.
+  const P = (key: PermKey) => requirePerm(getStore, key);
+  const PAny = (keys: PermKey[]) => requireAnyPerm(getStore, keys);
+  const PAttach = attachPerms(getStore);
   app.use(express.json());
   app.use(cookieParser());
 
@@ -49,9 +54,10 @@ export function createApp(): express.Express {
     const session = toSession(user);
     const token = signToken(session);
     res.cookie(COOKIE, token, cookieOpts);
+    const perms = await effectivePerms(store, session);
     // Also return the token so the SPA can store it and send it as a Bearer
     // header — this keeps login working even when the browser blocks cookies.
-    res.json({ user: session, token });
+    res.json({ user: session, token, perms });
   }));
 
   app.post('/api/logout', (_req, res) => {
@@ -59,12 +65,15 @@ export function createApp(): express.Express {
     res.json({ ok: true });
   });
 
-  app.get('/api/me', (req, res) => {
-    if (AUTH_DISABLED()) return res.json({ user: DEMO_USER });
+  app.get('/api/me', asyncH(async (req, res) => {
+    if (AUTH_DISABLED()) {
+      const all = Object.fromEntries(PERM_KEYS.map((k) => [k, true]));
+      return res.json({ user: DEMO_USER, perms: all });
+    }
     const u = currentUser(req);
     if (!u) return res.status(401).json({ error: { message: 'Not authenticated' } });
-    res.json({ user: u });
-  });
+    res.json({ user: u, perms: await effectivePerms(await getStore(), u) });
+  }));
 
   app.get('/api/health', asyncH(async (_req, res) => {
     const store = await getStore();
@@ -72,23 +81,23 @@ export function createApp(): express.Express {
   }));
 
   // --- Data (auth required) ---
-  app.get('/api/storage', requireStaff, asyncH(async (req, res) => {
+  app.get('/api/storage', P('screen.table'), asyncH(async (req, res) => {
     const store = await getStore();
     const status = req.query.status === 'released' ? 'released' : req.query.status === 'active' ? 'active' : undefined;
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
-    const records = await store.list({ status, q });
+    const records = redactAll(await store.list({ status, q }), permsOf(req));
     res.json({ count: records.length, records });
   }));
 
-  app.get('/api/storage/:id', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/storage/:id', requireAuth, PAttach, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.get(req.params.id);
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
-    res.json(rec);
+    res.json(redactRecord(rec, permsOf(req)));
   }));
 
   // Manual edit of a record's data fields (Tabula). Only allowlisted keys are applied.
-  app.patch('/api/storage/:id', requireStaff, asyncH(async (req, res) => {
+  app.patch('/api/storage/:id', P('act.edit'), asyncH(async (req, res) => {
     const store = await getStore();
     const EDITABLE = ['season', 'location', 'plate', 'makeModel', 'customerName', 'phone',
       'size1', 'brand', 'quantity', 'size2', 'rimNote', 'notes', 'intakeDate', 'releaseDate',
@@ -132,7 +141,7 @@ export function createApp(): express.Express {
     res.json({ ok: true, record: rec });
   }));
 
-  app.get('/api/lookup', requireStaff, asyncH(async (req, res) => {
+  app.get('/api/lookup', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const raw = typeof req.query.plate === 'string' ? req.query.plate : '';
     const plate = raw.toUpperCase().replace(/\s+/g, '');
@@ -156,7 +165,7 @@ export function createApp(): express.Express {
   }));
 
   // Live plate suggestions for the intake typeahead dropdown.
-  app.get('/api/plate-suggest', requireStaff, asyncH(async (req, res) => {
+  app.get('/api/plate-suggest', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
     if (q.length < 2) return res.json({ suggestions: [] });
@@ -184,7 +193,7 @@ export function createApp(): express.Express {
 
   // Company typeahead for intake: distinct company names already on file, so a
   // returning company is picked rather than retyped into a second spelling.
-  app.get('/api/company-suggest', requireStaff, asyncH(async (req, res) => {
+  app.get('/api/company-suggest', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase();
     const all = await store.list();
@@ -392,7 +401,7 @@ export function createApp(): express.Express {
   };
 
   // Stats for dashboard + spots grid (design: containers, capacity, activity).
-  app.get('/api/stats', requireStaff, asyncH(async (_req, res) => {
+  app.get('/api/stats', PAny(['screen.home','screen.spots','screen.intake']), asyncH(async (_req, res) => {
     const { spots, occupied, all, defs, layouts, zoneCaps, zoneLoad } = await spotUniverse();
     const defByPrefix = new Map(defs.map((d) => [d.prefix, d]));
     const spotView = (code: string, zone?: { name: string; cap: number; span: number; hspan: number }) => {
@@ -564,12 +573,12 @@ export function createApp(): express.Express {
     };
   };
 
-  app.get('/api/analytics', requireStaff, asyncH(async (req, res) => {
+  app.get('/api/analytics', P('screen.analytics'), asyncH(async (req, res) => {
     res.json(await analyticsData(req));
   }));
 
   // Recent activity feed (intakes + releases by date).
-  app.get('/api/activity', requireStaff, asyncH(async (_req, res) => {
+  app.get('/api/activity', P('screen.home'), asyncH(async (_req, res) => {
     const store = await getStore();
     const all = await store.list();
     const byId = new Map(all.map((r) => [String(r.id), r]));
@@ -606,6 +615,7 @@ export function createApp(): express.Express {
   // the UI can open the full record (data, comments, photos) behind it.
   const buildHistory = async (req: express.Request) => {
     const store = await getStore();
+    const perms = permsOf(req);
     const all = await store.list();
     const byId = new Map(all.map((r) => [String(r.id), r]));
     type H = { type: string; d: string; plate: string | null; loc: string | null; recordId: string | null; comment: string | null; actor: string | null; cust: string | null; tires: string | null };
@@ -618,14 +628,14 @@ export function createApp(): express.Express {
       const r = byId.get(String(e.recordId));
       if (e.action === 'created') hasCreated.add(String(e.recordId));
       if (e.action === 'released' || e.action === 'swapped') hasReleased.add(String(e.recordId));
-      ev.push({ type: e.action, d: e.createdAt ?? '', plate: r?.plate ?? null, loc: r?.location ?? null, recordId: r ? String(r.id) : null, comment: e.comment, actor: e.actor, cust: r?.customerName ?? null, tires: tiresOf(r) });
+      ev.push({ type: e.action, d: e.createdAt ?? '', plate: r?.plate ?? null, loc: r?.location ?? null, recordId: r ? String(r.id) : null, comment: e.comment, actor: e.actor, cust: perms['field.customer'] ? (r?.customerName ?? null) : null, tires: tiresOf(r) });
     }
     const today = new Date().toISOString().slice(0, 10);
     for (const r of all) {
       if (r.intakeDate && r.intakeDate <= today && !hasCreated.has(String(r.id)))
-        ev.push({ type: 'in', d: r.intakeDate, plate: r.plate, loc: r.location, recordId: String(r.id), comment: null, actor: null, cust: r.customerName, tires: tiresOf(r) });
+        ev.push({ type: 'in', d: r.intakeDate, plate: r.plate, loc: r.location, recordId: String(r.id), comment: null, actor: null, cust: perms['field.customer'] ? r.customerName : null, tires: tiresOf(r) });
       if (r.releaseDate && r.releaseDate <= today && !hasReleased.has(String(r.id)))
-        ev.push({ type: 'out', d: r.releaseDate, plate: r.plate, loc: r.location, recordId: String(r.id), comment: null, actor: null, cust: r.customerName, tires: tiresOf(r) });
+        ev.push({ type: 'out', d: r.releaseDate, plate: r.plate, loc: r.location, recordId: String(r.id), comment: null, actor: null, cust: perms['field.customer'] ? r.customerName : null, tires: tiresOf(r) });
     }
     // Filters. Dates compare on the date part, so a full-timestamp event on the
     // "to" day is still included.
@@ -643,7 +653,7 @@ export function createApp(): express.Express {
     return list;
   };
 
-  app.get('/api/history', requireStaff, asyncH(async (req, res) => {
+  app.get('/api/history', P('screen.history'), asyncH(async (req, res) => {
     const list = await buildHistory(req);
     const PAGE = 50;
     const page = Math.max(1, Math.trunc(Number(req.query.page)) || 1);
@@ -654,7 +664,7 @@ export function createApp(): express.Express {
   }));
 
   // Customers view: grouped by name+plate with storage history.
-  app.get('/api/customers', requireStaff, asyncH(async (req, res) => {
+  app.get('/api/customers', P('screen.customers'), asyncH(async (req, res) => {
     const store = await getStore();
     const q = typeof req.query.q === 'string' ? req.query.q.trim().toUpperCase() : '';
     const type = typeof req.query.type === 'string' ? req.query.type : '';
@@ -706,7 +716,7 @@ export function createApp(): express.Express {
   // Reclassify a whole customer at once. The importer guesses company-vs-private
   // from the sheet and gets it wrong for names like "Sandijs"; a customer with
   // hundreds of visits can't be corrected record by record.
-  app.post('/api/customers/type', requireStaff, asyncH(async (req, res) => {
+  app.post('/api/customers/type', P('screen.customers'), asyncH(async (req, res) => {
     const store = await getStore();
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     if (!name) return res.status(400).json({ error: { message: 'Trūkst klienta vārda' } });
@@ -716,7 +726,7 @@ export function createApp(): express.Express {
   }));
 
   // Full storage history for a single vehicle (all seasons), for the spot panel.
-  app.get('/api/vehicle', requireStaff, asyncH(async (req, res) => {
+  app.get('/api/vehicle', PAny(['screen.spots','screen.customers']), asyncH(async (req, res) => {
     const store = await getStore();
     const plate = String(req.query.plate ?? '').toUpperCase().replace(/\s+/g, '');
     if (!plate) return res.status(400).json({ error: { message: 'plate is required' } });
@@ -733,7 +743,7 @@ export function createApp(): express.Express {
   }));
 
   // Release lookup: find ACTIVE stored sets by SMS code, plate, or location.
-  app.get('/api/release-lookup', requireStaff, asyncH(async (req, res) => {
+  app.get('/api/release-lookup', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
     if (!q) return res.json({ q: '', results: [] });
@@ -753,7 +763,7 @@ export function createApp(): express.Express {
     res.json({ q, results });
   }));
 
-  app.post('/api/intake', requireStaff, asyncH(async (req, res) => {
+  app.post('/api/intake', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const b = req.body ?? {};
     if (!b.plate) {
@@ -809,7 +819,7 @@ export function createApp(): express.Express {
     res.status(201).json(rec);
   }));
 
-  app.post('/api/storage/:id/release', requireStaff, asyncH(async (req, res) => {
+  app.post('/api/storage/:id/release', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.release(req.params.id, { releaseDate: req.body?.releaseDate });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -820,7 +830,7 @@ export function createApp(): express.Express {
   }));
 
   // Stage a set for a seasonal swap: tires out, spot stays reserved ('prepared').
-  app.post('/api/storage/:id/prepare', requireStaff, asyncH(async (req, res) => {
+  app.post('/api/storage/:id/prepare', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.prepare(req.params.id, {});
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -839,7 +849,7 @@ export function createApp(): express.Express {
     res.json({ ...rec, task });
   }));
   // Undo a prepare — put the set back in its spot ('active').
-  app.post('/api/storage/:id/unprepare', requireStaff, asyncH(async (req, res) => {
+  app.post('/api/storage/:id/unprepare', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.prepare(req.params.id, { active: true });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -883,7 +893,7 @@ export function createApp(): express.Express {
   }));
 
   // Manually block/reserve an empty spot (no tires) so it's unavailable.
-  app.post('/api/spots/:code/block', requireStaff, asyncH(async (req, res) => {
+  app.post('/api/spots/:code/block', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const code = String(req.params.code).toUpperCase().replace(/\s+/g, '');
     if (!SPOT_RE.test(code)) return res.status(400).json({ error: { message: 'Nederīga vietas norāde' } });
@@ -895,7 +905,7 @@ export function createApp(): express.Express {
     res.status(201).json(rec);
   }));
   // Unblock: remove the placeholder that was holding the spot.
-  app.post('/api/storage/:id/unblock', requireStaff, asyncH(async (req, res) => {
+  app.post('/api/storage/:id/unblock', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.get(req.params.id);
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -909,7 +919,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     res.json({ events: await store.listEvents(req.params.id) });
   }));
-  app.post('/api/storage/:id/events', requireAuth, asyncH(async (req, res) => {
+  app.post('/api/storage/:id/events', P('act.media'), asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.get(req.params.id);
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -918,14 +928,14 @@ export function createApp(): express.Express {
     const ev = await store.addEvent({ recordId: req.params.id, action: 'comment', comment: comment.slice(0, 500), actor: actorOf(req) });
     res.status(201).json({ ok: true, event: ev });
   }));
-  app.patch('/api/events/:id', requireAuth, asyncH(async (req, res) => {
+  app.patch('/api/events/:id', P('act.media'), asyncH(async (req, res) => {
     const store = await getStore();
     const comment = typeof req.body?.comment === 'string' ? req.body.comment.trim().slice(0, 500) : '';
     const ev = await store.updateEvent(req.params.id, comment || null);
     if (!ev) return res.status(404).json({ error: { message: 'Not found' } });
     res.json({ ok: true, event: ev });
   }));
-  app.delete('/api/events/:id', requireAuth, asyncH(async (req, res) => {
+  app.delete('/api/events/:id', P('act.media'), asyncH(async (req, res) => {
     const store = await getStore();
     const ok = await store.deleteEvent(req.params.id);
     if (!ok) return res.status(404).json({ error: { message: 'Not found' } });
@@ -1006,7 +1016,7 @@ export function createApp(): express.Express {
   // --- Pricing settings (Iestatījumi) ---------------------------------------
   // Everyone may READ the rules (the intake screen mirrors them live); only an
   // admin may change them or reprice stored sets.
-  app.get('/api/pricing', requireStaff, asyncH(async (_req, res) => {
+  app.get('/api/pricing', P('act.operate'), asyncH(async (_req, res) => {
     res.json({ pricing: await loadPricing(), defaults: DEFAULT_PRICING });
   }));
 
@@ -1101,7 +1111,7 @@ export function createApp(): express.Express {
     res.json({ photos: photos.map((p) => ({ ...p, url: `/api/photos/${p.id}` })) });
   }));
 
-  app.post('/api/storage/:id/photos', requireAuth, photoUpload.single('photo'), asyncH(async (req, res) => {
+  app.post('/api/storage/:id/photos', P('act.media'), photoUpload.single('photo'), asyncH(async (req, res) => {
     const store = await getStore();
     const file = (req as express.Request & { file?: { buffer: Buffer; mimetype: string } }).file;
     if (!file) return res.status(400).json({ error: { message: 'Fails nav pievienots' } });
@@ -1128,7 +1138,7 @@ export function createApp(): express.Express {
     res.send(p.data);
   }));
 
-  app.delete('/api/photos/:id', requireAuth, asyncH(async (req, res) => {
+  app.delete('/api/photos/:id', P('act.media'), asyncH(async (req, res) => {
     const store = await getStore();
     const ok = await store.deletePhoto(req.params.id);
     if (!ok) return res.status(404).json({ error: { message: 'Bilde nav atrasta' } });
@@ -1136,7 +1146,7 @@ export function createApp(): express.Express {
   }));
 
   // --- Storage containers (user-defined shelves/racks) ---
-  app.get('/api/containers', requireStaff, asyncH(async (_req, res) => {
+  app.get('/api/containers', PAny(['screen.spots','screen.intake']), asyncH(async (_req, res) => {
     const store = await getStore();
     res.json({ containers: await store.listContainers() });
   }));
@@ -1253,7 +1263,7 @@ export function createApp(): express.Express {
   }));
 
   // Pending swaps: every 'prepared' set, newest first, shaped for the sidebar.
-  app.get('/api/pending', requireStaff, asyncH(async (_req, res) => {
+  app.get('/api/pending', P('screen.pending'), asyncH(async (_req, res) => {
     const store = await getStore();
     const recs = (await store.list({ status: 'prepared' }))
       .sort((a, b) => (b.preparedDate ?? '').localeCompare(a.preparedDate ?? ''));
@@ -1291,14 +1301,14 @@ export function createApp(): express.Express {
     active: 'Glabājas', prepared: 'Rezervēts', blocked: 'Bloķēts', released: 'Izsniegts', free: 'Brīva vieta',
   };
 
-  app.get('/api/export/:what', requireStaff, asyncH(async (req, res) => {
+  app.get('/api/export/:what', P('act.export'), asyncH(async (req, res) => {
     const store = await getStore();
     const what = req.params.what;
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
 
     if (what === 'storage') {
       const status = req.query.status;
-      let rows = await store.list();
+      let rows = redactAll(await store.list(), permsOf(req));
       if (status === 'active' || status === 'released' || status === 'prepared') rows = rows.filter((r) => r.status === status);
       if (q) rows = rows.filter((r) => matches(r, q));
       const out = rows.map((r) => ({
@@ -1347,7 +1357,7 @@ export function createApp(): express.Express {
       // One row per storage entry, grouped under its client — so the sheet can be
       // pivoted or filtered per customer in Excel.
       const type = typeof req.query.type === 'string' ? req.query.type : '';
-      let all = await store.list(q ? { q } : undefined);
+      let all = redactAll(await store.list(q ? { q } : undefined), permsOf(req));
       if (type === 'company') all = all.filter((r) => r.isCompany);
       else if (type === 'private') all = all.filter((r) => !r.isCompany);
       const out = all
@@ -1463,6 +1473,39 @@ export function createApp(): express.Express {
     if (await store.getUserByUsername(u)) return res.status(409).json({ error: { message: 'Lietotājs ar šādu vārdu jau eksistē' } });
     await store.createUser({ username: u, name: nm, passwordHash: await hashPassword(String(password)), role: rl });
     res.json({ ok: true, user: { username: u, name: nm, role: rl } });
+  }));
+
+  // Per-user permission checklist (admin): read effective + overrides, save overrides.
+  app.get('/api/users/:username/perms', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const u = String(req.params.username ?? '').trim().toLowerCase();
+    const target = await store.getUserByUsername(u);
+    if (!target) return res.status(404).json({ error: { message: 'Lietotājs nav atrasts' } });
+    let overrides: Record<string, boolean> = {};
+    try { const raw = await store.getUserPerms(u); if (raw) overrides = JSON.parse(raw); } catch { /* ignore */ }
+    const defaults = ROLE_DEFAULTS[target.role] ?? ROLE_DEFAULTS.staff;
+    const effective = { ...defaults } as Record<string, boolean>;
+    for (const k of PERM_KEYS) if (typeof overrides[k] === 'boolean') effective[k] = overrides[k];
+    res.json({ username: u, role: target.role, keys: PERM_KEYS, defaults, overrides, effective });
+  }));
+
+  app.put('/api/users/:username/perms', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const u = String(req.params.username ?? '').trim().toLowerCase();
+    const target = await store.getUserByUsername(u);
+    if (!target) return res.status(404).json({ error: { message: 'Lietotājs nav atrasts' } });
+    if (target.role === 'admin') return res.status(400).json({ error: { message: 'Administratoram vienmēr ir visas tiesības' } });
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    // Store only real deviations from the role defaults, so changing a role later
+    // brings its new defaults instead of a stale frozen copy.
+    const defaults = ROLE_DEFAULTS[target.role] ?? ROLE_DEFAULTS.staff;
+    const overrides: Record<string, boolean> = {};
+    for (const k of PERM_KEYS) {
+      if (typeof body[k] === 'boolean' && body[k] !== defaults[k]) overrides[k] = body[k] as boolean;
+    }
+    await store.setUserPerms(u, Object.keys(overrides).length ? JSON.stringify(overrides) : null);
+    bustPerms(u);
+    res.json({ ok: true, overrides });
   }));
 
   app.post('/api/users/:username/reset', requireAdmin, asyncH(async (req, res) => {
