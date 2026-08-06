@@ -243,7 +243,9 @@ async function loadCustomers(){const p=new URLSearchParams();
   try{S.customers=(await(await fetch('/api/customers'+qs)).json()).customers||[];}catch{S.customers=[];}}
 async function loadPricing(){try{const d=await(await fetch('/api/pricing')).json();if(d&&d.pricing)S.pricing=d.pricing;}catch{}}
 async function loadTasks(){try{const d=await(await fetch('/api/tasks?status='+(S.taskTab==='done'?'done':'open'))).json();
-    S.tasks=d.tasks||[];S.openTasks=d.open||0;}catch{S.tasks=[];}
+    S.tasks=d.tasks||[];S.openTasks=d.open||0;
+    if((S.taskTab||'open')==='open')_taskSnap=JSON.stringify(S.tasks); // keep the poll's change detector in sync
+  }catch{S.tasks=[];}
   S.tasksLoaded=true;paintTaskBadge();}
 
 function paintSidebar(){const st=S.stats;if(!st)return;
@@ -1387,6 +1389,9 @@ async function recalcPrices(){
 // screen is exactly what still has to be brought.
 function paintTaskBadge(){const b=document.getElementById('nav-task-badge');if(!b)return;
   const n=S.openTasks||0;
+  const want=n>0?String(n):'';
+  if(b.dataset.v===want)return; // unchanged → leave the DOM alone
+  b.dataset.v=want;
   if(n>0){b.textContent=n;b.style.display='';}else b.style.display='none';}
 const TASK_KIND={prepare:['Sagatavot riepas','var(--warn-soft)','var(--warn)'],store:['Novietot glabāšanā','var(--ok-soft)','var(--ok)'],order:['Pasūtījums','var(--accent-soft)','var(--accent-2)']};
 function taskCard(t){
@@ -1432,7 +1437,7 @@ function warehouseHTML(){
   return `<div class="page" style="padding:var(--pad);max-width:840px;margin:0 auto;">
     <h1 style="margin:0;font-size:24px;font-weight:600;">Noliktava</h1>
     <div id="task-sub" style="color:var(--ink-3);font-size:13px;margin-top:4px;">${esc(sub)}</div>
-    <div class="subtabs" style="display:flex;gap:22px;align-items:stretch;border-bottom:1px solid var(--border);margin:16px 0 var(--gap);">
+    <div class="subtabs" style="display:flex;gap:4px 22px;align-items:stretch;flex-wrap:wrap;border-bottom:1px solid var(--border);margin:16px 0 var(--gap);">
       ${TASK_TABS.map(([k,label])=>`<button class="subtab${tab===k?' on':''}" data-tasktab="${k}">${label}${(k==='open'&&n>0)?`<span style="margin-left:7px;font-size:10px;font-weight:700;background:var(--danger);color:#fff;border-radius:9px;padding:1px 7px;vertical-align:1px;">${n}</span>`:''}</button>`).join('')}
       <span style="margin-left:auto;align-self:center;display:flex;gap:8px;">
         ${(tab!=='new'&&can('act.export'))?`<button data-export="tasks" data-params="status=${tab==='done'?'done':'open'}" title="Lejupielādēt Excel failu" style="height:32px;padding:0 12px;background:var(--surface);border:1px solid var(--border-2);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--ink-2);white-space:nowrap;">⭳ Excel</button>`:''}
@@ -1525,7 +1530,7 @@ async function subscribePush(){
   }catch(e){console.warn('push subscribe failed',e);return false;}}
 // Poll for new jobs. Keeps the badge live everywhere in the app and — when real
 // push isn't configured — raises a local notification for anything new.
-let _seenTasks=null,_taskPoll=null;
+let _seenTasks=null,_taskPoll=null,_taskSnap='';
 async function pollTasks(){
   if(!S.auth)return;
   let list=[];
@@ -1536,10 +1541,15 @@ async function pollTasks(){
     const fresh=list.filter(t=>!_seenTasks.has(String(t.id)));
     // Skip local alerts when the server pushes them — otherwise the phone buzzes twice.
     if(fresh.length&&!S.pushOn&&typeof Notification!=='undefined'&&Notification.permission==='granted'&&document.visibilityState!=='visible'){
-      fresh.slice(0,3).forEach(t=>{try{new Notification(t.kind==='prepare'?'R1 · Sagatavot riepas':'R1 · Jauns pasūtījums',
+      fresh.slice(0,3).forEach(t=>{try{new Notification(t.kind==='prepare'?'R1 · Sagatavot riepas':t.kind==='store'?'R1 · Novietot glabāšanā':'R1 · Jauns pasūtījums',
         {body:[t.location?'Vieta '+t.location:'',t.title,t.details].filter(Boolean).join(' · ').slice(0,160),icon:'/icon-192.png',tag:'r1-task-'+t.id});}catch{}});}
   }
   _seenTasks=ids;
+  // Rebuild the visible list ONLY when the tasks actually changed. Rewriting the
+  // same HTML every 20 s made the whole queue blink on an idle screen.
+  const snap=JSON.stringify(list);
+  if(snap===_taskSnap)return;
+  _taskSnap=snap;
   if(S.screen==='warehouse'&&(S.taskTab||'open')==='open'){S.tasks=list;S.tasksLoaded=true;updateTaskList();}}
 function startTaskPolling(){if(_taskPoll)clearInterval(_taskPoll);_taskPoll=setInterval(pollTasks,20000);
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')pollTasks();});}
