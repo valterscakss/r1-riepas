@@ -1784,7 +1784,7 @@ function bind(root){
     const from=el.dataset.renamespot;
     const {value:name}=await R1.fire({title:'Pārdēvēt vietu',input:'text',inputValue:from,
       inputAttributes:{style:'text-transform:uppercase;font-family:IBM Plex Mono,monospace;'},
-      html:`<div style="font-size:13px;color:var(--ink-2);text-align:left;">Jaunais nosaukums vietai <b class="mono">${esc(from)}</b>. Formāts: burti + numurs (piem. <b class="mono">B7</b>).<br><span style="color:var(--ink-3);font-size:12px;">Visi ieraksti šajā vietā pāries uz jauno nosaukumu.</span></div>`,
+      html:`<div style="font-size:13px;color:var(--ink-2);text-align:left;">Jaunais nosaukums vietai <b class="mono">${esc(from)}</b> — līdz 10 burtiem/cipariem, piem. <b class="mono">B7</b> vai <b class="mono">PLAUKTS-1</b>.<br><span style="color:var(--ink-3);font-size:12px;">Visi ieraksti šajā vietā pāries uz jauno nosaukumu.</span></div>`,
       showCancelButton:true,confirmButtonText:'Pārdēvēt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'}});
     if(!name)return;
     const res=await fetch('/api/spots/'+encodeURIComponent(from)+'/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});

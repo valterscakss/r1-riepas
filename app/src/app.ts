@@ -876,19 +876,23 @@ export function createApp(): express.Express {
     const store = await getStore();
     const from = String(req.params.code).toUpperCase().replace(/\s+/g, '');
     const to = String(req.body?.name ?? '').toUpperCase().replace(/\s+/g, '');
-    if (!/^[A-ZĀ-Ž]{1,4}\d{1,3}$/.test(to)) {
-      return res.status(400).json({ error: { message: 'Nosaukums: 1–4 burti + numurs (piem. B7)' } });
+    // Free-form names: letters, digits and dashes, up to 10 chars ("PLAUKTS-1").
+    if (!/^[A-ZĀ-Ž0-9-]{1,10}$/.test(to) || !/[A-ZĀ-Ž0-9]/.test(to)) {
+      return res.status(400).json({ error: { message: 'Nosaukums: 1–10 burti/cipari/domuzīmes (piem. B7 vai PLAUKTS-1)' } });
     }
     if (from === to) return res.json({ ok: true, changed: 0, name: to });
     const { spots, layouts, defs } = await spotUniverse();
     if (!spots.some((s) => s.code === from)) return res.status(404).json({ error: { message: 'Vieta nav atrasta' } });
     if (spots.some((s) => s.code === to)) return res.status(409).json({ error: { message: `Vieta ${to} jau eksistē` } });
     // If the place belongs to a drawn container, persist the name by position so
-    // it survives with no record to carry it.
+    // it survives with no record to carry it. Any name works here — the layout
+    // itself keeps the place on the grid.
+    let inDrawn = false;
     for (const d of defs) {
       const layout = layouts.get(d.prefix) ?? [];
       const idx = layout.findIndex((c) => c && c.code === from && !('zone' in c && c.zone));
       if (idx >= 0) {
+        inDrawn = true;
         let names: Record<string, string> = {};
         try { names = d.names ? JSON.parse(d.names) : {}; } catch { /* ignore */ }
         // Renaming back to the automatic code just clears the alias.
@@ -898,6 +902,14 @@ export function createApp(): express.Express {
         break;
       }
     }
+    // A spot that exists only through its records has nothing to anchor a
+    // free-form name to — the grid reconstructs it from "letters + number", so
+    // any other shape would drop it off the Novietnes map entirely.
+    if (!inDrawn && !SPOT_RE.test(to)) {
+      return res.status(400).json({
+        error: { message: 'Šī vieta nav uzzīmētā konteinerā, tāpēc nosaukumam jābūt burti+numurs (piem. B7). Brīvs nosaukums iespējams vietām, kuru konteiners ir izveidots sadaļā Novietnes.' },
+      });
+    }
     const changed = await store.renameLocation(from, to);
     res.json({ ok: true, changed, name: to });
   }));
@@ -906,7 +918,8 @@ export function createApp(): express.Express {
   app.post('/api/spots/:code/block', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const code = String(req.params.code).toUpperCase().replace(/\s+/g, '');
-    if (!SPOT_RE.test(code)) return res.status(400).json({ error: { message: 'Nederīga vietas norāde' } });
+    // Membership in the spot universe is the real check — custom-named places
+    // (PLAUKTS-1) don't match the letters+number pattern but are perfectly valid.
     const { spots, occupied } = await spotUniverse();
     if (!spots.some((s) => s.code === code)) return res.status(404).json({ error: { message: 'Nezināma vieta' } });
     if (occupied.has(code)) return res.status(409).json({ error: { message: 'Vieta jau ir aizņemta' } });
