@@ -749,10 +749,14 @@ export function createApp(): express.Express {
     if (!q) return res.json({ q: '', results: [] });
     const active = await store.list({ status: 'active' });
     const norm = (s: string | null) => String(s ?? '').toUpperCase().replace(/\s+/g, '');
-    const exact = active.filter((r) => norm(r.smsCode) === q || norm(r.plate) === q || norm(r.location) === q);
+    // Most recently stored first: when a plate matches several seasons, the set
+    // that came in last is the one being asked about.
+    const newest = (a: StorageRecord, b: StorageRecord) =>
+      String(b.intakeDate ?? '').localeCompare(String(a.intakeDate ?? '')) || (Number(b.id) || 0) - (Number(a.id) || 0);
+    const exact = active.filter((r) => norm(r.smsCode) === q || norm(r.plate) === q || norm(r.location) === q).sort(newest);
     const chosen = exact.length
       ? exact
-      : active.filter((r) => norm(r.plate).includes(q) || norm(r.smsCode).includes(q)).slice(0, 20);
+      : active.filter((r) => norm(r.plate).includes(q) || norm(r.smsCode).includes(q)).sort(newest).slice(0, 20);
     const results = chosen.map((r) => ({
       id: r.id, plate: r.plate, cust: r.customerName, phone: r.phone, loc: r.location,
       size: r.size1, size2: r.size2, brand: r.brand, quantity: r.quantity, sms: r.smsCode,
