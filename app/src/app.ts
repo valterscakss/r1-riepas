@@ -1255,12 +1255,47 @@ export function createApp(): express.Express {
     try { names = def.names ? JSON.parse(def.names) : {}; } catch { /* ignore */ }
     const newZones = zonesJson !== undefined ? parseZones(zonesJson) : parseZones(def.zones);
     const zoneCells = new Set(newZones.flatMap((z) => z.cells));
-    const survives = new Set<string>(newZones.map((z) => z.name));
-    cellMap({ rows: grid.rows, cols: grid.cols, cells: grid.cells })
-      .forEach((on, i) => { if (on && !zoneCells.has(i)) survives.add((names[String(i)] || `${def.prefix}${i + 1}`).toUpperCase()); });
+    const activeMap = cellMap({ rows: grid.rows, cols: grid.cols, cells: grid.cells });
     // Codes this container was responsible for BEFORE the edit:
-    const { occupied, layouts, zoneLoad } = await spotUniverse();
+    const { spots, occupied, layouts, zoneLoad } = await spotUniverse();
     const before = new Set((layouts.get(def.prefix) ?? []).flatMap((c) => (c && c.code ? [c.code] : [])));
+
+    // `names` is the code each place carries, by position. The editor sends the
+    // whole map when the shape is redrawn: a cell that moves (grid resized, the
+    // drawing shifted) takes its code along, so every record already pointing at
+    // that code still lands on the same physical place. Without this, changing the
+    // column count alone would slide every code onto a different cell.
+    let namesJson: string | null | undefined = undefined;
+    if (b.names !== undefined) {
+      let raw: unknown = b.names;
+      if (typeof raw === 'string') { try { raw = raw.length ? JSON.parse(raw) : {}; } catch { raw = null; } }
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return res.status(400).json({ error: { message: 'Nederīgs vietu nosaukumu saraksts' } });
+      const next: Record<string, string> = {};
+      const used = new Map<string, number>();
+      for (const z of newZones) used.set(z.name, -1);
+      for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        const idx = Math.trunc(Number(k));
+        // Entries for cells that are gone or swallowed by a zone simply don't apply.
+        if (!Number.isFinite(idx) || idx < 0 || idx >= activeMap.length || !activeMap[idx] || zoneCells.has(idx)) continue;
+        const name = String(v ?? '').toUpperCase().replace(/\s+/g, '');
+        if (!/^[A-ZĀ-Ž0-9-]{1,10}$/.test(name) || !/[A-ZĀ-Ž0-9]/.test(name)) {
+          return res.status(400).json({ error: { message: `Vietas nosaukums "${name}": 1–10 burti/cipari/domuzīmes` } });
+        }
+        if (used.has(name)) return res.status(409).json({ error: { message: `Nosaukums ${name} atkārtojas divām vietām` } });
+        used.set(name, idx);
+        // Taking a code that belongs to a place outside this container would merge
+        // two different shelves into one.
+        if (!before.has(name) && spots.some((s) => s.code === name)) {
+          return res.status(409).json({ error: { message: `Vieta ${name} jau eksistē citur` } });
+        }
+        if (name !== `${def.prefix}${idx + 1}`) next[String(idx)] = name;
+      }
+      namesJson = Object.keys(next).length ? JSON.stringify(next) : null;
+      names = next;
+    }
+
+    const survives = new Set<string>(newZones.map((z) => z.name));
+    activeMap.forEach((on, i) => { if (on && !zoneCells.has(i)) survives.add((names[String(i)] || `${def.prefix}${i + 1}`).toUpperCase()); });
     // A zone below capacity is "assignable" and therefore absent from `occupied`,
     // but records still live on it — count it as occupied for the removal guard.
     const holds = (code: string) => occupied.has(code) || (zoneLoad.get(code)?.length ?? 0) > 0;
@@ -1274,9 +1309,67 @@ export function createApp(): express.Express {
     const updated = await store.updateContainer(def.id, {
       ...(label === undefined ? {} : { label }),
       ...(zonesJson === undefined ? {} : { zones: zonesJson }),
+      ...(namesJson === undefined ? {} : { names: namesJson }),
       rows: grid.rows, cols: grid.cols, cells: grid.cells,
     });
     res.json({ ok: true, container: updated });
+  }));
+
+  // Renumber a container: hand out clean codes prefix1…prefixN in reading order,
+  // closing the gaps that switching cells off leaves behind. Every record moves
+  // with its place, so the tires stay physically where they are — only the label
+  // on the place changes. Zones keep their own names and are skipped.
+  app.post('/api/containers/:id/renumber', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const all = await store.listContainers();
+    const def = all.find((c) => String(c.id) === String(req.params.id));
+    if (!def) return res.status(404).json({ error: { message: 'Konteiners nav atrasts' } });
+    let names: Record<string, string> = {};
+    try { names = def.names ? JSON.parse(def.names) : {}; } catch { /* ignore */ }
+    const zones = parseZones(def.zones);
+    const zoneCells = new Set(zones.flatMap((z) => z.cells));
+    const zoneNames = new Set(zones.map((z) => z.name));
+    const plan: Array<{ idx: number; from: string; to: string }> = [];
+    cellMap(def).forEach((on, i) => {
+      if (!on || zoneCells.has(i)) return;
+      const from = (names[String(i)] || `${def.prefix}${i + 1}`).toUpperCase();
+      plan.push({ idx: i, from, to: `${def.prefix}${plan.length + 1}` });
+    });
+    if (!plan.length) return res.status(400).json({ error: { message: 'Konteinerā nav numurējamu vietu' } });
+    // Never take a number that already belongs to something else.
+    const mine = new Set(plan.map((p) => p.from));
+    const { spots } = await spotUniverse();
+    const clash = plan.find((p) => p.to !== p.from && (zoneNames.has(p.to) || (spots.some((s) => s.code === p.to) && !mine.has(p.to))));
+    if (clash) return res.status(409).json({ error: { message: `Numurs ${clash.to} jau pieder citai vietai` } });
+
+    // Order the renames so each one lands on a code nothing is sitting on yet.
+    // Closing gaps only frees numbers, so this normally needs no detours; custom
+    // names can form a cycle (A→B, B→A), and that one place waits on a temp code.
+    const pending = new Map(plan.filter((p) => p.to !== p.from).map((p) => [p.from, p]));
+    const held = new Set(pending.keys());
+    const steps: Array<{ from: string; to: string }> = [];
+    const tail: Array<{ from: string; to: string }> = [];
+    const stamp = `TMP-${Date.now().toString(36).toUpperCase()}`;
+    while (pending.size) {
+      const ready = [...pending.values()].filter((p) => !held.has(p.to));
+      if (ready.length) {
+        for (const p of ready) { steps.push({ from: p.from, to: p.to }); pending.delete(p.from); held.delete(p.from); }
+        continue;
+      }
+      const p = pending.values().next().value!;
+      const tmp = `${stamp}-${tail.length}`;
+      steps.push({ from: p.from, to: tmp });
+      tail.push({ from: tmp, to: p.to });
+      pending.delete(p.from); held.delete(p.from);
+    }
+    let renamed = 0;
+    for (const s of [...steps, ...tail]) renamed += await store.renameLocation(s.from, s.to);
+    // Persist the result by position: a number that no longer matches the
+    // automatic prefix+position has to be stored as that place's name.
+    const next: Record<string, string> = {};
+    for (const p of plan) if (p.to !== `${def.prefix}${p.idx + 1}`) next[String(p.idx)] = p.to;
+    const container = await store.updateContainer(def.id, { names: Object.keys(next).length ? JSON.stringify(next) : null });
+    res.json({ ok: true, places: plan.length, changed: plan.filter((p) => p.to !== p.from).length, renamed, container });
   }));
   app.delete('/api/containers/:id', requireAdmin, asyncH(async (req, res) => {
     const store = await getStore();

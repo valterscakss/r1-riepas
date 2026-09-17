@@ -521,45 +521,101 @@ function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capP
     ${(st.containers||[]).map(c=>`<div class="card" style="padding:var(--card);">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;">
         <h2 style="margin:0;font-size:15px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Konteiners ${esc(c.letter)}${c.label?` · <span style="font-weight:400;color:var(--ink-3);">${esc(c.label)}</span>`:''}</h2>
-        <span style="display:flex;align-items:center;gap:8px;flex:none;"><span class="mono" style="font-size:12px;color:var(--ink-3);">${c.occ}/${c.total}</span>${(isAdmin&&c.defId)?`<button data-editcont="${esc(c.defId)}" data-prefix="${esc(c.letter)}" title="Rediģēt formu" style="width:22px;height:22px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:11px;line-height:1;">✎</button><button data-delcont="${esc(c.defId)}" data-prefix="${esc(c.letter)}" title="Dzēst konteineru" style="width:22px;height:22px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:12px;line-height:1;">✕</button>`:''}</span></div>
+        <span style="display:flex;align-items:center;gap:8px;flex:none;"><span class="mono" style="font-size:12px;color:var(--ink-3);">${c.occ}/${c.total}</span>${(isAdmin&&c.defId)?`<button data-editcont="${esc(c.defId)}" data-prefix="${esc(c.letter)}" title="Rediģēt formu" style="width:22px;height:22px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:11px;line-height:1;">✎</button><button data-renumcont="${esc(c.defId)}" data-prefix="${esc(c.letter)}" title="Pārnumurēt vietas secīgi" style="width:22px;height:22px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:11px;line-height:1;">№</button><button data-delcont="${esc(c.defId)}" data-prefix="${esc(c.letter)}" title="Dzēst konteineru" style="width:22px;height:22px;border-radius:6px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:pointer;font-size:12px;line-height:1;">✕</button>`:''}</span></div>
       <div style="display:grid;grid-template-columns:repeat(${c.cols||4},1fr);gap:6px;">${cellsHTML(c)}</div>
     </div>`).join('')}
   </div></div>`;}
 
 // ============ CONTAINER SHAPE EDITOR ============
 // Set a grid size, then click or drag over cells to switch places on and off, so
-// the drawing matches the real rack — L-shaped, with gaps, whatever it is. A place
-// is numbered by its POSITION (index+1), so switching a cell off never renumbers
-// the ones around it and can't silently rename a spot that holds someone's tires.
-const _cg={rows:4,cols:20,cells:[],paint:null,zones:[],zoneSel:-1};
+// the drawing matches the real rack — L-shaped, with gaps, whatever it is.
+// Every place carries its CODE (_cg.codes) through the edit: resize the grid or
+// slide the drawing and the number travels with its cell, so the records already
+// pointing at that number still land on the same physical place. New cells get the
+// lowest free number. Use "Pārnumurēt" in Novietnes to renumber cleanly instead.
+const _cg={rows:4,cols:20,cells:[],codes:[],occ:[],paint:null,zones:[],zoneSel:-1,prefix:''};
 function cgTotal(){return _cg.rows*_cg.cols;}
 function cgString(){return _cg.cells.map(v=>v?'1':'0').join('');}
 function cgCount(){return _cg.cells.reduce((a,v)=>a+(v?1:0),0);}
 const ZONE_HUES=[285,200,60,330,155,25];
 function cgZoneOf(i){return _cg.zones.findIndex(z=>z.cells.includes(i));}
+function cgPrefix(){const el=document.getElementById('cg-prefix');
+  const v=el?(el.value||'').trim().toUpperCase().replace(/\s+/g,''):'';
+  return v||_cg.prefix||'';}
+// Final code of every place: the one it already carries, else the lowest free
+// prefix+number. Inactive cells and cells swallowed by a zone get null.
+function cgAssign(){
+  const pre=cgPrefix(),zc=new Set(_cg.zones.flatMap(z=>z.cells));
+  const out=new Array(_cg.cells.length).fill(null);
+  const taken=new Set(_cg.zones.map(z=>z.name));
+  _cg.cells.forEach((on,i)=>{if(on&&!zc.has(i)&&_cg.codes[i]){out[i]=_cg.codes[i];taken.add(_cg.codes[i]);}});
+  let n=1;
+  _cg.cells.forEach((on,i)=>{if(!on||zc.has(i)||out[i])return;
+    while(taken.has(pre+n))n++;
+    out[i]=pre+n;taken.add(pre+n);});
+  return out;}
+// Only codes that differ from the automatic prefix+position need storing.
+function cgNames(){const codes=cgAssign(),pre=cgPrefix(),out={};
+  codes.forEach((code,i)=>{if(code&&code!==pre+(i+1))out[String(i)]=code;});
+  return out;}
 function cgResize(rows,cols,keep){
-  const old=_cg.cells,oc=_cg.cols;
+  const old=_cg.cells,oc=_cg.cols,oCodes=_cg.codes||[],oOcc=_cg.occ||[];
   _cg.rows=rows;_cg.cols=cols;
-  const next=[];
+  const next=[],codes=[],occ=[];
   for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
-    // Preserve the drawing by grid position when the size changes.
-    next.push(keep&&old.length?(r*oc+c<old.length&&c<oc?!!old[r*oc+c]:false):true);
+    // Preserve the drawing by grid position when the size changes — and with it
+    // each place's code, so a wider grid doesn't slide the numbers sideways.
+    const src=keep&&old.length&&c<oc?r*oc+c:-1;
+    const live=src>=0&&src<old.length;
+    next.push(keep&&old.length?(live?!!old[src]:false):true);
+    codes.push(live?(oCodes[src]||null):null);
+    occ.push(live?!!oOcc[src]:false);
   }
-  _cg.cells=next;}
+  _cg.cells=next;_cg.codes=codes;_cg.occ=occ;
+  // Zones are stored as cell indices, so they have to be re-pointed as well.
+  if(keep&&old.length){
+    const remap=i=>{const r=Math.floor(i/oc),c=i%oc;return (r<rows&&c<cols)?r*cols+c:-1;};
+    _cg.zones.forEach(z=>{z.cells=z.cells.map(remap).filter(i=>i>=0);});
+  }else{_cg.zones.forEach(z=>{z.cells=[];});}}
+// Slide the whole drawing inside the grid. Cells, codes, occupancy and zones all
+// move together; anything that would fall off the edge blocks the move.
+function cgShift(dr,dc){
+  const R=_cg.rows,C=_cg.cols;
+  for(let r=0;r<R;r++)for(let c=0;c<C;c++){
+    if(!_cg.cells[r*C+c])continue;
+    const nr=r+dr,nc=c+dc;
+    if(nr<0||nr>=R||nc<0||nc>=C)return false;}
+  const cells=new Array(R*C).fill(false),codes=new Array(R*C).fill(null),occ=new Array(R*C).fill(false),remap=new Map();
+  for(let r=0;r<R;r++)for(let c=0;c<C;c++){
+    const i=r*C+c;if(!_cg.cells[i])continue;
+    const j=(r+dr)*C+(c+dc);
+    cells[j]=true;codes[j]=_cg.codes[i]||null;occ[j]=!!_cg.occ[i];remap.set(i,j);}
+  _cg.cells=cells;_cg.codes=codes;_cg.occ=occ;
+  _cg.zones.forEach(z=>{z.cells=z.cells.map(i=>remap.has(i)?remap.get(i):-1).filter(i=>i>=0);});
+  return true;}
 function cgRender(){
   const box=document.getElementById('cg-grid');if(!box)return;
+  const codes=cgAssign(),pre=cgPrefix();
   box.style.gridTemplateColumns=`repeat(${_cg.cols},minmax(0,1fr))`;
   box.innerHTML=_cg.cells.map((on,i)=>{
     const zi=cgZoneOf(i);
     let st;
     if(!on)st='background:transparent;border:1px dashed var(--border-2);color:transparent;';
     else if(zi>=0){const h=ZONE_HUES[zi%ZONE_HUES.length];st=`background:oklch(0.93 0.05 ${h});border:1px solid oklch(0.7 0.12 ${h});color:oklch(0.42 0.14 ${h});font-weight:700;`;}
+    // An occupied place is tinted: it can move, but it can't be switched off.
+    else if(_cg.occ[i])st='background:var(--surface-2);border:1px solid var(--ink-3);color:var(--ink-2);font-weight:700;';
     else st='background:var(--ok-soft);border:1px solid oklch(0.8 0.08 155);color:var(--ok);';
-    return `<button type="button" data-cg="${i}" title="${!on?'Tukšums':zi>=0?('Zona '+_cg.zones[zi].name):'Vieta'}" style="aspect-ratio:1;min-width:0;border-radius:4px;cursor:pointer;font-size:8px;line-height:1;padding:0;overflow:hidden;${st}">${!on?'':zi>=0?esc(_cg.zones[zi].name[0]):(i+1)}</button>`;
+    const code=codes[i]||'';
+    // The number is what matters at this size, so drop the prefix when the code is
+    // the plain automatic shape (D7 → 7) and show custom names in full.
+    const short=pre&&code.startsWith(pre)&&/^\d+$/.test(code.slice(pre.length))?code.slice(pre.length):code;
+    const tip=!on?'Tukšums':zi>=0?('Zona '+_cg.zones[zi].name):(code+(_cg.occ[i]?' · aizņemta':''));
+    return `<button type="button" data-cg="${i}" title="${esc(tip)}" style="aspect-ratio:1;min-width:0;border-radius:4px;cursor:pointer;font-size:8px;line-height:1;padding:0;overflow:hidden;${st}">${!on?'':zi>=0?esc(_cg.zones[zi].name[0]):esc(short)}</button>`;
   }).join('');
   const n=document.getElementById('cg-count');
   if(n){const zc=_cg.zones.reduce((a,z)=>a+z.cells.length,0);
-    n.textContent=`${cgCount()-zc} vietas + ${_cg.zones.length} zonas (${zc} rūtiņas) no ${cgTotal()} rūtiņām`;}
+    const held=_cg.cells.reduce((a,on,i)=>a+(on&&_cg.occ[i]?1:0),0);
+    n.textContent=`${cgCount()-zc} vietas + ${_cg.zones.length} zonas (${zc} rūtiņas) no ${cgTotal()} rūtiņām`+(held?` · ${held} aizņemtas`:'');}
   const zl=document.getElementById('cg-zones');
   if(zl)zl.innerHTML=_cg.zones.map((z,i)=>{const h=ZONE_HUES[i%ZONE_HUES.length];const on=_cg.zoneSel===i;
     return `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;background:oklch(0.93 0.05 ${h});color:oklch(0.42 0.14 ${h});border:2px solid ${on?`oklch(0.55 0.15 ${h})`:'transparent'};" data-cgzone="${i}">${esc(z.name)} · ${z.cells.length} rūt. · maks. ${z.cap}<button type="button" data-cgzonedel="${i}" title="Dzēst zonu" style="border:0;background:transparent;cursor:pointer;font-size:12px;color:inherit;padding:0;line-height:1;">✕</button></span>`;}).join(' ')||'<span style="color:var(--ink-3);font-size:12px;">Nav zonu.</span>';
@@ -577,6 +633,9 @@ function cgRender(){
         if(at>=0)z.cells.splice(at,1);else z.cells.push(i);
         cgRender();return;}
       const v=_cg.paint!==null?_cg.paint:!_cg.cells[i];
+      // Switching off a place that holds tires is refused here rather than at save
+      // time, so the drawing never shows a state the server will reject.
+      if(!v&&_cg.occ[i])return;
       if(_cg.cells[i]!==v){_cg.cells[i]=v;
         if(!v)_cg.zones.forEach(z=>{z.cells=z.cells.filter(x=>x!==i);});
         cgRender();}};
@@ -604,12 +663,16 @@ function cgFormHTML(opts){
     <div>
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;gap:10px;flex-wrap:wrap;">
         <span class="label">Uzzīmē formu</span>
-        <span style="display:flex;gap:6px;">
+        <span style="display:flex;gap:6px;align-items:center;">
+          <span style="display:flex;gap:2px;margin-right:4px;">
+            ${[['up','↑','Pārvietot augšup'],['left','←','Pārvietot pa kreisi'],['right','→','Pārvietot pa labi'],['down','↓','Pārvietot lejup']]
+              .map(([d,g,t])=>`<button type="button" data-cgmove="${d}" title="${t}" style="width:26px;height:26px;font-size:12px;border:1px solid var(--border-2);background:var(--surface);border-radius:6px;cursor:pointer;line-height:1;padding:0;">${g}</button>`).join('')}
+          </span>
           <button type="button" id="cg-all" style="height:26px;padding:0 9px;font-size:11px;border:1px solid var(--border-2);background:var(--surface);border-radius:6px;cursor:pointer;">Visas</button>
           <button type="button" id="cg-none" style="height:26px;padding:0 9px;font-size:11px;border:1px solid var(--border-2);background:var(--surface);border-radius:6px;cursor:pointer;">Neviena</button>
         </span>
       </div>
-      <div style="color:var(--ink-3);font-size:11px;margin-bottom:8px;">Klikšķini vai velc pāri rūtiņām, lai ieslēgtu/izslēgtu vietas. Numuri paliek pēc pozīcijas, tāpēc esošās vietas nepārnumurējas.</div>
+      <div style="color:var(--ink-3);font-size:11px;margin-bottom:8px;">Klikšķini vai velc pāri rūtiņām, lai ieslēgtu/izslēgtu vietas; ar bultiņām pārbīdi visu formu. <b>Numuri ceļo līdzi savai rūtiņai</b>, tāpēc riepas paliek tajā pašā vietā arī tad, ja maini izmēru vai pārbīdi formu. Pelēkās rūtiņas ir aizņemtas — tās nevar izslēgt.</div>
       <div id="cg-grid" style="display:grid;gap:3px;max-height:290px;overflow:auto;padding:6px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;"></div>
       <div id="cg-count" style="color:var(--ink-3);font-size:12px;margin-top:7px;"></div>
     </div>
@@ -633,8 +696,18 @@ function cgWire(){
     Swal.resetValidationMessage&&Swal.resetValidationMessage();
     cgResize(r,c,keep);cgRender();};
   ['cg-rows','cg-cols'].forEach(id=>document.getElementById(id).addEventListener('input',()=>sync(true)));
+  const pfx=document.getElementById('cg-prefix');
+  if(pfx)pfx.addEventListener('input',()=>cgRender());
+  document.querySelectorAll('[data-cgmove]').forEach(el=>el.addEventListener('click',()=>{
+    const d=el.dataset.cgmove;
+    const ok=cgShift(d==='up'?-1:d==='down'?1:0,d==='left'?-1:d==='right'?1:0);
+    if(!ok){Swal.showValidationMessage('Forma atduras pret malu — vispirms pievieno rindu vai kolonnu');return;}
+    Swal.resetValidationMessage&&Swal.resetValidationMessage();cgRender();}));
   document.getElementById('cg-all').addEventListener('click',()=>{_cg.cells=_cg.cells.map(()=>true);cgRender();});
-  document.getElementById('cg-none').addEventListener('click',()=>{_cg.cells=_cg.cells.map(()=>false);_cg.zones.forEach(z=>z.cells=[]);cgRender();});
+  document.getElementById('cg-none').addEventListener('click',()=>{
+    // Occupied places stay: a drawing tool must not be a way to delete stock.
+    _cg.cells=_cg.cells.map((_,i)=>!!_cg.occ[i]);
+    _cg.zones.forEach(z=>z.cells=z.cells.filter(i=>_cg.cells[i]));cgRender();});
   const za=document.getElementById('cg-zoneadd');
   if(za)za.addEventListener('click',()=>{
     const nameEl=document.getElementById('zn-name'),capEl=document.getElementById('zn-cap');
@@ -650,7 +723,8 @@ function cgWire(){
   cgRender();}
 async function addContainerDialog(){
   if(!R1)return;
-  cgResize(4,20,false);_cg.zones=[];_cg.zoneSel=-1;
+  _cg.zones=[];_cg.zoneSel=-1;_cg.prefix='';
+  cgResize(4,20,false);
   const {value:form}=await R1.fire({title:'Pievienot konteineru',width:640,
     html:cgFormHTML({}),
     showCancelButton:true,confirmButtonText:'Izveidot',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'},
@@ -670,20 +744,40 @@ async function editContainerDialog(id,prefix){
   const c=((S.stats&&S.stats.containers)||[]).find(x=>String(x.defId)===String(id));
   if(!c){alertErr('Konteineru var rediģēt tikai pēc tā izveides');return;}
   const rows=c.rows||Math.ceil((c.total||1)/(c.cols||4)),cols=c.cols||4;
+  _cg.prefix=prefix;_cg.zones=[];_cg.zoneSel=-1;
   cgResize(rows,cols,false);
   if(c.drawn)_cg.cells=_cg.cells.map((_,i)=>c.drawn[i]!=='0');
-  _cg.zones=(c.zones||[]).map(z=>({name:z.name,cap:z.cap,cells:[...z.cells]}));_cg.zoneSel=-1;
+  // Seed each cell with the code it carries today and whether it holds tires, so
+  // both follow the cell through every reshape instead of being derived from the
+  // position it happens to sit at.
+  _cg.codes=_cg.cells.map((_,i)=>{const s=(c.cells||[])[i];return s&&!s.zoneFill&&!s.zone&&s.code?s.code:null;});
+  _cg.occ=_cg.cells.map((_,i)=>{const s=(c.cells||[])[i];return !!(s&&!s.zoneFill&&!s.zone&&s.occ);});
+  _cg.zones=(c.zones||[]).map(z=>({name:z.name,cap:z.cap,cells:[...z.cells]}));
   const {value:form}=await R1.fire({title:'Rediģēt konteineru',width:640,
     html:cgFormHTML({prefix,label:c.label}),
     showCancelButton:true,confirmButtonText:'Saglabāt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'},
     didOpen:cgWire,willClose:cgStopPaint,
     preConfirm:()=>{if(!cgCount()){Swal.showValidationMessage('Jāatzīmē vismaz viena vieta');return false;}
-      return {rows:_cg.rows,cols:_cg.cols,cells:cgString(),zones:JSON.stringify(_cg.zones.filter(z=>z.cells.length)),label:document.getElementById('cg-label').value.trim()||null};}});
+      return {rows:_cg.rows,cols:_cg.cols,cells:cgString(),names:JSON.stringify(cgNames()),zones:JSON.stringify(_cg.zones.filter(z=>z.cells.length)),label:document.getElementById('cg-label').value.trim()||null};}});
   if(!form)return;
   const res=await fetch('/api/containers/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
   const data=await res.json().catch(()=>({}));
   if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās saglabāt');return;}
   toast('Konteiners '+prefix+' atjaunināts');
+  await loadStats();render();}
+// Give the container clean sequential numbers again: the 1st place in reading
+// order becomes prefix1, the 2nd prefix2 and so on, closing the gaps a redraw
+// leaves. The records move with their place, so the tires don't go anywhere —
+// only the label on the place changes.
+async function renumberContainerDialog(id,prefix){
+  const r=await ask({icon:'question',title:'Pārnumurēt vietas?',
+    html:`Konteinera <b class="mono">${esc(prefix||'')}</b> vietas tiks pārnumurētas secīgi (<span class="mono">${esc(prefix||'')}1, ${esc(prefix||'')}2, …</span>) pa rindām, aizpildot caurumus numerācijā.<br><br>Ieraksti pārvietojas līdzi savai vietai — riepas fiziski paliek turpat, mainās tikai vietas numurs. Pielāgotie nosaukumi tiks aizstāti ar numuriem.`,
+    confirmButtonText:'Pārnumurēt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-primary',cancelButton:'r1-btn r1-btn-ghost'}});
+  if(!r.isConfirmed)return;
+  const res=await fetch('/api/containers/'+encodeURIComponent(id)+'/renumber',{method:'POST'});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās pārnumurēt');return;}
+  toast(data.changed?`Pārnumurētas ${data.changed} vietas`:'Numerācija jau bija secīga');
   await loadStats();render();}
 async function deleteContainerDialog(id,prefix){
   const r=await ask({icon:'warning',title:'Dzēst konteineru?',html:`Konteiners <b class="mono">${esc(prefix||'')}</b> tiks izņemts. Ieraksti, kas jau atrodas šajās vietās, <b>netiks dzēsti</b> — tikai tukšās vietas vairs nerādīsies.`,confirmButtonText:'Dzēst',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal',confirmButton:'r1-btn r1-btn-danger',cancelButton:'r1-btn r1-btn-ghost'}});
@@ -1792,6 +1886,7 @@ function bind(root){
   if(rc)rc.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addRecComment();}});
   root.querySelectorAll('[data-delcont]').forEach(el=>el.addEventListener('click',(e)=>{e.stopPropagation();deleteContainerDialog(el.dataset.delcont,el.dataset.prefix);}));
   root.querySelectorAll('[data-editcont]').forEach(el=>el.addEventListener('click',(e)=>{e.stopPropagation();editContainerDialog(el.dataset.editcont,el.dataset.prefix);}));
+  root.querySelectorAll('[data-renumcont]').forEach(el=>el.addEventListener('click',(e)=>{e.stopPropagation();renumberContainerDialog(el.dataset.renumcont,el.dataset.prefix);}));
   root.querySelectorAll('[data-renamespot]').forEach(el=>el.addEventListener('click',async()=>{
     const from=el.dataset.renamespot;
     const {value:name}=await R1.fire({title:'Pārdēvēt vietu',input:'text',inputValue:from,
