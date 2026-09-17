@@ -593,11 +593,61 @@ function cgShift(dr,dc){
   _cg.cells=cells;_cg.codes=codes;_cg.occ=occ;
   _cg.zones.forEach(z=>{z.cells=z.cells.map(i=>remap.has(i)?remap.get(i):-1).filter(i=>i>=0);});
   return true;}
+// Move one whole row up or down, swapping it with its neighbour. The row's places
+// travel with it — cells, numbers and the tires on them — so reordering shelves
+// never renames anything. Returns true, 'edge', or 'zone:NAME'.
+function cgMoveRow(row,dir){
+  const R=_cg.rows,C=_cg.cols,to=row+dir;
+  if(row<0||row>=R||to<0||to>=R)return 'edge';
+  // A zone stretched over several rows would be torn in half by the swap.
+  for(const z of _cg.zones){
+    const rs=new Set(z.cells.map(i=>Math.floor(i/C)));
+    if(rs.size>1&&(rs.has(row)||rs.has(to)))return 'zone:'+z.name;}
+  const swap=arr=>{for(let c=0;c<C;c++){const a=row*C+c,b=to*C+c,t=arr[a];arr[a]=arr[b];arr[b]=t;}};
+  swap(_cg.cells);swap(_cg.codes);swap(_cg.occ);
+  _cg.zones.forEach(z=>{z.cells=z.cells.map(i=>{const r=Math.floor(i/C),c=i%C;
+    return r===row?to*C+c:r===to?row*C+c:i;});});
+  return true;}
+// Take another container's form: same rows, columns and drawing. This container
+// keeps its own numbers — each place stays on the cell it already sits at — so
+// only the shape is borrowed. Refuses if it would switch off an occupied place.
+function cgAdoptShape(src){
+  const R=Math.max(1,src.rows||0),C=Math.max(1,src.cols||0);
+  if(!R||!C)return 'empty';
+  if(R>99||C>99||R*C>600)return 'big';
+  const drawn=src.drawn||'';
+  const on=i=>drawn.length>i?drawn[i]==='1':true;
+  const oc=_cg.cols,oRows=_cg.rows;
+  // Anything occupied that the borrowed shape has no cell for stays behind.
+  const lost=[];
+  const codes=cgAssign();
+  for(let r=0;r<oRows;r++)for(let c=0;c<oc;c++){
+    const i=r*oc+c;
+    if(!_cg.cells[i]||!_cg.occ[i])continue;
+    if(r>=R||c>=C||!on(r*C+c))lost.push(codes[i]||'?');}
+  if(lost.length)return 'lost:'+lost.slice(0,8).join(', ')+(lost.length>8?' +'+(lost.length-8):'');
+  const cells=[],newCodes=[],occ=[];
+  for(let r=0;r<R;r++)for(let c=0;c<C;c++){
+    const src_=r<oRows&&c<oc?r*oc+c:-1;
+    cells.push(on(r*C+c));
+    newCodes.push(src_>=0?(_cg.codes[src_]||null):null);
+    occ.push(src_>=0?!!_cg.occ[src_]:false);}
+  const remap=i=>{const r=Math.floor(i/oc),c=i%oc;const j=(r<R&&c<C)?r*C+c:-1;return j>=0&&cells[j]?j:-1;};
+  _cg.zones.forEach(z=>{z.cells=z.cells.map(remap).filter(i=>i>=0);});
+  _cg.rows=R;_cg.cols=C;_cg.cells=cells;_cg.codes=newCodes;_cg.occ=occ;
+  const rEl=document.getElementById('cg-rows'),cEl=document.getElementById('cg-cols');
+  if(rEl)rEl.value=String(R);
+  if(cEl)cEl.value=String(C);
+  return true;}
 function cgRender(){
   const box=document.getElementById('cg-grid');if(!box)return;
   const codes=cgAssign(),pre=cgPrefix();
-  box.style.gridTemplateColumns=`repeat(${_cg.cols},minmax(0,1fr))`;
-  box.innerHTML=_cg.cells.map((on,i)=>{
+  // Cap the cell size: a rack with few columns would otherwise blow each cell up
+  // until the lower rows scroll out of sight, which is exactly when you need to
+  // see the whole shape.
+  box.style.gridTemplateColumns=`36px repeat(${_cg.cols},minmax(0,44px))`;
+  box.style.justifyContent='start';
+  const cellHTML=(on,i)=>{
     const zi=cgZoneOf(i);
     let st;
     if(!on)st='background:transparent;border:1px dashed var(--border-2);color:transparent;';
@@ -610,8 +660,17 @@ function cgRender(){
     // the plain automatic shape (D7 → 7) and show custom names in full.
     const short=pre&&code.startsWith(pre)&&/^\d+$/.test(code.slice(pre.length))?code.slice(pre.length):code;
     const tip=!on?'Tukšums':zi>=0?('Zona '+_cg.zones[zi].name):(code+(_cg.occ[i]?' · aizņemta':''));
-    return `<button type="button" data-cg="${i}" title="${esc(tip)}" style="aspect-ratio:1;min-width:0;border-radius:4px;cursor:pointer;font-size:8px;line-height:1;padding:0;overflow:hidden;${st}">${!on?'':zi>=0?esc(_cg.zones[zi].name[0]):esc(short)}</button>`;
-  }).join('');
+    return `<button type="button" data-cg="${i}" title="${esc(tip)}" style="aspect-ratio:1;min-width:0;border-radius:4px;cursor:pointer;font-size:${_cg.cols>26?8:10}px;line-height:1;padding:0;overflow:hidden;${st}">${!on?'':zi>=0?esc(_cg.zones[zi].name[0]):esc(short)}</button>`;
+  };
+  // Each row gets its own handles, so a whole shelf can be moved up or down the
+  // rack without any of its numbers changing.
+  const rowBtn=(r,dir,glyph,tip,off)=>`<button type="button" data-cgrow="${r}" data-cgdir="${dir}" title="${tip}" ${off?'disabled':''} style="width:15px;height:15px;padding:0;font-size:9px;line-height:1;border-radius:4px;border:1px solid var(--border-2);background:var(--surface);color:var(--ink-3);cursor:${off?'default':'pointer'};opacity:${off?'.3':'1'};">${glyph}</button>`;
+  const out=[];
+  for(let r=0;r<_cg.rows;r++){
+    out.push(`<div title="Rinda ${r+1}" style="display:flex;align-items:center;justify-content:center;gap:2px;">${rowBtn(r,-1,'↑','Pārvietot rindu augšup',r===0)}${rowBtn(r,1,'↓','Pārvietot rindu lejup',r===_cg.rows-1)}</div>`);
+    for(let c=0;c<_cg.cols;c++){const i=r*_cg.cols+c;out.push(cellHTML(_cg.cells[i],i));}
+  }
+  box.innerHTML=out.join('');
   const n=document.getElementById('cg-count');
   if(n){const zc=_cg.zones.reduce((a,z)=>a+z.cells.length,0);
     const held=_cg.cells.reduce((a,on,i)=>a+(on&&_cg.occ[i]?1:0),0);
@@ -619,6 +678,12 @@ function cgRender(){
   const zl=document.getElementById('cg-zones');
   if(zl)zl.innerHTML=_cg.zones.map((z,i)=>{const h=ZONE_HUES[i%ZONE_HUES.length];const on=_cg.zoneSel===i;
     return `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;background:oklch(0.93 0.05 ${h});color:oklch(0.42 0.14 ${h});border:2px solid ${on?`oklch(0.55 0.15 ${h})`:'transparent'};" data-cgzone="${i}">${esc(z.name)} · ${z.cells.length} rūt. · maks. ${z.cap}<button type="button" data-cgzonedel="${i}" title="Dzēst zonu" style="border:0;background:transparent;cursor:pointer;font-size:12px;color:inherit;padding:0;line-height:1;">✕</button></span>`;}).join(' ')||'<span style="color:var(--ink-3);font-size:12px;">Nav zonu.</span>';
+  box.querySelectorAll('[data-cgrow]').forEach(el=>el.addEventListener('click',e=>{
+    e.preventDefault();
+    const r=cgMoveRow(Number(el.dataset.cgrow),Number(el.dataset.cgdir));
+    if(r===true){Swal.resetValidationMessage&&Swal.resetValidationMessage();cgRender();return;}
+    if(typeof r==='string'&&r.startsWith('zone:'))Swal.showValidationMessage(`Zona ${r.slice(5)} stiepjas pāri vairākām rindām — vispirms noņem to`);
+  }));
   box.querySelectorAll('[data-cg]').forEach(el=>{
     const i=Number(el.dataset.cg);
     const act=()=>{
@@ -660,6 +725,16 @@ function cgFormHTML(opts){
       <div style="flex:1;"><label class="label" style="display:block;margin-bottom:5px;">Rindas</label><input id="cg-rows" type="number" min="1" max="99" value="${_cg.rows}" class="swal2-input mono" style="margin:0;width:100%;"></div>
       <div style="flex:1;"><label class="label" style="display:block;margin-bottom:5px;">Kolonnas</label><input id="cg-cols" type="number" min="1" max="99" value="${_cg.cols}" class="swal2-input mono" style="margin:0;width:100%;"></div>
     </div>
+    ${(()=>{const others=((S.stats&&S.stats.containers)||[]).filter(x=>x.defId&&x.letter!==o.prefix&&x.rows);
+      if(!others.length)return '';
+      return `<div>
+      <label class="label" style="display:block;margin-bottom:5px;">Tāda pati forma kā citam konteineram</label>
+      <div style="display:flex;gap:8px;">
+        <select id="cg-copy" class="swal2-input mono" style="margin:0;flex:1;min-width:0;height:38px;font-size:14px;padding:0 8px;">${others.map(x=>`<option value="${esc(x.letter)}">${esc(x.letter)}${x.label?' · '+esc(x.label):''} (${x.rows}\u00d7${x.cols})</option>`).join('')}</select>
+        <button type="button" id="cg-copygo" style="height:38px;padding:0 12px;font-size:12px;font-weight:600;border:1px solid var(--border-2);background:var(--surface);border-radius:8px;cursor:pointer;white-space:nowrap;">Pārņemt formu</button>
+      </div>
+      <div style="color:var(--ink-3);font-size:11px;margin-top:6px;">Pārņem izmēru un zīmējumu. Šī konteinera numuri paliek savās rūtiņās — mainās tikai forma.</div>
+    </div>`;})()}
     <div>
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;gap:10px;flex-wrap:wrap;">
         <span class="label">Uzzīmē formu</span>
@@ -672,7 +747,7 @@ function cgFormHTML(opts){
           <button type="button" id="cg-none" style="height:26px;padding:0 9px;font-size:11px;border:1px solid var(--border-2);background:var(--surface);border-radius:6px;cursor:pointer;">Neviena</button>
         </span>
       </div>
-      <div style="color:var(--ink-3);font-size:11px;margin-bottom:8px;">Klikšķini vai velc pāri rūtiņām, lai ieslēgtu/izslēgtu vietas; ar bultiņām pārbīdi visu formu. <b>Numuri ceļo līdzi savai rūtiņai</b>, tāpēc riepas paliek tajā pašā vietā arī tad, ja maini izmēru vai pārbīdi formu. Pelēkās rūtiņas ir aizņemtas — tās nevar izslēgt.</div>
+      <div style="color:var(--ink-3);font-size:11px;margin-bottom:8px;">Klikšķini vai velc pāri rūtiņām, lai ieslēgtu/izslēgtu vietas; ar bultiņām pārbīdi visu formu, bet ar ↑↓ pie rindas malas pārvieto veselu rindu. <b>Numuri ceļo līdzi savai rūtiņai</b>, tāpēc riepas paliek tajā pašā vietā arī tad, ja maini izmēru, pārbīdi formu vai samaini rindas vietām. Pelēkās rūtiņas ir aizņemtas — tās nevar izslēgt.</div>
       <div id="cg-grid" style="display:grid;gap:3px;max-height:290px;overflow:auto;padding:6px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;"></div>
       <div id="cg-count" style="color:var(--ink-3);font-size:12px;margin-top:7px;"></div>
     </div>
@@ -698,6 +773,16 @@ function cgWire(){
   ['cg-rows','cg-cols'].forEach(id=>document.getElementById(id).addEventListener('input',()=>sync(true)));
   const pfx=document.getElementById('cg-prefix');
   if(pfx)pfx.addEventListener('input',()=>cgRender());
+  const copyGo=document.getElementById('cg-copygo');
+  if(copyGo)copyGo.addEventListener('click',()=>{
+    const pick=document.getElementById('cg-copy').value;
+    const src=((S.stats&&S.stats.containers)||[]).find(x=>x.letter===pick);
+    if(!src)return;
+    const r=cgAdoptShape(src);
+    if(r===true){Swal.resetValidationMessage&&Swal.resetValidationMessage();cgRender();return;}
+    if(typeof r==='string'&&r.startsWith('lost:'))Swal.showValidationMessage(`Šīs vietas ir aizņemtas un ${pick} formā tām nav rūtiņas: ${r.slice(5)}`);
+    else if(r==='big')Swal.showValidationMessage('Pārāk liels konteiners (maks. 600 rūtiņas)');
+    else Swal.showValidationMessage('Neizdevās pārņemt formu');});
   document.querySelectorAll('[data-cgmove]').forEach(el=>el.addEventListener('click',()=>{
     const d=el.dataset.cgmove;
     const ok=cgShift(d==='up'?-1:d==='down'?1:0,d==='left'?-1:d==='right'?1:0);
