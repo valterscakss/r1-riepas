@@ -593,6 +593,51 @@ function cgShift(dr,dc){
   _cg.cells=cells;_cg.codes=codes;_cg.occ=occ;
   _cg.zones.forEach(z=>{z.cells=z.cells.map(i=>remap.has(i)?remap.get(i):-1).filter(i=>i>=0);});
   return true;}
+// Re-wrap every place into a grid of a different size, in reading order, so
+// stretching the rack never drops one off the edge. A zone keeps its cells and
+// stays in one run. Returns true, or 'small:places/room' when it cannot fit.
+function cgReflow(rows,cols){
+  const R=Math.max(1,rows),C=Math.max(1,cols),total=R*C;
+  // What the rack holds today, in reading order — one entry per drawn cell.
+  const slots=[];
+  _cg.cells.forEach((on,i)=>{if(!on)return;
+    const zi=cgZoneOf(i);
+    slots.push({code:_cg.codes[i]||null,occ:!!_cg.occ[i],zone:zi>=0?_cg.zones[zi].name:null});});
+  if(slots.length>total)return 'small:'+slots.length+'/'+total;
+  const cells=new Array(total).fill(false),codes=new Array(total).fill(null),occ=new Array(total).fill(false);
+  const zc=new Map();
+  slots.forEach((s,j)=>{cells[j]=true;codes[j]=s.code;occ[j]=s.occ;
+    if(s.zone){if(!zc.has(s.zone))zc.set(s.zone,[]);zc.get(s.zone).push(j);}});
+  _cg.rows=R;_cg.cols=C;_cg.cells=cells;_cg.codes=codes;_cg.occ=occ;
+  _cg.zones.forEach(z=>{z.cells=zc.get(z.name)||z.cells.filter(()=>false);});
+  return true;}
+// Change the grid size without ever losing a place: keep the drawing exactly
+// where it is when everything still fits, and re-wrap it when it does not.
+function cgFitResize(rows,cols){
+  const R=Math.max(1,rows),C=Math.max(1,cols),oc=_cg.cols;
+  let drops=false;
+  for(let i=0;i<_cg.cells.length&&!drops;i++){
+    if(!_cg.cells[i])continue;
+    if(Math.floor(i/oc)>=R||i%oc>=C)drops=true;}
+  if(!drops){cgResize(R,C,true);return true;}
+  return cgReflow(R,C);}
+// How many drawn cells the rack has — what any new size has to have room for.
+function cgDrawn(){return _cg.cells.reduce((a,v)=>a+(v?1:0),0);}
+// True when the rack is a plain block with no holes cut into it: the places fill
+// the grid from the start, in reading order. Such a rack can be re-described at
+// any size and simply re-wraps; a rack with holes is a drawing worth keeping.
+function cgSolid(){const n=cgDrawn();
+  for(let i=0;i<_cg.cells.length;i++)if(!!_cg.cells[i]!==(i<n))return false;
+  return true;}
+// Drop empty rows left hanging under the drawing.
+function cgTrimRows(){
+  let last=-1;
+  _cg.cells.forEach((on,i)=>{if(on)last=i;});
+  const need=Math.max(1,Math.floor(last/_cg.cols)+1);
+  if(need>=_cg.rows)return;
+  _cg.rows=need;const n=need*_cg.cols;
+  _cg.cells.length=n;_cg.codes.length=n;_cg.occ.length=n;
+  const rEl=document.getElementById('cg-rows');if(rEl)rEl.value=String(need);}
 // Move one whole row up or down, swapping it with its neighbour. The row's places
 // travel with it — cells, numbers and the tires on them — so reordering shelves
 // never renames anything. Returns true, 'edge', or 'zone:NAME'.
@@ -608,33 +653,38 @@ function cgMoveRow(row,dir){
   _cg.zones.forEach(z=>{z.cells=z.cells.map(i=>{const r=Math.floor(i/C),c=i%C;
     return r===row?to*C+c:r===to?row*C+c:i;});});
   return true;}
-// Take another container's form: same rows, columns and drawing. This container
-// keeps its own numbers — each place stays on the cell it already sits at — so
-// only the shape is borrowed. Refuses if it would switch off an occupied place.
+// Take another container's form: this container ends up with exactly that one's
+// rows, columns and drawing. Its own places come along — keeping their spot when
+// the borrowed form has a cell for them there, otherwise re-wrapping into it in
+// reading order — and any cell of the form they don't fill becomes a new empty
+// place. Refused only if the form has fewer cells than this container has places,
+// since that would mean losing one.
 function cgAdoptShape(src){
   const R=Math.max(1,src.rows||0),C=Math.max(1,src.cols||0);
   if(!R||!C)return 'empty';
   if(R>99||C>99||R*C>600)return 'big';
   const drawn=src.drawn||'';
   const on=i=>drawn.length>i?drawn[i]==='1':true;
-  const oc=_cg.cols,oRows=_cg.rows;
-  // Anything occupied that the borrowed shape has no cell for stays behind.
-  const lost=[];
-  const codes=cgAssign();
-  for(let r=0;r<oRows;r++)for(let c=0;c<oc;c++){
-    const i=r*oc+c;
-    if(!_cg.cells[i]||!_cg.occ[i])continue;
-    if(r>=R||c>=C||!on(r*C+c))lost.push(codes[i]||'?');}
-  if(lost.length)return 'lost:'+lost.slice(0,8).join(', ')+(lost.length>8?' +'+(lost.length-8):'');
-  const cells=[],newCodes=[],occ=[];
-  for(let r=0;r<R;r++)for(let c=0;c<C;c++){
-    const src_=r<oRows&&c<oc?r*oc+c:-1;
-    cells.push(on(r*C+c));
-    newCodes.push(src_>=0?(_cg.codes[src_]||null):null);
-    occ.push(src_>=0?!!_cg.occ[src_]:false);}
-  const remap=i=>{const r=Math.floor(i/oc),c=i%oc;const j=(r<R&&c<C)?r*C+c:-1;return j>=0&&cells[j]?j:-1;};
-  _cg.zones.forEach(z=>{z.cells=z.cells.map(remap).filter(i=>i>=0);});
-  _cg.rows=R;_cg.cols=C;_cg.cells=cells;_cg.codes=newCodes;_cg.occ=occ;
+  const oc=_cg.cols;
+  const targets=[];
+  for(let i=0;i<R*C;i++)if(on(i))targets.push(i);
+  // Only real places have to be carried: a blank cell of a container still being
+  // drawn holds nothing and no number, so it costs nothing to drop.
+  const keep=[];
+  _cg.cells.forEach((live,i)=>{if(!live)return;
+    const zi=cgZoneOf(i);
+    if(_cg.codes[i]||_cg.occ[i]||zi>=0)keep.push({i,code:_cg.codes[i]||null,occ:!!_cg.occ[i]});});
+  if(targets.length<keep.length)return 'room:'+keep.length+'/'+targets.length;
+  const cells=new Array(R*C).fill(false),codes=new Array(R*C).fill(null),occ=new Array(R*C).fill(false);
+  targets.forEach(j=>{cells[j]=true;});
+  // Keep the arrangement when every place already lands on a cell of the new form.
+  const at=k=>{const r=Math.floor(k/oc),c=k%oc;return (r<R&&c<C&&on(r*C+c))?r*C+c:-1;};
+  const fits=keep.every(k=>at(k.i)>=0);
+  const moved=new Map();
+  keep.forEach((k,n)=>{const j=fits?at(k.i):targets[n];
+    codes[j]=k.code;occ[j]=k.occ;moved.set(k.i,j);});
+  _cg.zones.forEach(z=>{z.cells=z.cells.map(i=>moved.has(i)?moved.get(i):-1).filter(i=>i>=0);});
+  _cg.rows=R;_cg.cols=C;_cg.cells=cells;_cg.codes=codes;_cg.occ=occ;
   const rEl=document.getElementById('cg-rows'),cEl=document.getElementById('cg-cols');
   if(rEl)rEl.value=String(R);
   if(cEl)cEl.value=String(C);
@@ -743,11 +793,12 @@ function cgFormHTML(opts){
             ${[['up','↑','Pārvietot augšup'],['left','←','Pārvietot pa kreisi'],['right','→','Pārvietot pa labi'],['down','↓','Pārvietot lejup']]
               .map(([d,g,t])=>`<button type="button" data-cgmove="${d}" title="${t}" style="width:26px;height:26px;font-size:12px;border:1px solid var(--border-2);background:var(--surface);border-radius:6px;cursor:pointer;line-height:1;padding:0;">${g}</button>`).join('')}
           </span>
+          <button type="button" id="cg-pack" title="Sakārtot vietas pēc kārtas, bez caurumiem" style="height:26px;padding:0 9px;font-size:11px;border:1px solid var(--border-2);background:var(--surface);border-radius:6px;cursor:pointer;">Pārkārtot</button>
           <button type="button" id="cg-all" style="height:26px;padding:0 9px;font-size:11px;border:1px solid var(--border-2);background:var(--surface);border-radius:6px;cursor:pointer;">Visas</button>
           <button type="button" id="cg-none" style="height:26px;padding:0 9px;font-size:11px;border:1px solid var(--border-2);background:var(--surface);border-radius:6px;cursor:pointer;">Neviena</button>
         </span>
       </div>
-      <div style="color:var(--ink-3);font-size:11px;margin-bottom:8px;">Klikšķini vai velc pāri rūtiņām, lai ieslēgtu/izslēgtu vietas; ar bultiņām pārbīdi visu formu, bet ar ↑↓ pie rindas malas pārvieto veselu rindu. <b>Numuri ceļo līdzi savai rūtiņai</b>, tāpēc riepas paliek tajā pašā vietā arī tad, ja maini izmēru, pārbīdi formu vai samaini rindas vietām. Pelēkās rūtiņas ir aizņemtas — tās nevar izslēgt.</div>
+      <div style="color:var(--ink-3);font-size:11px;margin-bottom:8px;">Klikšķini vai velc pāri rūtiņām, lai ieslēgtu/izslēgtu vietas; ar bultiņām pārbīdi visu formu, bet ar ↑↓ pie rindas malas pārvieto veselu rindu. <b>Numuri ceļo līdzi savai rūtiņai un neviena vieta nepazūd</b> — ja jaunais izmērs ir par mazu, vietas pārkārtojas pēc kārtas un otra dimensija pieaug. Pelēkās rūtiņas ir aizņemtas — tās nevar izslēgt.</div>
       <div id="cg-grid" style="display:grid;gap:3px;max-height:290px;overflow:auto;padding:6px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;"></div>
       <div id="cg-count" style="color:var(--ink-3);font-size:12px;margin-top:7px;"></div>
     </div>
@@ -764,13 +815,31 @@ function cgFormHTML(opts){
     <div><label class="label" style="display:block;margin-bottom:5px;">Nosaukums (neobligāts)</label><input id="cg-label" class="swal2-input" value="${esc(o.label||'')}" placeholder="piem. Ziemas plaukts" style="margin:0;width:100%;"></div>
   </div>`;}
 function cgWire(){
-  const sync=(keep)=>{
-    const r=Math.max(1,Math.min(99,parseInt(document.getElementById('cg-rows').value,10)||1));
-    const c=Math.max(1,Math.min(99,parseInt(document.getElementById('cg-cols').value,10)||1));
-    if(r*c>600){Swal.showValidationMessage('Pārāk liels konteiners (maks. 600 rūtiņas)');return;}
+  // Stretching the rack to another size must never cost a place. If the size the
+  // user asked for is too small, the OTHER dimension grows just enough to hold
+  // everything and the places re-wrap into it, rather than falling off the edge.
+  const sync=(which)=>{
+    const rEl=document.getElementById('cg-rows'),cEl=document.getElementById('cg-cols');
+    let r=Math.max(1,Math.min(99,parseInt(rEl.value,10)||1));
+    let c=Math.max(1,Math.min(99,parseInt(cEl.value,10)||1));
+    const need=cgDrawn(),solid=cgSolid();
+    // A plain rack follows the dimension you typed and re-wraps into it: set the
+    // places per shelf and the number of shelves works itself out. Change the
+    // shelves instead and the width stays, leaving the new shelf empty to draw on.
+    if(solid&&which==='cols')r=Math.max(1,Math.ceil(need/c));
+    // Either way the size has to hold every place, so the other dimension grows
+    // rather than letting one fall off the edge.
+    if(r*c<need){if(which==='cols')r=Math.ceil(need/c);else c=Math.ceil(need/r);}
+    if(r>99||c>99||r*c>600){Swal.showValidationMessage('Pārāk liels konteiners (maks. 600 rūtiņas)');return;}
+    rEl.value===String(r)||(rEl.value=String(r));
+    cEl.value===String(c)||(cEl.value=String(c));
+    const res=solid?cgReflow(r,c):cgFitResize(r,c);
+    if(res!==true){Swal.showValidationMessage(`Šajā izmērā ietilpst ${r*c} rūtiņas, bet vietu ir ${need}`);return;}
+    if(solid&&which==='cols')cgTrimRows();
     Swal.resetValidationMessage&&Swal.resetValidationMessage();
-    cgResize(r,c,keep);cgRender();};
-  ['cg-rows','cg-cols'].forEach(id=>document.getElementById(id).addEventListener('input',()=>sync(true)));
+    cgRender();};
+  document.getElementById('cg-rows').addEventListener('input',()=>sync('rows'));
+  document.getElementById('cg-cols').addEventListener('input',()=>sync('cols'));
   const pfx=document.getElementById('cg-prefix');
   if(pfx)pfx.addEventListener('input',()=>cgRender());
   const copyGo=document.getElementById('cg-copygo');
@@ -780,7 +849,8 @@ function cgWire(){
     if(!src)return;
     const r=cgAdoptShape(src);
     if(r===true){Swal.resetValidationMessage&&Swal.resetValidationMessage();cgRender();return;}
-    if(typeof r==='string'&&r.startsWith('lost:'))Swal.showValidationMessage(`Šīs vietas ir aizņemtas un ${pick} formā tām nav rūtiņas: ${r.slice(5)}`);
+    if(typeof r==='string'&&r.startsWith('room:')){const [n,m]=r.slice(5).split('/');
+      Swal.showValidationMessage(`${pick} formā ir ${m} rūtiņas, bet šeit ir ${n} vietas — tad kāda no tām pazustu`);}
     else if(r==='big')Swal.showValidationMessage('Pārāk liels konteiners (maks. 600 rūtiņas)');
     else Swal.showValidationMessage('Neizdevās pārņemt formu');});
   document.querySelectorAll('[data-cgmove]').forEach(el=>el.addEventListener('click',()=>{
@@ -788,6 +858,14 @@ function cgWire(){
     const ok=cgShift(d==='up'?-1:d==='down'?1:0,d==='left'?-1:d==='right'?1:0);
     if(!ok){Swal.showValidationMessage('Forma atduras pret malu — vispirms pievieno rindu vai kolonnu');return;}
     Swal.resetValidationMessage&&Swal.resetValidationMessage();cgRender();}));
+  const pack=document.getElementById('cg-pack');
+  if(pack)pack.addEventListener('click',()=>{
+    // Close the gaps: every place slides up into reading order, keeping its number.
+    // Places per shelf stays; the shelves follow from how many places there are.
+    const need=cgDrawn(),rows=Math.max(1,Math.ceil(need/_cg.cols));
+    if(cgReflow(rows,_cg.cols)!==true)return;
+    const rEl=document.getElementById('cg-rows');if(rEl)rEl.value=String(_cg.rows);
+    Swal.resetValidationMessage&&Swal.resetValidationMessage();cgRender();});
   document.getElementById('cg-all').addEventListener('click',()=>{_cg.cells=_cg.cells.map(()=>true);cgRender();});
   document.getElementById('cg-none').addEventListener('click',()=>{
     // Occupied places stay: a drawing tool must not be a way to delete stock.
