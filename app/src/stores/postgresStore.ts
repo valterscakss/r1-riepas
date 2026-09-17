@@ -340,6 +340,19 @@ export class PostgresStore implements Store {
     return r ? { id: String(r.id), username: r.username, name: r.name, passwordHash: r.password_hash, role: normRole(r.role) } : null;
   }
 
+  async updateUser(username: string, patch: { username?: string; name?: string; role?: 'admin' | 'staff' | 'warehouse' }): Promise<boolean> {
+    await this.init();
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (patch.username !== undefined) { params.push(patch.username.toLowerCase()); sets.push(`username = $${params.length}`); }
+    if (patch.name !== undefined) { params.push(patch.name); sets.push(`name = $${params.length}`); }
+    if (patch.role !== undefined) { params.push(patch.role); sets.push(`role = $${params.length}`); }
+    if (!sets.length) return false;
+    params.push(username.toLowerCase());
+    const res = await this.pool.query(`UPDATE users SET ${sets.join(', ')} WHERE username = $${params.length}`, params);
+    return (res.rowCount ?? 0) > 0;
+  }
+
   async createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' | 'warehouse' }): Promise<void> {
     await this.init();
     await this.pool.query('INSERT INTO users (username, name, password_hash, role) VALUES ($1,$2,$3,$4)',

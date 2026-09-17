@@ -58,7 +58,16 @@ export async function effectivePerms(store: Store, user: SessionUser): Promise<P
   const key = user.username.toLowerCase();
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL) return hit.perms;
-  const base = { ...(ROLE_DEFAULTS[user.role] ?? ROLE_DEFAULTS.staff) };
+  // The role comes from the user's own row rather than from the token they are
+  // holding, so renaming a user or changing their role takes effect on their
+  // open session instead of waiting up to 12 hours for the token to expire.
+  // A token naming a user that no longer exists — because they were renamed or
+  // removed — grants nothing, which sends them back to the login screen.
+  let row: { role: 'admin' | 'staff' | 'warehouse' } | null = null;
+  try { row = await store.getUserByUsername(key); } catch { row = { role: user.role }; }
+  if (!row) { const none = { ...ALL_OFF }; cache.set(key, { perms: none, at: Date.now() }); return none; }
+  if (row.role === 'admin') { cache.set(key, { perms: { ...ALL_ON }, at: Date.now() }); return ALL_ON; }
+  const base = { ...(ROLE_DEFAULTS[row.role] ?? ROLE_DEFAULTS.staff) };
   try {
     const raw = await store.getUserPerms(key);
     if (raw) {

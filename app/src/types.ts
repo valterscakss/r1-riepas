@@ -224,6 +224,11 @@ export interface Store {
   getUserByUsername(username: string): Promise<User | null>;
   createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' | 'warehouse' }): Promise<void>;
   setPasswordByUsername(username: string, passwordHash: string): Promise<boolean>;
+  /**
+   * Change a user's login name, display name or role. The row keeps its id and
+   * its permission overrides, so a rename carries everything with it.
+   */
+  updateUser(username: string, patch: { username?: string; name?: string; role?: 'admin' | 'staff' | 'warehouse' }): Promise<boolean>;
   countUsers(): Promise<number>;
   /** List users WITHOUT password hashes — for admin user management. */
   listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; perms: string | null; createdAt: string | null }>>;

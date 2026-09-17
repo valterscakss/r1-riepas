@@ -1628,6 +1628,59 @@ export function createApp(): express.Express {
     res.json({ ok: true, overrides });
   }));
 
+  // Edit a user: login name, display name and role. The row keeps its id and its
+  // permission overrides, so a rename carries them along. Editing yourself hands
+  // back a fresh token, or the rename would log the admin out of the session they
+  // are doing it from; everyone else has to sign in again under the new name.
+  app.patch('/api/users/:username', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const from = String(req.params.username ?? '').trim().toLowerCase();
+    const target = await store.getUserByUsername(from);
+    if (!target) return res.status(404).json({ error: { message: 'Lietotājs nav atrasts' } });
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const me = (req as express.Request & { user?: { username: string } }).user;
+    const isSelf = !!me && me.username.toLowerCase() === from;
+
+    const patch: { username?: string; name?: string; role?: 'admin' | 'staff' | 'warehouse' } = {};
+    if (b.username !== undefined) {
+      const to = String(b.username).trim().toLowerCase();
+      if (!USERNAME_RE.test(to)) return res.status(400).json({ error: { message: 'Lietotājvārds: 3–32 rakstzīmes (a–z, 0–9, . _ -)' } });
+      if (to !== from) {
+        if (await store.getUserByUsername(to)) return res.status(409).json({ error: { message: 'Lietotājs ar šādu vārdu jau eksistē' } });
+        patch.username = to;
+      }
+    }
+    if (b.name !== undefined) {
+      const nm = String(b.name).trim();
+      if (!nm) return res.status(400).json({ error: { message: 'Vārds ir obligāts' } });
+      if (nm !== target.name) patch.name = nm;
+    }
+    if (b.role !== undefined) {
+      const rl: 'admin' | 'staff' | 'warehouse' = b.role === 'admin' ? 'admin' : b.role === 'warehouse' ? 'warehouse' : 'staff';
+      if (rl !== target.role) {
+        // Losing the last admin would leave nobody able to manage the app.
+        if (target.role === 'admin') {
+          const admins = (await store.listUsers()).filter((x) => x.role === 'admin').length;
+          if (admins <= 1) return res.status(400).json({ error: { message: 'Nevar noņemt pēdējam administratoram administratora lomu' } });
+        }
+        if (isSelf) return res.status(400).json({ error: { message: 'Savu lomu nevar mainīt — palūdz to izdarīt citam administratoram' } });
+        patch.role = rl;
+      }
+    }
+    if (!Object.keys(patch).length) return res.json({ ok: true, changed: false, user: { username: target.username, name: target.name, role: target.role } });
+    await store.updateUser(from, patch);
+    // Both names: the old cache entry is now stale, the new one must start clean.
+    bustPerms(from);
+    if (patch.username) bustPerms(patch.username);
+    const next = { id: target.id, username: patch.username ?? target.username, name: patch.name ?? target.name, role: patch.role ?? target.role };
+    res.json({
+      ok: true, changed: true, user: { username: next.username, name: next.name, role: next.role },
+      // Only ever for the admin editing their own account.
+      token: isSelf ? signToken(next) : undefined,
+      reauth: !isSelf && !!(patch.username || patch.role),
+    });
+  }));
+
   app.post('/api/users/:username/reset', requireAdmin, asyncH(async (req, res) => {
     const store = await getStore();
     const u = String(req.params.username ?? '').trim().toLowerCase();

@@ -150,6 +150,7 @@ export class SheetsStore implements Store {
   async getUserByUsername(): Promise<User | null> { return this.unsupported(); }
   async createUser(): Promise<void> { return this.unsupported(); }
   async setPasswordByUsername(): Promise<boolean> { return this.unsupported(); }
+  async updateUser(): Promise<boolean> { return this.unsupported(); }
   async countUsers(): Promise<number> { return 0; }
   async listUsers(): Promise<never> { return this.unsupported(); }
   async deleteUserByUsername(): Promise<boolean> { return this.unsupported(); }

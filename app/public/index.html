@@ -2125,6 +2125,7 @@ function bind(root){
     td.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendTask();}});}
   root.querySelectorAll('[data-sort]').forEach(el=>el.addEventListener('click',()=>{const k=el.dataset.sort;
     if(S.tabSort.col===k)S.tabSort.dir=S.tabSort.dir==='asc'?'desc':'asc';else S.tabSort={col:k,dir:'asc'};updateTabContent();}));
+  root.querySelectorAll('[data-edit-user]').forEach(el=>el.addEventListener('click',()=>editUserDialog(el.dataset.editUser,el.dataset.name,el.dataset.role)));
   root.querySelectorAll('[data-reset-user]').forEach(el=>el.addEventListener('click',()=>resetUserDialog(el.dataset.resetUser,el.dataset.name)));
   root.querySelectorAll('[data-perms-user]').forEach(el=>el.addEventListener('click',()=>permsDialog(el.dataset.permsUser,el.dataset.name)));
   root.querySelectorAll('[data-del-user]').forEach(el=>el.addEventListener('click',()=>deleteUserDialog(el.dataset.delUser,el.dataset.name)));
@@ -2383,7 +2384,8 @@ function usersHTML(){
       <span style="min-width:0;"><span style="display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(u.name)}</span><span class="mono" style="display:block;font-size:11px;color:var(--ink-3);">@${esc(u.username)}</span></span>
     </div>
     <span><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;${u.role==='admin'?'background:var(--accent-soft);color:var(--accent-2);':u.role==='warehouse'?'background:oklch(0.95 0.03 285);color:oklch(0.45 0.15 285);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${u.role==='admin'?'Administrators':u.role==='warehouse'?'Noliktava':'Personāls'}</span></span>
-    <span style="display:flex;gap:6px;">
+    <span style="display:flex;gap:6px;flex-wrap:wrap;">
+    <button data-edit-user="${esc(u.username)}" data-name="${esc(u.name)}" data-role="${esc(u.role)}" title="Mainīt vārdu, lietotājvārdu vai lomu" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Rediģēt</button>
     ${u.role!=='admin'?`<button data-perms-user="${esc(u.username)}" data-name="${esc(u.name)}" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Tiesības</button>`:''}
     <button data-reset-user="${esc(u.username)}" data-name="${esc(u.name)}" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Atiestatīt paroli</button></span>
     <button data-del-user="${esc(u.username)}" data-name="${esc(u.name)}" title="Dzēst lietotāju" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:13px;padding:7px 11px;cursor:pointer;color:var(--danger);">✕</button>
@@ -2491,6 +2493,42 @@ async function permsDialog(username,name){
   const d=await res.json().catch(()=>({}));
   if(!res.ok||!d.ok){alertErr(d.error?.message||'Neizdevās saglabāt');return;}
   toast('Tiesības saglabātas · stājas spēkā uzreiz');}
+
+// Change a user's display name, login name or role. The account keeps its
+// permissions and its history — only the label on it changes.
+async function editUserDialog(username,name,role){
+  if(!R1)return;
+  const me=(S.auth&&S.auth.username||'').toLowerCase();
+  const isSelf=me===String(username||'').toLowerCase();
+  const {value:form}=await R1.fire({title:'Rediģēt lietotāju',width:470,
+    html:`<div style="text-align:left;display:flex;flex-direction:column;gap:12px;">
+      <div><label class="label" style="display:block;margin-bottom:5px;">Vārds</label><input id="eu-name" class="swal2-input" value="${esc(name||'')}" style="margin:0;width:100%;"></div>
+      <div><label class="label" style="display:block;margin-bottom:5px;">Lietotājvārds (pieteikšanās vārds)</label><input id="eu-user" class="swal2-input mono" value="${esc(username||'')}" autocapitalize="none" autocorrect="off" style="margin:0;width:100%;"></div>
+      <div><label class="label" style="display:block;margin-bottom:5px;">Loma</label>
+        <select id="eu-role" class="swal2-input" ${isSelf?'disabled':''} style="margin:0;width:100%;${isSelf?'opacity:.6;':''}">
+          ${[['staff','Personāls'],['warehouse','Noliktava (tikai uzdevumi)'],['admin','Administrators']].map(([k,l])=>`<option value="${k}"${role===k?' selected':''}>${l}</option>`).join('')}
+        </select>
+        ${isSelf?'<div style="color:var(--ink-3);font-size:11px;margin-top:5px;">Savu lomu nevar mainīt — to var izdarīt cits administrators.</div>':''}</div>
+      <div style="color:var(--ink-3);font-size:12px;line-height:1.5;">Parole, tiesības un vēsture paliek nemainīgas.${isSelf?'':' Ja maini lietotājvārdu vai lomu, lietotājam būs jāpiesakās no jauna.'}</div>
+    </div>`,
+    showCancelButton:true,confirmButtonText:'Saglabāt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'},
+    preConfirm:()=>{const nm=document.getElementById('eu-name').value.trim();
+      const us=document.getElementById('eu-user').value.trim().toLowerCase();
+      if(!nm){Swal.showValidationMessage('Ievadi vārdu');return false;}
+      if(!/^[a-z0-9._-]{3,32}$/.test(us)){Swal.showValidationMessage('Lietotājvārds: 3–32 rakstzīmes (a–z, 0–9, . _ -)');return false;}
+      const body={name:nm,username:us};
+      if(!isSelf)body.role=document.getElementById('eu-role').value;
+      return body;}});
+  if(!form)return;
+  const res=await fetch('/api/users/'+encodeURIComponent(username),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok||!data.ok){alertErr(data.error?.message||'Neizdevās saglabāt');return;}
+  // Renaming yourself invalidates the name in your own token, so take the fresh one.
+  if(data.token){setToken(data.token);S.auth=Object.assign({},S.auth,data.user);}
+  await loadUsers();render();
+  if(!data.changed)toast('Nekas nebija jāmaina');
+  else if(data.reauth)toast('Saglabāts · lietotājam jāpiesakās no jauna');
+  else toast('Saglabāts');}
 
 async function resetUserDialog(username,name){
   if(!R1)return;

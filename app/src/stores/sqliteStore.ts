@@ -336,6 +336,17 @@ export class SqliteStore implements Store {
     return r ? { id: String(r.id), username: r.username, name: r.name, passwordHash: r.password_hash, role: normRole(r.role) } : null;
   }
 
+  async updateUser(username: string, patch: { username?: string; name?: string; role?: 'admin' | 'staff' | 'warehouse' }): Promise<boolean> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (patch.username !== undefined) { sets.push('username = ?'); params.push(patch.username.toLowerCase()); }
+    if (patch.name !== undefined) { sets.push('name = ?'); params.push(patch.name); }
+    if (patch.role !== undefined) { sets.push('role = ?'); params.push(patch.role); }
+    if (!sets.length) return false;
+    params.push(username.toLowerCase());
+    return this.db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE username = ?`).run(...params).changes > 0;
+  }
+
   async createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' | 'warehouse' }): Promise<void> {
     this.db.prepare('INSERT INTO users (username, name, password_hash, role) VALUES (?,?,?,?)')
       .run(u.username.toLowerCase(), u.name, u.passwordHash, u.role);
