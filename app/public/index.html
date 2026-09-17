@@ -325,6 +325,8 @@ function evWhen(s){
   const p=n=>String(n).padStart(2,'0');
   return {d:`${p(dt.getDate())}.${p(dt.getMonth()+1)}.${dt.getFullYear()}`,t:`${p(dt.getHours())}:${p(dt.getMinutes())}`};
 }
+// Who did it, in capitals so the person stands out from the rest of the row.
+const actorName=a=>String(a==null||a===''?'R1':a).toUpperCase();
 const actRow=a=>{const m=ACT_FEED[a.type]||['Darbība','var(--surface-2)','var(--ink-2)'];
   const w=evWhen(a.d||a.t);
   const isLoc=(a.type==='in'||a.type==='out'||a.type==='created'||a.type==='released'||a.type==='swapped');
@@ -333,7 +335,7 @@ const actRow=a=>{const m=ACT_FEED[a.type]||['Darbība','var(--surface-2)','var(-
   <span class="mono" style="font-size:11px;color:var(--ink-3);line-height:1.4;">${esc(w.d)}${w.t?`<br><span style="color:var(--ink-2);font-weight:600;">${esc(w.t)}</span>`:''}</span>
   <span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;text-align:center;background:${m[1]};color:${m[2]};white-space:nowrap;">${m[0]}</span>
   <span style="display:flex;align-items:center;gap:9px;min-width:0;"><span class="mono" style="font-weight:600;font-size:13px;flex:none;">${esc(a.plate||'—')}</span>${detail}</span>
-  <span style="font-size:12px;color:var(--ink-3);white-space:nowrap;">${esc(a.actor||'R1')}</span></div>`;};
+  <span class="mono" style="font-size:11px;font-weight:600;color:var(--ink-3);white-space:nowrap;letter-spacing:.02em;">${esc(actorName(a.actor))}</span></div>`;};
 
 const contBar=c=>{const pct=c.total?Math.round(c.occ/c.total*100):0;
   const bc=pct>=90?'var(--danger)':pct>=75?'var(--warn)':'var(--accent)';
@@ -385,7 +387,8 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
   </div></div>`;}
 
 function intakeHTML(){const p=price();
-  const canConfirm=S.looked&&!!S.t1size&&!!S.thread&&(!S.isNew||!!(S.cust&&S.cust.trim()))&&(S.t1qty!=='2+2'||!!S.t2size);
+  // Tread depth is optional — plenty of sets come in without one being measured.
+  const canConfirm=S.looked&&!!S.t1size&&(!S.isNew||!!(S.cust&&S.cust.trim()))&&(S.t1qty!=='2+2'||!!S.t2size);
   const rimBtn=(key,label,pos)=>{const on=S.rim===key;
     const rad=pos===0?'border-radius:8px 0 0 8px;':pos===2?'border-radius:0 8px 8px 0;border-left:0;':'border-left:0;';
     return `<button data-rim="${key}" style="height:var(--h);flex:1;border:1px solid var(--border-2);cursor:pointer;font-weight:500;font-size:13px;${on?'background:var(--accent);color:#fff;border-color:var(--accent);':'background:var(--surface);color:var(--ink-2);'}${rad}">${label}</button>`;};
@@ -443,7 +446,7 @@ function intakeHTML(){const p=price();
         </div>`:''}
         <div class="rf2" style="display:grid;grid-template-columns:1.6fr 0.9fr;gap:12px;">
           <div class="field"><label>Diski</label><div style="display:flex;">${rimBtn('none','Bez',0)}${rimBtn('aluminum','Alumīnija',1)}${rimBtn('steel','Tērauda',2)}</div></div>
-          <div class="field"><label>Protektora dziļums</label><div style="position:relative;">
+          <div class="field"><label>Protektora dziļums (neobligāts)</label><div style="position:relative;">
             <input id="in-thread" class="mono" type="number" step="0.1" value="${esc(S.thread)}" placeholder="7.5" style="padding-right:42px;">
             <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--ink-3);font-size:13px;">mm</span></div></div>
         </div>
@@ -1395,7 +1398,7 @@ function recEventsHTML(){
       <div style="flex:1;min-width:0;">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;">
           <span style="font-weight:600;font-size:13px;">${esc(lbl)}</span>
-          <span style="font-size:11px;color:var(--ink-3);white-space:nowrap;">${esc(fmtEvDate(e.createdAt))}${e.actor?' · '+esc(e.actor):''}</span></div>
+          <span style="font-size:11px;color:var(--ink-3);white-space:nowrap;">${esc(fmtEvDate(e.createdAt))}${e.actor?' · <b style="font-weight:600;letter-spacing:.02em;">'+esc(actorName(e.actor))+'</b>':''}</span></div>
         ${e.comment?`<div style="font-size:13px;color:var(--ink-2);margin-top:2px;word-break:break-word;">${esc(e.comment)}</div>`:''}
         ${(isC&&can('act.media'))?`<div style="display:flex;gap:12px;margin-top:3px;"><button data-evedit="${esc(e.id)}" style="font-size:11px;color:var(--accent);background:none;border:0;cursor:pointer;padding:0;">Labot</button><button data-evdel="${esc(e.id)}" style="font-size:11px;color:var(--danger);background:none;border:0;cursor:pointer;padding:0;">Dzēst</button></div>`:''}
       </div></div>`;}).join('');
@@ -1479,7 +1482,7 @@ function histRow(e){const m=ACT_FEED[e.type]||['Darbība','var(--surface-2)','va
       ${detail?`<span style="color:var(--ink-3);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(detail)}</span>`:''}</span>
       ${e.comment?`<span style="display:block;color:var(--ink-2);font-size:12px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">“${esc(e.comment)}”</span>`:''}
     </span>
-    <span style="font-size:12px;color:var(--ink-3);white-space:nowrap;">${esc(e.actor||'R1')}</span>
+    <span class="mono" style="font-size:11px;font-weight:600;color:var(--ink-3);white-space:nowrap;letter-spacing:.02em;">${esc(actorName(e.actor))}</span>
   </div>`;}
 function histListHTML(){const h=S.hist;
   if(!h.list.length)return h.loading?'<div class="card" style="padding:24px;color:var(--ink-3);font-size:13px;">Ielādē…</div>'
@@ -2268,7 +2271,6 @@ function updateSummary(){const set=(id,v)=>{const el=document.getElementById(id)
     if(!S.looked)miss.push('meklē numuru');
     if(S.isNew&&!(S.cust&&S.cust.trim()))miss.push('klienta vārds');
     if(!S.t1size)miss.push('izmērs');
-    if(!S.thread)miss.push('protektors');
     if(S.t1qty==='2+2'&&!S.t2size)miss.push('2. pāra izmērs');
     const hint=document.getElementById('confirm-hint');
     if(hint)hint.textContent=miss.length?('Trūkst: '+miss.join(', ')):'';
@@ -2360,7 +2362,7 @@ async function doLookup(){grab();hidePlateSuggest();
   render();}
 
 async function confirmIntake(){grab();
-  if(!(S.looked&&S.t1size&&S.thread))return;
+  if(!(S.looked&&S.t1size))return;
   if(!(S.looked&&(!S.isNew||S.cust.trim())))return;
   const is22=S.t1qty==='2+2';
   if(is22&&!S.t2size)return;

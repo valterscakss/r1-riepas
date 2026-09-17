@@ -604,7 +604,18 @@ export function createApp(): express.Express {
     }
     // Unified chronological sort by a real timestamp (ms). Date-only values are read
     // as UTC midnight; full ISO timestamps keep their time — so ordering is consistent.
-    const tms = (d: string) => { const t = Date.parse(/[TZ]/.test(d) ? d : `${d}T00:00:00Z`); return Number.isNaN(t) ? 0 : t; };
+    // Timestamps arrive in three shapes: a plain date from an intake/release column,
+    // an ISO string from Postgres, and "YYYY-MM-DD HH:MM:SS" from SQLite. The last
+    // one used to parse as NaN and sort as epoch 0, dropping every logged action to
+    // the bottom of the list, below records from years back.
+    const tms = (d: string) => {
+      if (!d) return 0;
+      let s = d.trim().replace(' ', 'T');
+      if (!s.includes('T')) s += 'T00:00:00';
+      if (!/[Zz]$|[+-]\d{2}:?\d{2}$/.test(s)) s += 'Z';   // a naive timestamp is UTC
+      const t = Date.parse(s);
+      return Number.isNaN(t) ? 0 : t;
+    };
     ev.sort((a, b) => tms(b.d || '') - tms(a.d || ''));
     res.json({ events: ev.slice(0, 12) });
   }));
@@ -648,7 +659,18 @@ export function createApp(): express.Express {
     if (to) list = list.filter((e) => e.d.slice(0, 10) <= to);
     if (types) list = list.filter((e) => types.has(e.type));
     if (q) list = list.filter((e) => [e.plate, e.loc, e.cust, e.comment, e.actor].some((f) => (f ?? '').toUpperCase().includes(q)));
-    const tms = (d: string) => { const t = Date.parse(/[TZ]/.test(d) ? d : `${d}T00:00:00Z`); return Number.isNaN(t) ? 0 : t; };
+    // Timestamps arrive in three shapes: a plain date from an intake/release column,
+    // an ISO string from Postgres, and "YYYY-MM-DD HH:MM:SS" from SQLite. The last
+    // one used to parse as NaN and sort as epoch 0, dropping every logged action to
+    // the bottom of the list, below records from years back.
+    const tms = (d: string) => {
+      if (!d) return 0;
+      let s = d.trim().replace(' ', 'T');
+      if (!s.includes('T')) s += 'T00:00:00';
+      if (!/[Zz]$|[+-]\d{2}:?\d{2}$/.test(s)) s += 'Z';   // a naive timestamp is UTC
+      const t = Date.parse(s);
+      return Number.isNaN(t) ? 0 : t;
+    };
     list.sort((a, b) => tms(b.d) - tms(a.d));
     return list;
   };
