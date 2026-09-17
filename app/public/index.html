@@ -1192,7 +1192,9 @@ function relContentHTML(){
   if(!S.relSearched)return `<div class="card" style="padding:30px;text-align:center;color:var(--ink-3);font-size:14px;">Ievadi SMS kodu vai numura zīmi augšā.</div>`;
   const list=S.relResults||[];
   if(!list.length)return `<div class="card" style="padding:30px;text-align:center;color:var(--ink-3);font-size:14px;">Nekas netika atrasts pēc <b class="mono">${esc(S.relQ)}</b>.<br><span style="font-size:13px;">Pārbaudi kodu vai numuru — iespējams, riepas jau ir izsniegtas.</span></div>`;
-  return list.map(x=>`<div class="card" style="padding:var(--card);margin-bottom:12px;">
+  // The whole card opens the record — its photos, comments and past seasons — while
+  // the action buttons on it keep doing their own job.
+  return list.map(x=>`<div data-openrec="${esc(x.id)}" title="Atvērt ierakstu" class="card" style="padding:var(--card);margin-bottom:12px;cursor:pointer;">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
       <div style="display:flex;gap:14px;align-items:center;min-width:0;">
         <span style="min-width:48px;height:48px;flex:none;padding:0 8px;border-radius:12px;background:var(--accent-soft);color:var(--accent-2);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;">${esc(x.loc||'—')}</span>
@@ -1836,7 +1838,9 @@ function startTaskPolling(){if(_taskPoll)clearInterval(_taskPoll);_taskPoll=setI
 // Update just the history block inside the open panel — rebuilding the whole
 // modal for every fetch made the panel visibly "reload" two extra times.
 function updSpotHist(){const c=document.getElementById('spot-hist');
-  if(c)c.innerHTML=spotHistHTML();else if(S.selSpot)renderModal();}
+  // bind() again: the rows are replaced wholesale, so they need their click
+  // handlers back or the history stops opening.
+  if(c){c.innerHTML=spotHistHTML();bind(c);}else if(S.selSpot&&!S.recOpen)renderModal();}
 async function loadVehicle(plate){S.spotHistLoading=true;updSpotHist();
   try{const d=await(await fetch('/api/vehicle?plate='+encodeURIComponent(plate))).json();
     if(S.selSpot&&S.selSpot.plate===plate)S.spotHist=d.history||[];
@@ -1845,7 +1849,7 @@ async function loadVehicle(plate){S.spotHistLoading=true;updSpotHist();
 function spotHistHTML(){
   if(S.spotHistLoading)return `<div style="margin-top:22px;color:var(--ink-3);font-size:13px;">Ielādē vēsturi…</div>`;
   const h=S.spotHist||[];if(!h.length)return '';
-  const rows=h.map(x=>`<div style="padding:11px 0;border-bottom:1px solid var(--border);">
+  const rows=h.map(x=>`<div ${x.id?`data-openrec="${esc(x.id)}" title="Atvērt ierakstu"`:''} style="padding:11px 0;border-bottom:1px solid var(--border);${x.id?'cursor:pointer;':''}">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
       <span style="font-weight:600;font-size:13px;">${esc(x.season||'—')}</span>
       <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:6px;${x.status==='active'?'background:var(--ok-soft);color:var(--ok);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${x.status==='active'?'Glabājas':'Izsniegts'}</span></div>
@@ -1901,7 +1905,9 @@ function renderModal(){const m=$('#modal');
         </div>
       </div>
     </div></div>`;
-  } else if(S.selSpot){const s=S.selSpot;
+  // A record opened FROM the spot panel wins: the panel stays underneath and comes
+  // back when the record card is closed.
+  } else if(S.selSpot&&!S.recOpen){const s=S.selSpot;
     m.innerHTML=`<div data-close="spot" style="position:fixed;inset:0;background:oklch(0.2 0.02 260 / .35);z-index:60;animation:r1fade .18s ease;">
     <div data-stop="1" style="position:absolute;top:0;right:0;bottom:0;width:380px;max-width:92vw;background:var(--surface);border-left:1px solid var(--border);box-shadow:-8px 0 30px oklch(0.2 0.02 260 / .18);padding:26px;overflow:auto;animation:r1pop .22s ease;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:8px;">
