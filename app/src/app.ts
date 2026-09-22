@@ -3,7 +3,7 @@ import cookieParser from 'cookie-parser';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import type { IntakeInput, StorageRecord, Store, PricingConfig, PricingTier } from './types.js';
+import type { IntakeInput, StorageRecord, Store, PricingConfig, PricingTier, Role } from './types.js';
 import { DEFAULT_PRICING, matches, cellMap, parseZones } from './types.js';
 import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
@@ -1603,12 +1603,16 @@ export function createApp(): express.Express {
     res.json({ users: await store.listUsers() });
   }));
 
+  // Anything unrecognised lands on 'staff' rather than silently granting more.
+  const readRole = (r: unknown): Role =>
+    r === 'admin' ? 'admin' : r === 'warehouse' ? 'warehouse' : r === 'leja' ? 'leja' : 'staff';
+
   app.post('/api/users', requireAdmin, asyncH(async (req, res) => {
     const store = await getStore();
     const { username, name, role, password } = req.body ?? {};
     const u = String(username ?? '').trim().toLowerCase();
     const nm = String(name ?? '').trim();
-    const rl: 'admin' | 'staff' | 'warehouse' = role === 'admin' ? 'admin' : role === 'warehouse' ? 'warehouse' : 'staff';
+    const rl = readRole(role);
     if (!USERNAME_RE.test(u)) return res.status(400).json({ error: { message: 'Lietotājvārds: 3–32 rakstzīmes (a–z, 0–9, . _ -)' } });
     if (!nm) return res.status(400).json({ error: { message: 'Vārds ir obligāts' } });
     if (String(password ?? '').length < MIN_PW) return res.status(400).json({ error: { message: `Parolei jābūt vismaz ${MIN_PW} rakstzīmes` } });
@@ -1663,7 +1667,7 @@ export function createApp(): express.Express {
     const me = (req as express.Request & { user?: { username: string } }).user;
     const isSelf = !!me && me.username.toLowerCase() === from;
 
-    const patch: { username?: string; name?: string; role?: 'admin' | 'staff' | 'warehouse' } = {};
+    const patch: { username?: string; name?: string; role?: Role } = {};
     if (b.username !== undefined) {
       const to = String(b.username).trim().toLowerCase();
       if (!USERNAME_RE.test(to)) return res.status(400).json({ error: { message: 'Lietotājvārds: 3–32 rakstzīmes (a–z, 0–9, . _ -)' } });
@@ -1678,7 +1682,7 @@ export function createApp(): express.Express {
       if (nm !== target.name) patch.name = nm;
     }
     if (b.role !== undefined) {
-      const rl: 'admin' | 'staff' | 'warehouse' = b.role === 'admin' ? 'admin' : b.role === 'warehouse' ? 'warehouse' : 'staff';
+      const rl = readRole(b.role);
       if (rl !== target.role) {
         // Losing the last admin would leave nobody able to manage the app.
         if (target.role === 'admin') {

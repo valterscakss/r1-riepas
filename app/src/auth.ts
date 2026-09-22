@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { createHash } from 'node:crypto';
 import type express from 'express';
-import type { Store, User } from './types.js';
+import type { Store, User, Role } from './types.js';
 
 export const COOKIE = 'r1_session';
 const DEV_SECRET = 'dev-only-insecure-secret-change-me';
@@ -11,7 +11,7 @@ if (SECRET === DEV_SECRET) {
   console.warn('[auth] AUTH_SECRET not set — using an insecure dev secret. Set AUTH_SECRET in production.');
 }
 
-export interface SessionUser { id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; }
+export interface SessionUser { id: string; username: string; name: string; role: Role; }
 
 /** Settings key holding a fingerprint of the ADMIN_PASSWORD already applied. */
 const ADMIN_PW_KEY = 'admin_password_applied';
@@ -61,15 +61,17 @@ export function requireAuth(req: express.Request, res: express.Response, next: e
 }
 
 /**
- * Middleware: require a desk user (admin or staff). The 'warehouse' role stops
- * here — it may only reach the endpoints that stay on plain requireAuth: the job
- * queue, single records, photos, comments, and push registration.
+ * Middleware: require a desk user. Only admin and staff pass — the floor roles
+ * ('warehouse', 'leja') reach the endpoints that stay on plain requireAuth: the
+ * job queue, single records, photos, comments, and push registration. This is an
+ * allow-list on purpose, so a role added later is shut out until someone decides
+ * otherwise rather than being let in by default.
  */
 export function requireStaff(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (AUTH_DISABLED()) { (req as express.Request & { user?: SessionUser }).user = DEMO_USER; return next(); }
   const u = currentUser(req);
   if (!u) return res.status(401).json({ error: { message: 'Authentication required' } });
-  if (u.role === 'warehouse') return res.status(403).json({ error: { message: 'Šī sadaļa nav pieejama noliktavas lietotājam' } });
+  if (u.role !== 'admin' && u.role !== 'staff') return res.status(403).json({ error: { message: 'Šī sadaļa nav pieejama šim lietotājam' } });
   (req as express.Request & { user?: SessionUser }).user = u;
   next();
 }

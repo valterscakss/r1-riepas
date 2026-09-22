@@ -48,6 +48,18 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 .navbtn.on::before{content:'';position:absolute;inset:0;background:var(--accent-soft);z-index:0;border-radius:9px;}
 .navbtn.on::after{content:'';position:absolute;left:0;top:7px;bottom:7px;width:3px;background:var(--accent);border-radius:0 3px 3px 0;}
 .navbtn span{position:relative;z-index:1;}
+/* The two everyday actions — taking a set in and handing it back — are the ones
+   staff reach for all day, so they sit in the sidebar as filled buttons rather
+   than plain links. */
+.navbtn-main{background:var(--accent-soft);color:var(--accent-2);font-weight:600;margin-bottom:2px;border:1px solid oklch(0.85 0.06 256);}
+.navbtn-main:hover{background:oklch(0.93 0.05 256);}
+.navbtn-main.on{color:#fff;border-color:transparent;}
+.navbtn-main.on::before{background:var(--accent);}
+.navbtn-main.on::after{background:#fff;}
+@media (prefers-color-scheme:dark){
+  .navbtn-main{border-color:oklch(0.45 0.08 256);}
+  .navbtn-main:hover{background:oklch(0.35 0.06 256);}
+}
 .chip{height:30px;padding:0 12px;border:0;border-radius:7px;font-weight:500;font-size:12px;cursor:pointer;background:transparent;color:var(--ink-3);}
 .chip.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px oklch(0.2 0.02 260 / .12);font-weight:600;}
 .field label{display:block;font-size:12px;font-weight:500;color:var(--ink-2);margin-bottom:6px;}
@@ -112,8 +124,8 @@ button{font-family:'IBM Plex Sans',sans-serif;}
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
     <button class="navbtn" data-nav="warehouse"><span>▦&nbsp; Noliktava <span id="nav-task-badge" style="display:none;margin-left:auto;font-size:10px;font-weight:700;background:var(--danger);color:#fff;border-radius:9px;padding:1px 7px;"></span></span></button>
     <div style="height:1px;background:var(--border);margin:8px 12px;"></div>
-    <button class="navbtn" data-nav="intake"><span>↓&nbsp; Pieņemšana</span></button>
-    <button class="navbtn" data-nav="release"><span>↑&nbsp; Izsniegšana</span></button>
+    <button class="navbtn navbtn-main" data-nav="intake"><span>↓&nbsp; Jauna glabāšana</span></button>
+    <button class="navbtn navbtn-main" data-nav="release"><span>↑&nbsp; Izsniegt glabāšanu</span></button>
     <button class="navbtn" data-nav="pending"><span>◔&nbsp; Sagatavotie <span id="nav-pending-badge" style="display:none;margin-left:auto;font-size:10px;font-weight:700;background:var(--warn);color:#fff;border-radius:9px;padding:1px 7px;"></span></span></button>
     <button class="navbtn" data-nav="spots"><span>⊞&nbsp; Novietnes</span></button>
     <button class="navbtn" data-nav="customers"><span>◉&nbsp; Klienti</span></button>
@@ -264,7 +276,7 @@ function paintHeader(){
     if(k)b.style.display=can(k)?'':'none';});
   const cap=document.querySelector('aside > div:last-child');if(cap)cap.style.display=can('screen.home')||can('screen.spots')?'':'none';
   const name=S.auth?(S.auth.name||S.auth.username||'—'):'—';
-  const role=S.auth&&!demo?(S.auth.role==='admin'?'Administrators':S.auth.role==='warehouse'?'Noliktava':'Personāls'):'';
+  const role=S.auth&&!demo?roleLabel(S.auth.role):'';
   const set=(id,v)=>{const el=$(id);if(el)el.textContent=v;};
   const show=(id,on)=>{const el=$(id);if(el)el.style.display=on?'':'none';};
   set('#hdr-name',demo?'':name);set('#hdr-role',role);set('#hdr-init',demo?'':initialsOf(name));
@@ -342,6 +354,17 @@ const contBar=c=>{const pct=c.total?Math.round(c.occ/c.total*100):0;
   return `<div><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;"><span style="font-weight:600;">Konteiners ${esc(c.letter)}</span><span class="mono" style="color:var(--ink-3);">${c.occ}/${c.total}</span></div>
   <div style="height:7px;background:var(--border);border-radius:5px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:${bc};border-radius:5px;"></div></div></div>`;};
 
+// The roles, in one place. A role only sets the STARTING permissions; what a
+// person actually sees is the per-user checklist in Lietotāji.
+const ROLE_LABEL={admin:'Administrators',staff:'Personāls',warehouse:'Noliktava',leja:'Leja'};
+const ROLE_TINT={
+  admin:'background:var(--accent-soft);color:var(--accent-2);',
+  warehouse:'background:oklch(0.95 0.03 285);color:oklch(0.45 0.15 285);',
+  leja:'background:oklch(0.95 0.04 200);color:oklch(0.42 0.13 200);',
+  staff:'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'};
+const ROLE_OPTIONS=[['staff','Personāls'],['warehouse','Noliktava (tikai uzdevumi)'],['leja','Leja (tikai uzdevumi)'],['admin','Administrators']];
+const roleLabel=r=>ROLE_LABEL[r]||ROLE_LABEL.staff;
+const roleTint=r=>ROLE_TINT[r]||ROLE_TINT.staff;
 function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayIntakes:'—',smsIssued:'—',revenueActive:0,containers:[]};
   const showRev=S.role!=='staff';
   return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
@@ -349,15 +372,15 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
     <div><h1 style="margin:0;font-size:26px;font-weight:600;letter-spacing:-0.01em;">Pārskats</h1>
     <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${dateStr} · ${season}</div></div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-      <button data-act="go-release" style="height:44px;padding:0 18px;background:var(--surface);color:var(--ink);border:1px solid var(--border-2);border-radius:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:9px;">◔ Sagatavot riepas</button>
-      <button data-act="new-intake" style="height:44px;padding:0 20px;background:var(--accent);color:#fff;border:0;border-radius:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:9px;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">＋ Jauna pieņemšana</button>
+      ${can('screen.release')?`<button data-act="go-release" style="height:44px;padding:0 18px;background:var(--surface);color:var(--ink);border:1px solid var(--border-2);border-radius:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:9px;">◔ Sagatavot riepas</button>`:''}
+      ${can('screen.intake')?`<button data-act="new-intake" style="height:44px;padding:0 20px;background:var(--accent);color:#fff;border:0;border-radius:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:9px;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">＋ Jauna glabāšana</button>`:''}
     </div>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--gap);margin-bottom:var(--gap);">
     <div class="card" style="padding:var(--card);"><div class="label">Aizņemtas vietas</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;">${st.occ}<span style="font-size:16px;color:var(--ink-3);">/${st.total}</span></div></div>
     <div class="card" style="padding:var(--card);"><div class="label">Brīvas vietas</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;color:var(--ok);">${st.free}</div></div>
-    ${st.reserved>0?`<div class="card" data-act="go-pending" style="padding:var(--card);cursor:pointer;"><div class="label">Sagatavotas (rezervētas)</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;color:var(--warn);">${st.reserved}</div></div>`:''}
-    ${S.openTasks>0?`<div class="card" data-act="go-warehouse" style="padding:var(--card);cursor:pointer;border-color:oklch(0.8 0.06 25);"><div class="label">Noliktavā darāmie</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;color:var(--danger);">${S.openTasks}</div></div>`:''}
+    ${(st.reserved>0&&can('screen.pending'))?`<div class="card" data-act="go-pending" style="padding:var(--card);cursor:pointer;"><div class="label">Sagatavotas (rezervētas)</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;color:var(--warn);">${st.reserved}</div></div>`:''}
+    ${(S.openTasks>0&&can('screen.warehouse'))?`<div class="card" data-act="go-warehouse" style="padding:var(--card);cursor:pointer;border-color:oklch(0.8 0.06 25);"><div class="label">Noliktavā darāmie</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;color:var(--danger);">${S.openTasks}</div></div>`:''}
     <div class="card" style="padding:var(--card);"><div class="label">Šodien pieņemtas</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;">${st.todayIntakes}</div></div>
     <div class="card" style="padding:var(--card);"><div class="label">SMS kodi izsniegti</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;">${st.smsIssued}</div></div>
     ${showRev?`<div class="card" style="padding:var(--card);"><div class="label">Ieņēmumi (aktīvie)</div><div class="mono" style="font-size:30px;font-weight:600;margin-top:8px;">${eur(st.revenueActive||0)}</div></div>`:''}
@@ -365,18 +388,26 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
   <div class="rgrid2" style="display:grid;grid-template-columns:1.6fr 1fr;gap:var(--gap);align-items:start;">
     <div class="card" style="overflow:hidden;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:16px var(--card);border-bottom:1px solid var(--border);">
-        <h2 style="margin:0;font-size:15px;font-weight:600;">Nesenās darbības</h2><button data-act="go-history" style="border:0;background:transparent;font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;">Skatīt visu →</button></div>
+        <h2 style="margin:0;font-size:15px;font-weight:600;">Nesenās darbības</h2>${can('screen.history')?`<button data-act="go-history" style="border:0;background:transparent;font-size:12px;color:var(--accent);font-weight:600;cursor:pointer;">Skatīt visu →</button>`:''}</div>
       <div>${S.activity.map(actRow).join('')||'<div style="padding:20px;color:var(--ink-3);font-size:13px;">Nav darbību</div>'}</div>
     </div>
     <div style="display:flex;flex-direction:column;gap:var(--gap);">
       <div class="card" style="padding:var(--card);">
         <h2 style="margin:0 0 14px;font-size:15px;font-weight:600;">Ātrās darbības</h2>
         <div style="display:flex;flex-direction:column;gap:8px;">
-          <button data-act="new-intake" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">↓&nbsp; Pieņemt riepas</button>
-          <button data-act="go-release" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">↑&nbsp; Izsniegt riepas (kods/numurs)</button>
-          <button data-act="go-release" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">◔&nbsp; Sagatavot riepas (maiņai)</button>
-          <button data-act="go-warehouse" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">▦&nbsp; Pasūtīt no noliktavas</button>
-          <button data-act="go-customers" style="height:42px;padding:0 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:9px;font-weight:500;cursor:pointer;text-align:left;">◉&nbsp; Klienti</button>
+          ${(()=>{
+            // A shortcut is only offered when the person can actually open what it
+            // leads to; the main two are filled in so they stand out from the rest.
+            const qa=[
+              ['new-intake','↓&nbsp; Jauna glabāšana','screen.intake',1],
+              ['go-release','↑&nbsp; Izsniegt glabāšanu (kods/numurs)','screen.release',1],
+              ['go-release','◔&nbsp; Sagatavot riepas (maiņai)','screen.release',0],
+              ['go-warehouse','▦&nbsp; Pasūtīt no noliktavas','screen.warehouse',0],
+              ['go-customers','◉&nbsp; Klienti','screen.customers',0]];
+            const rows=qa.filter(([,,k])=>can(k)).map(([a,l,,main])=>
+              `<button data-act="${a}" style="height:42px;padding:0 14px;border-radius:9px;font-weight:${main?600:500};cursor:pointer;text-align:left;${main?'background:var(--accent-soft);border:1px solid oklch(0.85 0.06 256);color:var(--accent-2);':'background:var(--surface-2);border:1px solid var(--border-2);'}">${l}</button>`);
+            return rows.join('')||'<div style="color:var(--ink-3);font-size:13px;">Nav pieejamu darbību.</div>';
+          })()}
         </div>
       </div>
       <div class="card" style="padding:var(--card);">
@@ -418,7 +449,7 @@ function intakeHTML(){const p=price();
     </div><span style="font-size:12px;color:var(--ok);font-weight:600;">Iepriekšējie dati aizpildīti ✓ (${S.history} ieraksti)</span></div>`;
   const spot=S.presetSpot||(S.stats&&S.stats.assignNext)||'—';
   return `<div class="page" style="padding:var(--pad);max-width:1180px;margin:0 auto;">
-  <div style="margin-bottom:var(--pad);"><h1 style="margin:0;font-size:24px;font-weight:600;">${S.swapFromId?'Sezonas maiņa':'Riepu pieņemšana'}</h1>
+  <div style="margin-bottom:var(--pad);"><h1 style="margin:0;font-size:24px;font-weight:600;">${S.swapFromId?'Sezonas maiņa':'Jauna glabāšana'}</h1>
   <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${S.swapFromId?`Ievadi jaunās riepas — tās nonāks rezervētajā vietā <b class="mono">${esc(S.presetSpot||'—')}</b>`:`${season} · vieta tiek piešķirta automātiski`}</div></div>
   <div class="rrow" style="display:flex;gap:var(--gap);align-items:flex-start;">
     <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--gap);">
@@ -982,7 +1013,7 @@ function custContentHTML(){const list=S.customers;const sel=list[S.selCustomer]|
     <span class="mono" style="font-size:12px;">${esc(h.intakeDate||'—')}</span><span class="mono" style="font-size:12px;">${esc(h.releaseDate||'—')}</span>
     <span class="mono" style="font-size:11px;color:var(--ink-3);">${esc(h.sms||'—')}</span>
     <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;"><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;text-align:center;${h.status==='active'?'background:var(--ok-soft);color:var(--ok);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${h.status==='active'?'Glabājas':'Izsniegts'}</span>
-    ${h.status==='active'?`<button data-release="${esc(h.id)}" data-plate="${esc(h.plate||'')}" data-loc="${esc(h.loc||'')}" title="Izsniegt" style="border:1px solid var(--border-2);background:var(--surface);border-radius:6px;font-size:11px;padding:3px 8px;cursor:pointer;">Izsniegt</button>`:''}</span></div>`).join('');
+    ${(h.status==='active'&&can('act.operate'))?`<button data-release="${esc(h.id)}" data-plate="${esc(h.plate||'')}" data-loc="${esc(h.loc||'')}" title="Izsniegt" style="border:1px solid var(--border-2);background:var(--surface);border-radius:6px;font-size:11px;padding:3px 8px;cursor:pointer;">Izsniegt</button>`:''}</span></div>`).join('');
   return `<div class="rgridside" style="display:grid;grid-template-columns:320px 1fr;gap:var(--gap);align-items:start;">
     <div class="card cust-list" style="overflow:hidden;max-height:70vh;overflow-y:auto;">${rows||'<div style="padding:18px;color:var(--ink-3);font-size:13px;">Nav rezultātu</div>'}</div>
     ${sel?`<div style="display:flex;flex-direction:column;gap:var(--gap);min-width:0;">
@@ -1180,7 +1211,7 @@ function updateTabContent(){const c=document.getElementById('tab-content');if(!c
 // ============ RIEPU IZSNIEGŠANA (release) ============
 function releaseHTML(){
   return `<div class="page" style="padding:var(--pad);max-width:1000px;margin:0 auto;">
-    <div style="margin-bottom:var(--pad);"><h1 style="margin:0;font-size:24px;font-weight:600;">Riepu izsniegšana</h1>
+    <div style="margin-bottom:var(--pad);"><h1 style="margin:0;font-size:24px;font-weight:600;">Izsniegt glabāšanu</h1>
     <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Ievadi SMS kodu vai numura zīmi, lai atrastu glabātās riepas</div></div>
     <div class="card" style="padding:var(--card);margin-bottom:var(--gap);">
       <div style="display:flex;gap:10px;">
@@ -1208,8 +1239,8 @@ function relContentHTML(){
         </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;">
-        <button data-rel-prepare="${esc(x.id)}" data-plate="${esc(x.plate||'')}" data-loc="${esc(x.loc||'')}" title="Izņemt riepas, vietu paturēt rezervētu maiņai" style="height:44px;padding:0 16px;background:var(--surface);color:var(--ink-2);border:1px solid var(--border-2);border-radius:10px;font-weight:600;cursor:pointer;">Sagatavot</button>
-        <button data-rel-issue="${esc(x.id)}" data-plate="${esc(x.plate||'')}" data-loc="${esc(x.loc||'')}" style="height:44px;padding:0 20px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">Izsniegt riepas</button>
+        ${!can('act.operate')?'':`<button data-rel-prepare="${esc(x.id)}" data-plate="${esc(x.plate||'')}" data-loc="${esc(x.loc||'')}" title="Izņemt riepas, vietu paturēt rezervētu maiņai" style="height:44px;padding:0 16px;background:var(--surface);color:var(--ink-2);border:1px solid var(--border-2);border-radius:10px;font-weight:600;cursor:pointer;">Sagatavot</button>
+        <button data-rel-issue="${esc(x.id)}" data-plate="${esc(x.plate||'')}" data-loc="${esc(x.loc||'')}" style="height:44px;padding:0 20px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">Izsniegt riepas</button>`}
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;margin-top:16px;">
@@ -1436,9 +1467,9 @@ function pendingHTML(){
         </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;">
-        <button data-swap="${esc(x.id)}" data-plate="${esc(x.plate||'')}" data-loc="${esc(x.loc||'')}" style="height:42px;padding:0 16px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">Pieņemt jaunās riepas</button>
+        ${!can('act.operate')?'':`<button data-swap="${esc(x.id)}" data-plate="${esc(x.plate||'')}" data-loc="${esc(x.loc||'')}" style="height:42px;padding:0 16px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">Pieņemt jaunās riepas</button>
         <button data-unprep="${esc(x.id)}" title="Novietot atpakaļ vietā" style="height:42px;padding:0 14px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;">Atpakaļ vietā</button>
-        <button data-terminate="${esc(x.id)}" data-plate="${esc(x.plate||'')}" style="height:42px;padding:0 14px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--danger);">Slēgt (bez jaunām)</button>
+        <button data-terminate="${esc(x.id)}" data-plate="${esc(x.plate||'')}" style="height:42px;padding:0 14px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--danger);">Slēgt (bez jaunām)</button>`}
       </div>
     </div>
   </div>`).join('');
@@ -1448,7 +1479,7 @@ function pendingHTML(){
       <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Riepas izņemtas, vieta rezervēta — gaida sezonas maiņu</div></div>
       ${list.length?exportBtn('pending','','Excel'):''}
     </div>
-    ${!S.pendingLoaded?'<div class="card" style="padding:24px;color:var(--ink-3);">Ielādē…</div>':(list.length?cards:'<div class="card" style="padding:30px;text-align:center;color:var(--ink-3);font-size:14px;">Nav sagatavotu riepu.<br><span style="font-size:13px;">Sadaļā <b>Izsniegšana</b> vai <b>Novietnes</b> nospied “Sagatavot”, lai izņemtu riepas un rezervētu vietu.</span></div>')}
+    ${!S.pendingLoaded?'<div class="card" style="padding:24px;color:var(--ink-3);">Ielādē…</div>':(list.length?cards:'<div class="card" style="padding:30px;text-align:center;color:var(--ink-3);font-size:14px;">Nav sagatavotu riepu.<br><span style="font-size:13px;">Sadaļā <b>Izsniegt glabāšanu</b> vai <b>Novietnes</b> nospied “Sagatavot”, lai izņemtu riepas un rezervētu vietu.</span></div>')}
   </div>`;}
 
 // ============ VĒSTURE (full history) ============
@@ -1878,7 +1909,7 @@ function renderModal(){const m=$('#modal');
     <div data-stop="1" style="background:var(--surface);border-radius:20px;width:640px;max-width:100%;overflow:hidden;box-shadow:0 24px 60px oklch(0.2 0.02 260 / .3);animation:r1pop .28s cubic-bezier(.2,.8,.2,1);display:grid;grid-template-columns:1fr 300px;">
       <div style="padding:32px;">
         <div style="width:48px;height:48px;border-radius:13px;background:var(--ok-soft);color:var(--ok);display:flex;align-items:center;justify-content:center;margin-bottom:18px;font-size:24px;">✓</div>
-        <h2 style="margin:0;font-size:22px;font-weight:600;">Pieņemšana apstiprināta</h2>
+        <h2 style="margin:0;font-size:22px;font-weight:600;">Glabāšana apstiprināta</h2>
         <p style="color:var(--ink-2);font-size:14px;line-height:1.6;margin:8px 0 22px;">Riepas noglabātas vietā <strong class="mono">${esc(r.location||'—')}</strong>. Klientam paredzētais SMS kods ir ģenerēts.</p>
         <div style="display:flex;flex-direction:column;gap:10px;">
           <div style="display:flex;justify-content:space-between;padding:11px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;"><span style="color:var(--ink-3);font-size:13px;">SMS kods</span><span class="mono" style="font-weight:600;">${esc(r.smsCode||'—')}</span></div>
@@ -1911,6 +1942,9 @@ function renderModal(){const m=$('#modal');
   // A record opened FROM the spot panel wins: the panel stays underneath and comes
   // back when the record card is closed.
   } else if(S.selSpot&&!S.recOpen){const s=S.selSpot;
+    // Everything that moves tires is act.operate. Without it the panel is a
+    // read-only look at the place, which is what the floor roles get by default.
+    const op=can('act.operate');
     m.innerHTML=`<div data-close="spot" style="position:fixed;inset:0;background:oklch(0.2 0.02 260 / .35);z-index:60;animation:r1fade .18s ease;">
     <div data-stop="1" style="position:absolute;top:0;right:0;bottom:0;width:380px;max-width:92vw;background:var(--surface);border-left:1px solid var(--border);box-shadow:-8px 0 30px oklch(0.2 0.02 260 / .18);padding:26px;overflow:auto;animation:r1pop .22s ease;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:8px;">
@@ -1926,13 +1960,13 @@ function renderModal(){const m=$('#modal');
             <span class="mono" style="font-weight:600;">${esc(r.plate||'—')}</span>
             <span style="color:var(--ink-3);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc([r.cust,r.brand,r.size].filter(Boolean).join(' · ')||'—')}</span></div>`).join('')}
         </div>`:'<div style="color:var(--ink-3);font-size:13px;">Zona ir tukša.</div>'}
-        ${s.count<s.cap?`<button data-assign="${esc(s.code)}" style="height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Piešķirt šo zonu (${s.cap-s.count} brīvas)</button>`:'<div style="color:var(--ink-3);font-size:12px;text-align:center;">Zona ir pilna.</div>'}
+        ${s.count<s.cap?(op?`<button data-assign="${esc(s.code)}" style="height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Piešķirt šo zonu (${s.cap-s.count} brīvas)</button>`:''):'<div style="color:var(--ink-3);font-size:12px;text-align:center;">Zona ir pilna.</div>'}
       </div>`:''}
       ${s.zone?'':`
       <span style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;padding:4px 10px;border-radius:7px;${s.blocked?'background:var(--danger-soft);color:var(--danger);':s.occ?(s.reserved?'background:var(--warn-soft);color:var(--warn);':'background:var(--surface-2);border:1px solid var(--border-2);color:var(--ink-2);'):'background:var(--ok-soft);color:var(--ok);'}">${s.blocked?'Bloķēts':s.occ?(s.reserved?'Rezervēts · gaida maiņu':'Aizņemta'):'Brīvs'}</span>`}
       ${s.zone?'':s.blocked?`<div style="margin-top:22px;">
         <p style="color:var(--ink-2);font-size:14px;line-height:1.6;margin:0 0 18px;">Šī vieta ir manuāli bloķēta un nav pieejama pieņemšanai.</p>
-        <button data-unblock="${esc(s.id)}" style="width:100%;height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Atbloķēt vietu</button>
+        ${op?`<button data-unblock="${esc(s.id)}" style="width:100%;height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Atbloķēt vietu</button>`:''}
       </div>`:s.occ?`<div style="margin-top:22px;display:flex;flex-direction:column;gap:14px;">
         <div><div class="label" style="margin-bottom:4px;">Klients</div><div style="font-weight:600;font-size:16px;">${esc(s.cust||'—')}</div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
@@ -1941,7 +1975,7 @@ function renderModal(){const m=$('#modal');
           <div><div class="label" style="margin-bottom:4px;">Ražotājs</div><div style="font-weight:500;">${esc(s.brand||'—')}</div></div>
           <div><div class="label" style="margin-bottom:4px;">SMS kods</div><div class="mono" style="font-weight:600;">${esc(s.sms||'—')}</div></div>
         </div>
-        ${s.reserved?`<div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
+        ${!op?'':s.reserved?`<div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
           <button data-swap="${esc(s.id)}" data-plate="${esc(s.plate||'')}" data-loc="${esc(s.code)}" style="height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Pieņemt jaunās riepas</button>
           <button data-terminate="${esc(s.id)}" data-plate="${esc(s.plate||'')}" style="height:42px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--danger);">Slēgt (bez jaunām)</button>
           <button data-unprep="${esc(s.id)}" style="height:40px;background:transparent;border:0;color:var(--ink-3);font-weight:500;cursor:pointer;">Novietot atpakaļ vietā</button>
@@ -1952,8 +1986,8 @@ function renderModal(){const m=$('#modal');
         <div id="spot-hist">${spotHistHTML()}</div>
       </div>`:`<div style="margin-top:22px;">
         <p style="color:var(--ink-2);font-size:14px;line-height:1.6;margin:0 0 18px;">Šī vieta ir brīvs un gatava jaunai pieņemšanai.</p>
-        <button data-assign="${esc(s.code)}" style="width:100%;height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Piešķirt šo vietu</button>
-        <button data-block="${esc(s.code)}" title="Rezervēt vietu bez riepām" style="width:100%;height:42px;margin-top:8px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--ink-2);">Bloķēt vietu</button>
+        ${op?`<button data-assign="${esc(s.code)}" style="width:100%;height:44px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">Piešķirt šo vietu</button>
+        <button data-block="${esc(s.code)}" title="Rezervēt vietu bez riepām" style="width:100%;height:42px;margin-top:8px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--ink-2);">Bloķēt vietu</button>`:''}
       </div>`}
     </div></div>`;
   } else if(S.spotPickOpen){
@@ -2385,7 +2419,7 @@ function usersHTML(){
       <span style="width:34px;height:34px;flex:none;border-radius:9px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;color:var(--ink-2);">${esc(initialsOf(u.name))}</span>
       <span style="min-width:0;"><span style="display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(u.name)}</span><span class="mono" style="display:block;font-size:11px;color:var(--ink-3);">@${esc(u.username)}</span></span>
     </div>
-    <span><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;${u.role==='admin'?'background:var(--accent-soft);color:var(--accent-2);':u.role==='warehouse'?'background:oklch(0.95 0.03 285);color:oklch(0.45 0.15 285);':'background:var(--surface-2);color:var(--ink-3);border:1px solid var(--border);'}">${u.role==='admin'?'Administrators':u.role==='warehouse'?'Noliktava':'Personāls'}</span></span>
+    <span><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;${roleTint(u.role)}">${esc(roleLabel(u.role))}</span></span>
     <span style="display:flex;gap:6px;flex-wrap:wrap;">
     <button data-edit-user="${esc(u.username)}" data-name="${esc(u.name)}" data-role="${esc(u.role)}" title="Mainīt vārdu, lietotājvārdu vai lomu" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Rediģēt</button>
     ${u.role!=='admin'?`<button data-perms-user="${esc(u.username)}" data-name="${esc(u.name)}" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Tiesības</button>`:''}
@@ -2437,7 +2471,7 @@ async function newUserDialog(){
     html:`<div style="text-align:left;display:flex;flex-direction:column;gap:12px;">
       <div><label class="label" style="display:block;margin-bottom:5px;">Vārds</label><input id="nu-name" class="swal2-input" placeholder="Jānis Bērziņš" style="margin:0;width:100%;"></div>
       <div><label class="label" style="display:block;margin-bottom:5px;">Lietotājvārds</label><input id="nu-user" class="swal2-input mono" placeholder="janis" autocapitalize="none" autocorrect="off" style="margin:0;width:100%;"></div>
-      <div><label class="label" style="display:block;margin-bottom:5px;">Loma</label><select id="nu-role" class="swal2-input" style="margin:0;width:100%;"><option value="staff">Personāls</option><option value="warehouse">Noliktava (tikai uzdevumi)</option><option value="admin">Administrators</option></select></div>
+      <div><label class="label" style="display:block;margin-bottom:5px;">Loma</label><select id="nu-role" class="swal2-input" style="margin:0;width:100%;">${ROLE_OPTIONS.map(([k,l])=>`<option value="${k}">${l}</option>`).join('')}</select></div>
       <div><label class="label" style="display:block;margin-bottom:5px;">Parole</label>${passRow('nu-pass')}</div>
     </div>`,
     showCancelButton:true,confirmButtonText:'Izveidot',cancelButtonText:'Atcelt',
@@ -2463,7 +2497,7 @@ async function newUserDialog(){
 // Tick exactly what this user sees and does; unticked = hidden AND blocked
 // server-side, including the data fields (phone, names, prices, SMS codes).
 const PERM_GROUPS=[
- ['Sadaļas',[['screen.home','Sākums'],['screen.warehouse','Noliktava'],['screen.intake','Pieņemšana'],['screen.release','Izsniegšana'],['screen.pending','Sagatavotie'],['screen.spots','Novietnes'],['screen.customers','Klienti'],['screen.table','Tabula'],['screen.analytics','Analītika'],['screen.history','Vēsture']]],
+ ['Sadaļas',[['screen.home','Sākums'],['screen.warehouse','Noliktava'],['screen.intake','Jauna glabāšana'],['screen.release','Izsniegt glabāšanu'],['screen.pending','Sagatavotie'],['screen.spots','Novietnes'],['screen.customers','Klienti'],['screen.table','Tabula'],['screen.analytics','Analītika'],['screen.history','Vēsture']]],
  ['Darbības',[['act.operate','Pieņemt / izsniegt / sagatavot'],['act.edit','Rediģēt ierakstu datus'],['act.media','Pievienot bildes un komentārus'],['act.export','Eksportēt Excel']]],
  ['Redzamie dati',[['field.customer','Klientu vārdi'],['field.phone','Telefona numuri'],['field.price','Cenas'],['field.sms','SMS kodi']]],
 ];
@@ -2478,7 +2512,7 @@ async function permsDialog(username,name){
       <input type="checkbox" data-pk="${k}" ${on?'checked':''} style="width:17px;height:17px;accent-color:var(--accent);cursor:pointer;">
       <span>${label}${dev?' <span style="font-size:10px;color:var(--accent-2);">(mainīts)</span>':''}</span></label>`;};
   const html=`<div style="text-align:left;max-height:56vh;overflow:auto;">
-    <div style="color:var(--ink-3);font-size:12px;margin-bottom:12px;">Loma: <b>${data.role==='warehouse'?'Noliktava':'Personāls'}</b> — atzīmētais nosaka, ko <b>@${esc(username)}</b> redz un drīkst. Neatzīmētie dati (telefoni, vārdi, cenas) tiek slēpti arī no servera atbildēm.</div>
+    <div style="color:var(--ink-3);font-size:12px;margin-bottom:12px;">Loma: <b>${esc(roleLabel(data.role))}</b> — atzīmētais nosaka, ko <b>@${esc(username)}</b> redz un drīkst. Neatzīmētie dati (telefoni, vārdi, cenas) tiek slēpti arī no servera atbildēm.</div>
     ${PERM_GROUPS.map(([g,items])=>`<div style="margin-bottom:12px;"><div class="label" style="margin-bottom:4px;">${g}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px;">${items.map(([k,l])=>box(k,l)).join('')}</div></div>`).join('')}
   </div>`;
@@ -2508,7 +2542,7 @@ async function editUserDialog(username,name,role){
       <div><label class="label" style="display:block;margin-bottom:5px;">Lietotājvārds (pieteikšanās vārds)</label><input id="eu-user" class="swal2-input mono" value="${esc(username||'')}" autocapitalize="none" autocorrect="off" style="margin:0;width:100%;"></div>
       <div><label class="label" style="display:block;margin-bottom:5px;">Loma</label>
         <select id="eu-role" class="swal2-input" ${isSelf?'disabled':''} style="margin:0;width:100%;${isSelf?'opacity:.6;':''}">
-          ${[['staff','Personāls'],['warehouse','Noliktava (tikai uzdevumi)'],['admin','Administrators']].map(([k,l])=>`<option value="${k}"${role===k?' selected':''}>${l}</option>`).join('')}
+          ${ROLE_OPTIONS.map(([k,l])=>`<option value="${k}"${role===k?' selected':''}>${l}</option>`).join('')}
         </select>
         ${isSelf?'<div style="color:var(--ink-3);font-size:11px;margin-top:5px;">Savu lomu nevar mainīt — to var izdarīt cits administrators.</div>':''}</div>
       <div style="color:var(--ink-3);font-size:12px;line-height:1.5;">Parole, tiesības un vēsture paliek nemainīgas.${isSelf?'':' Ja maini lietotājvārdu vai lomu, lietotājam būs jāpiesakās no jauna.'}</div>
@@ -2632,7 +2666,6 @@ function initialScreen(){
   try{const v=localStorage.getItem(LAST_KEY);if(v&&SCREENS.includes(v)&&!ADMIN_SCREENS.includes(v)&&(!NAV_PERM[v]||can(NAV_PERM[v])))return v;}catch{}
   return firstScreen();}
 
-function isWarehouse(){return !!(S.auth&&S.auth.role==='warehouse');}
 // Effective permissions from the server; admin is always all-on.
 function can(key){if(S.auth&&S.auth.role==='admin')return true;return !!(S.perms&&S.perms[key]);}
 const NAV_PERM={home:'screen.home',warehouse:'screen.warehouse',intake:'screen.intake',release:'screen.release',pending:'screen.pending',spots:'screen.spots',customers:'screen.customers',table:'screen.table',analytics:'screen.analytics',history:'screen.history'};

@@ -1,5 +1,5 @@
 import type express from 'express';
-import type { Store, StorageRecord } from './types.js';
+import type { Store, StorageRecord, Role } from './types.js';
 import { AUTH_DISABLED, currentUser, type SessionUser } from './auth.js';
 
 /**
@@ -28,7 +28,7 @@ export type Perms = Record<PermKey, boolean>;
 const ALL_ON = Object.fromEntries(PERM_KEYS.map((k) => [k, true])) as Perms;
 const ALL_OFF = Object.fromEntries(PERM_KEYS.map((k) => [k, false])) as Perms;
 
-export const ROLE_DEFAULTS: Record<'admin' | 'staff' | 'warehouse', Perms> = {
+export const ROLE_DEFAULTS: Record<Role, Perms> = {
   admin: { ...ALL_ON },
   staff: { ...ALL_ON },
   warehouse: {
@@ -37,6 +37,15 @@ export const ROLE_DEFAULTS: Record<'admin' | 'staff' | 'warehouse', Perms> = {
     'screen.table': true,   // find any tire set in the full list…
     'act.media': true,      // …and add photos/comments to it
     // phone / customer / price / SMS stay hidden unless the admin ticks them
+  },
+  // The downstairs floor: same starting point as the warehouse, plus the spot
+  // map, since that is what you work from when fetching and shelving sets.
+  leja: {
+    ...ALL_OFF,
+    'screen.warehouse': true,
+    'screen.table': true,
+    'screen.spots': true,
+    'act.media': true,
   },
 };
 
@@ -63,7 +72,7 @@ export async function effectivePerms(store: Store, user: SessionUser): Promise<P
   // open session instead of waiting up to 12 hours for the token to expire.
   // A token naming a user that no longer exists — because they were renamed or
   // removed — grants nothing, which sends them back to the login screen.
-  let row: { role: 'admin' | 'staff' | 'warehouse' } | null = null;
+  let row: { role: Role } | null = null;
   try { row = await store.getUserByUsername(key); } catch { row = { role: user.role }; }
   if (!row) { const none = { ...ALL_OFF }; cache.set(key, { perms: none, at: Date.now() }); return none; }
   if (row.role === 'admin') { cache.set(key, { perms: { ...ALL_ON }, at: Date.now() }); return ALL_ON; }

@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub, Photo } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub, Photo, Role } from '../types.js';
 
 /**
  * Postgres datastore — the production backend for Supabase (or any Postgres).
@@ -135,8 +135,8 @@ interface Row {
   thread_depth?: string | null; sms_code?: string | null; fee_eur?: string | null; prepared_date?: string | null;
 }
 
-const normRole = (r: string): 'admin' | 'staff' | 'warehouse' =>
-  r === 'admin' ? 'admin' : r === 'warehouse' ? 'warehouse' : 'staff';
+const normRole = (r: string): Role =>
+  r === 'admin' ? 'admin' : r === 'warehouse' ? 'warehouse' : r === 'leja' ? 'leja' : 'staff';
 
 const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' | 'free' =>
   s === 'released' ? 'released' : s === 'prepared' ? 'prepared' : s === 'blocked' ? 'blocked'
@@ -340,7 +340,7 @@ export class PostgresStore implements Store {
     return r ? { id: String(r.id), username: r.username, name: r.name, passwordHash: r.password_hash, role: normRole(r.role) } : null;
   }
 
-  async updateUser(username: string, patch: { username?: string; name?: string; role?: 'admin' | 'staff' | 'warehouse' }): Promise<boolean> {
+  async updateUser(username: string, patch: { username?: string; name?: string; role?: Role }): Promise<boolean> {
     await this.init();
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -353,7 +353,7 @@ export class PostgresStore implements Store {
     return (res.rowCount ?? 0) > 0;
   }
 
-  async createUser(u: { username: string; name: string; passwordHash: string; role: 'admin' | 'staff' | 'warehouse' }): Promise<void> {
+  async createUser(u: { username: string; name: string; passwordHash: string; role: Role }): Promise<void> {
     await this.init();
     await this.pool.query('INSERT INTO users (username, name, password_hash, role) VALUES ($1,$2,$3,$4)',
       [u.username.toLowerCase(), u.name, u.passwordHash, u.role]);
@@ -371,7 +371,7 @@ export class PostgresStore implements Store {
     return Number(res.rows[0].n);
   }
 
-  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: 'admin' | 'staff' | 'warehouse'; perms: string | null; createdAt: string | null }>> {
+  async listUsers(): Promise<Array<{ id: string; username: string; name: string; role: Role; perms: string | null; createdAt: string | null }>> {
     await this.init();
     const res = await this.pool.query<{ id: number; username: string; name: string; role: string; perms: string | null; created_at: string | null }>(
       'SELECT id, username, name, role, perms, created_at FROM users ORDER BY created_at ASC, id ASC');
