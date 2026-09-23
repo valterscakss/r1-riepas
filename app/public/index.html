@@ -426,8 +426,9 @@ function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayInt
   </div></div>`;}
 
 function intakeHTML(){const p=price();
-  // Tread depth is optional — plenty of sets come in without one being measured.
-  const canConfirm=S.looked&&!!S.t1size&&(!S.isNew||!!(S.cust&&S.cust.trim()))&&(S.t1qty!=='2+2'||!!S.t2size);
+  // Only the car — and a name for a new customer — is required. Size, brand and
+  // tread depth are all optional: sets come in unmeasured and get filled in later.
+  const canConfirm=S.looked&&(!S.isNew||!!(S.cust&&S.cust.trim()));
   const rimBtn=(key,label,pos)=>{const on=S.rim===key;
     const rad=pos===0?'border-radius:8px 0 0 8px;':pos===2?'border-radius:0 8px 8px 0;border-left:0;':'border-left:0;';
     return `<button data-rim="${key}" style="height:var(--h);flex:1;border:1px solid var(--border-2);cursor:pointer;font-weight:500;font-size:13px;${on?'background:var(--accent);color:#fff;border-color:var(--accent);':'background:var(--surface);color:var(--ink-2);'}${rad}">${label}</button>`;};
@@ -474,7 +475,7 @@ function intakeHTML(){const p=price();
       <div class="card" style="padding:var(--card);">
         <div class="label" style="margin-bottom:14px;">2 · Riepu dati</div>
         <div class="rf3" style="display:grid;grid-template-columns:1.2fr 1.4fr 0.8fr;gap:12px;margin-bottom:14px;">
-          <div class="field"><label>Izmērs</label><input id="in-size" class="mono" inputmode="numeric" value="${esc(S.t1size)}" placeholder="235/50/19"></div>
+          <div class="field"><label>Izmērs (neobligāts)</label><input id="in-size" class="mono" inputmode="numeric" value="${esc(S.t1size)}" placeholder="235/50/19"></div>
           <div class="field"><label>Ražotājs</label><input id="in-brand" value="${esc(S.t1brand)}" placeholder="Michelin" autocomplete="off"></div>
           <div class="field"><label>Daudzums</label><select id="in-qty">${['1','2','3','4','2+2'].map(q=>`<option value="${q}"${S.t1qty===q?' selected':''}>${q}</option>`).join('')}</select></div>
         </div>
@@ -2416,8 +2417,6 @@ function updateSummary(){const set=(id,v)=>{const el=document.getElementById(id)
   if(btn){const miss=[];
     if(!S.looked)miss.push('meklē numuru');
     if(S.isNew&&!(S.cust&&S.cust.trim()))miss.push('klienta vārds');
-    if(!S.t1size)miss.push('izmērs');
-    if(S.t1qty==='2+2'&&!S.t2size)miss.push('2. pāra izmērs');
     const hint=document.getElementById('confirm-hint');
     if(hint)hint.textContent=miss.length?('Trūkst: '+miss.join(', ')):'';
     const ok=miss.length===0;
@@ -2508,14 +2507,13 @@ async function doLookup(){grab();hidePlateSuggest();
   render();}
 
 async function confirmIntake(){grab();
-  if(!(S.looked&&S.t1size))return;
+  if(!S.looked)return;
   if(!(S.looked&&(!S.isNew||S.cust.trim())))return;
   const is22=S.t1qty==='2+2';
-  if(is22&&!S.t2size)return;
   const b1=canonBrand(S.t1brand),b2=canonBrand(S.t2brand);
   const brand=is22&&b2&&b2!==b1?[b1,b2].filter(Boolean).join(' + '):(b1||null);
   const body={plate:S.plate,customerName:(S.cust&&S.cust.trim())||null,isCompany:!!S.isCompany,phone:(S.phone&&S.phone.trim())||null,
-    size1:maskSize(S.t1size)||S.t1size,brand,size2:is22?(maskSize(S.t2size)||S.t2size):null,
+    size1:(maskSize(S.t1size)||S.t1size)||null,brand,size2:is22?((maskSize(S.t2size)||S.t2size)||null):null,
     quantity:S.t1qty,rim:S.rim,threadDepth:S.thread,location:S.presetSpot||null,releaseId:S.swapFromId||null};
   const res=await fetch('/api/intake',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data=await res.json();
