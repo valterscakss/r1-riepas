@@ -48,6 +48,14 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 .navbtn.on::before{content:'';position:absolute;inset:0;background:var(--accent-soft);z-index:0;border-radius:9px;}
 .navbtn.on::after{content:'';position:absolute;left:0;top:7px;bottom:7px;width:3px;background:var(--accent);border-radius:0 3px 3px 0;}
 .navbtn span{position:relative;z-index:1;}
+#print-area{display:none;}
+@media print{
+  body > *{display:none !important;}
+  #print-area{display:block !important;}
+  @page{size:A4;margin:14mm;}
+  html,body{background:#fff !important;}
+  #print-area,#print-area *{color:#000 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-family:'Inter',system-ui,sans-serif;}
+}
 /* The two everyday actions — taking a set in and handing it back — are the ones
    staff reach for all day, so they sit in the sidebar as filled buttons rather
    than plain links. */
@@ -1239,6 +1247,7 @@ function relContentHTML(){
         </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;">
+        <button data-printrec="${esc(x.id)}" title="Izdrukāt izsniegšanas aktu ar paraksta vietu" style="height:44px;padding:0 14px;background:var(--surface);color:var(--ink-2);border:1px solid var(--border-2);border-radius:10px;font-weight:600;cursor:pointer;">⎙ Drukāt</button>
         ${!can('act.operate')?'':`<button data-rel-prepare="${esc(x.id)}" data-plate="${esc(x.plate||'')}" data-loc="${esc(x.loc||'')}" title="Izņemt riepas, vietu paturēt rezervētu maiņai" style="height:44px;padding:0 16px;background:var(--surface);color:var(--ink-2);border:1px solid var(--border-2);border-radius:10px;font-weight:600;cursor:pointer;">Sagatavot</button>
         <button data-rel-issue="${esc(x.id)}" data-plate="${esc(x.plate||'')}" data-loc="${esc(x.loc||'')}" style="height:44px;padding:0 20px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px oklch(0.55 0.17 256 / .3);">Izsniegt riepas</button>`}
       </div>
@@ -1268,7 +1277,8 @@ async function loadPending(){try{S.pending=(await(await fetch('/api/pending')).j
 function paintPendingBadge(){const b=document.getElementById('nav-pending-badge');if(!b)return;const n=(S.pending||[]).length;
   if(n>0){b.textContent=n;b.style.display='';}else b.style.display='none';}
 function startSwap(id,plate,loc){resetIntake();S.plate=plate||'';S.presetSpot=loc||null;S.swapFromId=id;S.screen='intake';S.selSpot=null;S.recOpen=false;render();doLookup();}
-async function recAction(kind){const r=S.recData;if(!r)return;
+async function recAction(kind){
+  if(kind==='print'){printRecord(S.recData);return;}const r=S.recData;if(!r)return;
   if(kind==='edit'){await editRecordDialog(r);return;}
   if(kind==='swap'){S.recOpen=false;renderModal();startSwap(r.id,r.plate,r.location);return;}
   if(kind==='release'){const c=await ask({icon:'question',title:'Izsniegt riepas?',html:`<b class="mono">${esc(r.plate||'')}</b> · vieta ${esc(r.location||'')}`,input:'text',inputPlaceholder:'Komentārs (neobligāts)',confirmButtonText:'Izsniegt'});if(!c.isConfirmed)return;
@@ -2050,13 +2060,114 @@ function renderModal(){const m=$('#modal');
           <div class="label" style="margin-bottom:6px;">Vēsture un komentāri</div>
           <div id="rec-history">${recEventsHTML()}</div>
         </div>
-        ${can('act.operate')||can('act.edit')?`<div style="padding:0 24px 22px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:16px;">${can('act.operate')?acts:''}
+        <div style="padding:0 24px 22px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--border);padding-top:16px;">
+          ${can('act.operate')?acts:''}
           ${can('act.edit')?`<button data-recact="edit" style="height:40px;background:transparent;border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--ink-2);">✎ Rediģēt datus</button>`:''}
-        </div>`:''}
+          <button data-recact="print" title="Izdrukāt izsniegšanas aktu ar paraksta vietu" style="height:40px;background:transparent;border:1px solid var(--border-2);border-radius:10px;font-weight:500;cursor:pointer;color:var(--ink-2);">⎙ Drukāt izsniegšanas aktu</button>
+        </div>
       </div></div>`;
   } else m.innerHTML='';
   bind(m);
 }
+
+// ============ IZSNIEGŠANAS AKTS (printable handover sheet) ============
+// What the customer signs when they collect their tires: what was stored, where
+// it sat, what it costs, and two signature lines. Rendered into #print-area and
+// printed by swapping the page for it, so no popup is involved.
+function printDateStr(d){const p=n=>String(n).padStart(2,'0');
+  return `${p(d.getDate())}.${p(d.getMonth()+1)}.${d.getFullYear()}`;}
+// Stored dates are ISO; the sheet reads as a Latvian document, so every date on
+// it is written the same way.
+function printDay(v){if(!v)return '';const m=String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m?`${m[3]}.${m[2]}.${m[1]}`:String(v);}
+function printSheetHTML(r){
+  const now=new Date();
+  const size2=tabSize2(r);
+  const rims=r.rimNote||(size2?'—':'Bez diskiem');
+  const notes=tabNotes(r);
+  const row=(label,value)=>`<tr><th style="text-align:left;padding:5px 12px 5px 0;font-weight:500;color:#555;width:38%;vertical-align:top;font-size:12px;">${esc(label)}</th><td style="padding:5px 0;font-weight:600;font-size:13px;vertical-align:top;">${esc(value||'—')}</td></tr>`;
+  // Fields the person is not allowed to see never arrive from the server, so
+  // they simply do not appear on the sheet either.
+  const money=r.feeEur?eur(r.feeEur):null;
+  const sign=(who,name)=>`<div style="flex:1;">
+      <div style="height:46px;border-bottom:1px solid #000;"></div>
+      <div style="font-size:11px;color:#555;margin-top:5px;">${esc(who)}</div>
+      <div style="font-size:12px;font-weight:600;margin-top:2px;min-height:15px;">${esc(name||'')}</div>
+    </div>`;
+  return `<div style="max-width:180mm;margin:0 auto;font-size:13px;line-height:1.45;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:16px;">
+      <div>
+        <div style="font-size:19px;font-weight:700;letter-spacing:-0.01em;">R1 Tires</div>
+        <div style="font-size:11px;color:#555;">Riepu glabāšana</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:15px;font-weight:700;">RIEPU IZSNIEGŠANAS AKTS</div>
+        <div style="font-size:11px;color:#555;margin-top:2px;">Nr. ${esc(String(r.id||'—'))} · ${esc(printDateStr(now))}</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:26px;margin-bottom:16px;">
+      <div style="flex:1;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#555;margin-bottom:6px;">Klients</div>
+        <table style="width:100%;border-collapse:collapse;">
+          ${row('Vārds / uzņēmums',r.customerName)}
+          ${r.phone?row('Telefons',r.phone):''}
+          ${row('Auto numurs',r.plate)}
+          ${r.makeModel?row('Auto',r.makeModel):''}
+        </table>
+      </div>
+      <div style="flex:1;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#555;margin-bottom:6px;">Glabāšana</div>
+        <table style="width:100%;border-collapse:collapse;">
+          ${row('Sezona',r.season)}
+          ${row('Vieta',r.location)}
+          ${row('Pieņemts',printDay(r.intakeDate))}
+          ${row('Izsniegts',printDay(r.releaseDate)||printDateStr(now))}
+          ${r.smsCode?row('SMS kods',r.smsCode):''}
+        </table>
+      </div>
+    </div>
+
+    <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#555;margin-bottom:6px;">Izsniegtās riepas</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+      <thead><tr style="background:#f1f1f1;">
+        <th style="text-align:left;padding:7px 9px;font-size:11px;font-weight:700;border:1px solid #ccc;">Izmērs</th>
+        <th style="text-align:left;padding:7px 9px;font-size:11px;font-weight:700;border:1px solid #ccc;">Ražotājs</th>
+        <th style="text-align:left;padding:7px 9px;font-size:11px;font-weight:700;border:1px solid #ccc;">Skaits</th>
+        <th style="text-align:left;padding:7px 9px;font-size:11px;font-weight:700;border:1px solid #ccc;">Diski</th>
+        <th style="text-align:left;padding:7px 9px;font-size:11px;font-weight:700;border:1px solid #ccc;">Protektors</th>
+      </tr></thead>
+      <tbody><tr>
+        <td style="padding:8px 9px;border:1px solid #ccc;font-weight:600;">${esc(r.size1||'—')}${size2?' + '+esc(size2):''}</td>
+        <td style="padding:8px 9px;border:1px solid #ccc;">${esc(r.brand||'—')}</td>
+        <td style="padding:8px 9px;border:1px solid #ccc;">${esc(r.quantity||'—')}</td>
+        <td style="padding:8px 9px;border:1px solid #ccc;">${esc(rims)}</td>
+        <td style="padding:8px 9px;border:1px solid #ccc;">${r.threadDepth?esc(r.threadDepth)+' mm':'—'}</td>
+      </tr></tbody>
+    </table>
+
+    ${notes?`<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#555;margin-bottom:4px;">Piezīmes</div><div style="font-size:12px;">${esc(notes)}</div></div>`:''}
+    ${money?`<div style="display:flex;justify-content:flex-end;margin-bottom:14px;"><div style="border:1px solid #000;padding:8px 16px;"><span style="font-size:11px;color:#555;">Glabāšanas maksa</span> <span style="font-size:16px;font-weight:700;margin-left:10px;">${esc(money)}</span></div></div>`:''}
+
+    <div style="border-top:1px solid #ccc;padding-top:12px;margin-top:4px;">
+      <p style="margin:0 0 20px;font-size:12px;line-height:1.55;">Klients apstiprina, ka ir saņēmis augstāk norādītās riepas pilnā apjomā un bez redzamiem bojājumiem, un ka pretenziju pret glabātāju nav.</p>
+      <div style="display:flex;gap:40px;">
+        ${sign('Klienta paraksts',r.customerName)}
+        ${sign('Izsniedza (darbinieks)',(S.auth&&(S.auth.name||S.auth.username))||'')}
+      </div>
+      <div style="font-size:11px;color:#555;margin-top:14px;">Datums: ${esc(printDateStr(now))}</div>
+    </div>
+  </div>`;}
+async function printRecordById(id){
+  try{const r=await(await fetch('/api/storage/'+encodeURIComponent(id))).json();
+    if(r&&r.id)printRecord(r);else alertErr('Ieraksts nav atrasts');}
+  catch{alertErr('Neizdevās ielādēt ierakstu');}}
+function printRecord(r){
+  const box=document.getElementById('print-area');
+  if(!box||!r){alertErr('Nav ko drukāt');return;}
+  box.innerHTML=printSheetHTML(r);
+  // Let the layout settle before the print dialog freezes the page.
+  setTimeout(()=>{window.print();},60);}
 
 // ============ EVENTS ============
 function bind(root){
@@ -2126,6 +2237,7 @@ function bind(root){
     const rec=(S.table||[]).find(x=>String(x.id)===el.dataset.rec);if(rec){S.recData=rec;S.recOpen=true;S.recEvents=[];S.recPhotos=[];S.recPhotoBusy='';renderModal();loadRecEvents(rec.id);loadRecPhotos(rec.id);}}));
   root.querySelectorAll('[data-openrec]').forEach(el=>el.addEventListener('click',(e)=>{if(e.target.closest('button'))return;openRecordById(el.dataset.openrec);}));
   root.querySelectorAll('[data-recact]').forEach(el=>el.addEventListener('click',()=>recAction(el.dataset.recact)));
+  root.querySelectorAll('[data-printrec]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();printRecordById(el.dataset.printrec);}));
   root.querySelectorAll('[data-tabstatus]').forEach(el=>el.addEventListener('click',()=>{S.tabStatus=el.dataset.tabstatus;render();}));
   root.querySelectorAll('[data-taskrec]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();openRecordById(el.dataset.taskrec);}));
   root.querySelectorAll('[data-taskdone]').forEach(el=>el.addEventListener('click',()=>taskAction(el.dataset.taskdone,'done')));
@@ -2708,5 +2820,8 @@ function registerSW(){
   }catch{showLogin();}
 })();
 </script>
+<!-- The handover sheet. Hidden on screen; printing swaps the whole page for it,
+     so there is no popup window to be blocked and it works from a phone too. -->
+<div id="print-area" aria-hidden="true"></div>
 </body>
 </html>
