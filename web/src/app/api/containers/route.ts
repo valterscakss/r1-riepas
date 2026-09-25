@@ -1,7 +1,7 @@
 import { api, conflict, HttpError } from '@/server/http';
-import { readGrid, readPrefix } from '@/domain/containers';
-import { parseZones } from '@/domain/types';
-import { createContainer, listContainers } from '@/server/repo/misc';
+import { planContainerEdit, readGrid, readPrefix } from '@/domain/containers';
+import { createContainer, deleteContainer, listContainers, updateContainer } from '@/server/repo/misc';
+import { loadUniverse } from '@/server/services';
 
 export const GET = api({ any: ['screen.spots', 'screen.intake'] }, async () => ({ containers: await listContainers() }));
 
@@ -13,12 +13,19 @@ export const POST = api('admin', async ({ body }) => {
   if (!grid.ok) throw new HttpError(grid.status, grid.error);
   const label = typeof b.label === 'string' && b.label.trim() ? b.label.trim() : null;
   if ((await listContainers()).some((c) => c.prefix === prefix.value)) throw conflict(`Konteiners "${prefix.value}" jau eksistē`);
-  // Zones drawn during creation: a brand-new container has no records to guard.
-  const zones = typeof b.zones === 'string' && b.zones ? parseZones(b.zones) : [];
+  let created;
   try {
-    const container = await createContainer({ prefix: prefix.value, label, ...grid.value, zones: zones.length ? JSON.stringify(zones) : null });
-    return Response.json({ ok: true, container }, { status: 201 });
+    created = await createContainer({ prefix: prefix.value, label, ...grid.value });
   } catch {
     throw conflict(`Konteiners "${prefix.value}" jau eksistē`); // lost a race on the unique prefix
   }
+  // The place numbers and zones drawn in the editor go through the same checks as
+  // a redraw, so what the editor showed is what gets saved — and a name another
+  // container already uses is refused instead of merging two places.
+  if (b.names !== undefined || b.zones !== undefined) {
+    const plan = planContainerEdit(created, { rows: grid.value.rows, cols: grid.value.cols, cells: grid.value.cells ?? undefined, names: b.names, zones: b.zones }, await loadUniverse());
+    if (!plan.ok) { await deleteContainer(created.id); throw new HttpError(plan.status, plan.error); }
+    created = (await updateContainer(created.id, plan.value)) ?? created;
+  }
+  return Response.json({ ok: true, container: created }, { status: 201 });
 });

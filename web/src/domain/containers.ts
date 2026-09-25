@@ -74,6 +74,10 @@ export function planContainerEdit(def: Container, b: Record<string, unknown>, u:
   const activeMap = cellMap({ rows, cols, cells });
   // Codes this container was responsible for BEFORE the edit.
   const before = new Set((u.layouts.get(def.prefix) ?? []).flatMap((c) => (c && c.code ? [c.code] : [])));
+  // A zone is a place too: its name must not be one another container already uses,
+  // or the two would share the records filed under it.
+  const clash = newZones.find((z) => !before.has(z.name) && u.spots.some((sp) => sp.code === z.name));
+  if (clash) return fail(409, `Vieta ${clash.name} jau eksistē citur`);
 
   // `names` is the code each place carries, by position. The editor sends the whole
   // map on a redraw so a cell that moves takes its code along — every record on

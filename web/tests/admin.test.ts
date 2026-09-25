@@ -56,6 +56,17 @@ describe('containers', () => {
     expect((await call(listContainers, '/api/containers', { cookie: admin })).body.containers).toEqual([]);
   });
 
+  it('saves the numbers the editor showed, and refuses a zone name used elsewhere', async () => {
+    const c = await call(createContainer, '/api/containers', { cookie: admin, body: { prefix: 'E', rows: 1, cols: 4, names: JSON.stringify({ 2: 'E1', 3: 'E2' }), zones: JSON.stringify([{ name: 'GRIDA', cells: [0, 1], cap: 3 }]) } });
+    expect(c.status).toBe(201);
+    const s = await call(stats, '/api/stats', { cookie: admin });
+    expect(s.body.containers[0].cells.map((x: { code?: string } | null) => x?.code ?? null)).toEqual(['GRIDA', null, 'E1', 'E2']);
+    const clash = await call(createContainer, '/api/containers', { cookie: admin, body: { prefix: 'F', rows: 1, cols: 2, zones: JSON.stringify([{ name: 'GRIDA', cells: [0], cap: 2 }]) } });
+    expect(clash).toMatchObject({ status: 409, body: { error: { message: 'Vieta GRIDA jau eksistē citur' } } });
+    // The half-made container is rolled back.
+    expect((await call(listContainers, '/api/containers', { cookie: admin })).body.containers.map((x: { prefix: string }) => x.prefix)).toEqual(['E']);
+  });
+
   it('renames a place and moves its records along', async () => {
     await call(createContainer, '/api/containers', { cookie: admin, body: { prefix: 'B', rows: 1, cols: 2 } });
     const r = (await take({ plate: 'X1', location: 'B2' })).body;
