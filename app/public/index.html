@@ -142,6 +142,7 @@ button{font-family:'IBM Plex Sans',sans-serif;}
     <button class="navbtn" data-nav="history"><span>≡&nbsp; Vēsture</span></button>
     <button class="navbtn" data-nav="users" id="nav-users" style="display:none;"><span>◔&nbsp; Lietotāji</span></button>
     <button class="navbtn" data-nav="settings" id="nav-settings" style="display:none;"><span>⚙&nbsp; Iestatījumi</span></button>
+    <button class="navbtn" data-nav="help"><span>?&nbsp; Instrukcija</span></button>
   </nav>
   <div style="padding:16px 18px;border-top:1px solid var(--border);">
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
@@ -328,6 +329,7 @@ function render(){
   else if(S.screen==='history')v.innerHTML=historyHTML();
   else if(S.screen==='users')v.innerHTML=usersHTML();
   else if(S.screen==='settings')v.innerHTML=settingsHTML();
+  else if(S.screen==='help')v.innerHTML=helpHTML();
   bind(v);renderModal();
   if(S.screen==='intake')updateSummary();
 }
@@ -2071,6 +2073,104 @@ function renderModal(){const m=$('#modal');
   bind(m);
 }
 
+// ============ INSTRUKCIJA (illustrated manual) ============
+// A plain walk-through of the three everyday jobs, with a screenshot of each
+// step. Open to everyone — a manual nobody can reach is no manual.
+const HELP_STEP=(n,title,body,img,alt)=>`<div style="display:flex;gap:16px;margin-bottom:22px;align-items:flex-start;" class="helpstep">
+  <span style="flex:none;width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">${n}</span>
+  <div style="min-width:0;flex:1;">
+    <div style="font-weight:600;font-size:15px;margin-bottom:4px;">${title}</div>
+    <div style="color:var(--ink-2);font-size:14px;line-height:1.6;">${body}</div>
+    ${img?`<img src="/help/${img}" alt="${esc(alt||title)}" loading="lazy" style="display:block;width:100%;max-width:720px;margin-top:11px;border:1px solid var(--border-2);border-radius:10px;box-shadow:0 1px 3px oklch(0.2 0.02 260 / .08);">`:''}
+  </div></div>`;
+const HELP_SECTION=(title,lead,steps,note)=>`<section style="margin-bottom:34px;">
+  <h2 style="margin:0 0 4px;font-size:19px;font-weight:600;">${title}</h2>
+  <p style="margin:0 0 18px;color:var(--ink-3);font-size:13px;">${lead}</p>
+  ${steps}
+  ${note?`<div style="background:var(--accent-soft);border:1px solid oklch(0.85 0.06 256);border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.6;color:var(--ink-2);">${note}</div>`:''}
+</section>`;
+function helpBodyHTML(){
+  const b='<b style="font-weight:600;">';
+  return `
+  ${HELP_SECTION('1. Kā pieņemt riepas glabāšanā',
+    'No klienta atnākšanas līdz SMS kodam — četri soļi.',
+    HELP_STEP(1,'Atver sadaļu «Jauna glabāšana»',
+      `Sānu izvēlnē spied ${b}Jauna glabāšana</b>. Tā ir izcelta ar zilu, jo to lieto visbiežāk.`,
+      'a1-tukss.jpg','Tukša jaunas glabāšanas forma')+
+    HELP_STEP(2,'Ievadi numura zīmi un spied «Meklēt»',
+      `Ja klients pie mums jau ir bijis, viņa vārds un telefons aizpildās paši. Ja klients ir jauns, parādās dzeltens lauks — ieraksti tur ${b}vārdu</b> (obligāti) un ${b}telefonu</b>. Uzņēmumam pārslēdz uz «Uzņēmums».`,
+      'a2-meklet-numuru.jpg','Numura zīmes meklēšana un jauna klienta lauki')+
+    HELP_STEP(3,'Ievadi riepu datus',
+      `Izmērs, ražotājs, daudzums, diski un protektora dziļums. ${b}Obligāts ir tikai auto numurs un klienta vārds</b> — izmēru un protektoru var ievadīt vēlāk. Labajā pusē uzreiz redzi kopsavilkumu, automātiski piešķirto ${b}vietu</b> un ${b}cenu</b>. Vietu var nomainīt, uzspiežot uz tās.`,
+      'a3-dati.jpg','Aizpildīti riepu dati un kopsavilkums')+
+    HELP_STEP(4,'Spied «Apstiprināt pieņemšanu»',
+      `Sistēma parāda ${b}SMS kodu</b> — iedod to klientam. Ar šo kodu riepas vēlāk var atrast pat tad, ja aizmirsts numurs.`,
+      'a4-sms-kods.jpg','SMS koda logs pēc apstiprināšanas'),
+    `Pēc apstiprināšanas noliktavā automātiski parādās uzdevums «Novietot glabāšanā» — riepas fiziski jānoliek norādītajā vietā.`)}
+
+  ${HELP_SECTION('2. Kā izsniegt riepas klientam',
+    'Klients atbrauc pēc riepām — atrodi, izdrukā aktu, izsniedz.',
+    HELP_STEP(1,'Atver sadaļu «Izsniegt glabāšanu»',
+      `Sānu izvēlnē spied ${b}Izsniegt glabāšanu</b>.`,
+      'b1-tukss.jpg','Tukša izsniegšanas forma')+
+    HELP_STEP(2,'Ievadi SMS kodu vai numura zīmi',
+      `Spied ${b}Meklēt</b>. Parādās kartīte ar visu informāciju: vieta, izmērs, ražotājs, protektors un cena.`,
+      'b2-atrasts.jpg','Atrastās riepas ar darbību pogām')+
+    HELP_STEP(3,'Izdrukā izsniegšanas aktu',
+      `Spied ${b}⎙ Drukāt</b>. Izdrukā ir viss, ko klients saņem, un ${b}divas paraksta vietas</b> — klientam un darbiniekam. Klients paraksta pirms riepu saņemšanas.`,
+      'b3-akts.jpg','Izdrukājamais izsniegšanas akts ar paraksta vietām')+
+    HELP_STEP(4,'Spied «Izsniegt riepas»',
+      `Apstiprini logu. Vieta kļūst brīva un ieraksts pāriet uz «Izsniegts».`,
+      '','Izsniegšanas apstiprinājums'),
+    `${b}Sagatavot</b> lieto tad, ja klients brauks ${b}mainīt</b> riepas: riepas tiek izņemtas, bet vieta paliek rezervēta jaunajām. Sagatavotās redzamas sadaļā «Sagatavotie».`)}
+
+  ${HELP_SECTION('3. Kā strādā noliktava',
+    'Noliktavas darbiniekam viss darāmais ir vienā sarakstā.',
+    HELP_STEP(1,'Atver «Noliktava» → «Darāmie»',
+      `Sarakstā ir tikai tas, kas ${b}vēl nav izdarīts</b>. Cipars blakus izvēlnei rāda, cik uzdevumu gaida. Ir trīs veidu uzdevumi:<br>
+       • <span style="background:var(--ok-soft);color:var(--ok);font-weight:600;padding:1px 7px;border-radius:5px;font-size:12px;">Novietot glabāšanā</span> — jaunas riepas jānoliek norādītajā vietā<br>
+       • <span style="background:var(--warn-soft);color:var(--warn);font-weight:600;padding:1px 7px;border-radius:5px;font-size:12px;">Sagatavot riepas</span> — riepas jāizņem no vietas un jāatnes<br>
+       • <span style="background:var(--accent-soft);color:var(--accent-2);font-weight:600;padding:1px 7px;border-radius:5px;font-size:12px;">Pasūtījums</span> — brīvs pieprasījums no darbinieka`,
+      'c1-daramie.jpg','Noliktavas uzdevumu saraksts')+
+    HELP_STEP(2,'Kad izdarīts — spied «✓ Gatavs»',
+      `Uzdevums pazūd no saraksta un pāriet uz «Vēsture». Melnais kvadrātiņš blakus nosaukumam ir ${b}vieta</b>, uz kuru jāiet. Ar ${b}Atvērt ↗</b> var apskatīt pilnu ierakstu, pievienot bildi vai komentāru.`,
+      '','')+
+    HELP_STEP(3,'Jauns pasūtījums noliktavai',
+      `Cilnē ${b}Pasūtīt</b> ieraksti, kas vajadzīgs, un izvēlies, ${b}kurp nest</b> — uz veikalu, uz montāžu vai citur. Noliktavas darbinieks to uzreiz redz sarakstā.`,
+      'c2-jauns-pasutijums.jpg','Jauna pasūtījuma izveide')+
+    HELP_STEP(4,'Pabeigtie uzdevumi',
+      `Cilnē ${b}Vēsture</b> redzams viss izdarītais un kas to izdarīja.`,
+      'c3-izdarits.jpg','Pabeigto uzdevumu vēsture'),
+    `Ar pogu ${b}🔔 Paziņojumi</b> telefonā var ieslēgt paziņojumus — tad par katru jaunu uzdevumu atnāk ziņa, arī tad, ja lietotne ir aizvērta.`)}
+
+  ${HELP_SECTION('4. Novietnes — vietu karte',
+    'Kur kas stāv un kas ir brīvs.',
+    HELP_STEP(1,'Atver «Novietnes»',
+      `Katrs kvadrātiņš ir viena vieta. <span style="background:var(--ok-soft);color:var(--ok);font-weight:600;padding:1px 7px;border-radius:5px;font-size:12px;">Zaļa</span> — brīva,
+       <span style="background:var(--surface-2);color:var(--ink-2);border:1px solid var(--border-2);font-weight:600;padding:1px 7px;border-radius:5px;font-size:12px;">pelēka</span> — aizņemta,
+       <span style="background:var(--warn-soft);color:var(--warn);font-weight:600;padding:1px 7px;border-radius:5px;font-size:12px;">dzeltena</span> — sagatavota maiņai,
+       <span style="background:var(--danger-soft);color:var(--danger);font-weight:600;padding:1px 7px;border-radius:5px;font-size:12px;">sarkana</span> — bloķēta.
+       Uzspied uz vietas, lai redzētu, kas tur glabājas un šī auto iepriekšējās sezonas.`,
+      'd1-novietnes.jpg','Novietņu karte'),
+    `Riepas var atrast arī sadaļā ${b}Tabula</b> — tur ir viss saraksts ar meklēšanu pēc numura, vārda, telefona vai izmēra. Jaunākie ieraksti ir augšā.`)}
+  `;}
+function helpHTML(){
+  return `<div class="page" style="padding:var(--pad);max-width:900px;margin:0 auto;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:var(--pad);">
+      <div><h1 style="margin:0;font-size:24px;font-weight:600;">Lietošanas instrukcija</h1>
+      <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">Kā pieņemt riepas, kā tās izsniegt un kā strādā noliktava</div></div>
+      <button data-act="print-help" style="height:40px;padding:0 16px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:600;cursor:pointer;color:var(--ink-2);">⎙ Drukāt instrukciju</button>
+    </div>
+    <div class="card" style="padding:26px 28px;">${helpBodyHTML()}</div>
+  </div>`;}
+function printHelp(){
+  const box=document.getElementById('print-area');if(!box)return;
+  box.innerHTML=`<div style="max-width:180mm;margin:0 auto;">
+    <h1 style="font-size:20px;margin:0 0 2px;">R1 Tires — lietošanas instrukcija</h1>
+    <p style="margin:0 0 20px;font-size:12px;color:#555;">Kā pieņemt riepas, kā tās izsniegt un kā strādā noliktava</p>
+    ${helpBodyHTML()}</div>`;
+  setTimeout(()=>{window.print();},400);}
+
 // ============ IZSNIEGŠANAS AKTS (printable handover sheet) ============
 // What the customer signs when they collect their tires: what was stored, where
 // it sat, what it costs, and two signature lines. Rendered into #print-area and
@@ -2182,6 +2282,7 @@ function bind(root){
     else if(a==='confirm')await confirmIntake();
     else if(a==='new-user')await newUserDialog();
     else if(a==='go-release')nav('release');
+    else if(a==='print-help')printHelp();
     else if(a==='go-pending')nav('pending');
     else if(a==='go-warehouse')nav('warehouse');
     else if(a==='task-send')await sendTask();
@@ -2765,7 +2866,7 @@ function hideLogin(){const g=$('#gate');if(g){g.innerHTML='';g.style.cssText='';
 
 // The warehouse phone lives on one screen — reopen where the user left off, and
 // let ?view= (notification click / home-screen shortcut) jump straight there.
-const SCREENS=['home','warehouse','intake','release','pending','spots','customers','table','analytics','history','users','settings'];
+const SCREENS=['home','warehouse','intake','release','pending','spots','customers','table','analytics','history','users','settings','help'];
 const ADMIN_SCREENS=['users','settings']; // never the screen a session reopens on
 const LAST_KEY='r1_last_view';
 function openView(v){if(SCREENS.includes(v)){document.body.classList.remove('nav-open');nav(v);}}
