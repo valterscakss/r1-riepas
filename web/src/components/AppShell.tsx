@@ -13,6 +13,7 @@ import { TASK_KIND_LABEL } from '@/domain/tasks';
 import { ChangePasswordDialog } from './users/ChangePasswordDialog';
 import { post } from '@/client/api';
 import { subscribePush, pushState } from '@/client/push';
+import { RecordProvider } from './records/RecordProvider';
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, perms, isAdmin, can } = useSession();
@@ -96,7 +97,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="avatar">{initialsOf(user.name)}</div>
           </div>
         </header>
-        <main style={{ flex: 1 }}>{children}</main>
+        <main style={{ flex: 1 }}><RecordProvider>{children}</RecordProvider></main>
       </div>
       <div className="backdrop" onClick={() => setNavOpen(false)} />
     </div>
