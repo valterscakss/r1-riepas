@@ -72,6 +72,7 @@ export class SheetsStore implements Store {
       intakeDate: g(10),
       releaseDate: release,
       status: release ? 'released' : 'active',
+      preparedDate: null,
       threadDepth: null, smsCode: null, feeEur: null,
     };
   }
@@ -86,7 +87,7 @@ export class SheetsStore implements Store {
     ];
   }
 
-  async list(opts?: { status?: 'active' | 'released'; q?: string }): Promise<StorageRecord[]> {
+  async list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string }): Promise<StorageRecord[]> {
     await this.init();
     const res = await this.sheets.spreadsheets.values.get({
       spreadsheetId: this.sheetId,
@@ -139,12 +140,50 @@ export class SheetsStore implements Store {
   private unsupported(): never {
     throw new Error('This operation requires the Postgres or SQLite backend, not Google Sheets.');
   }
+  async prepare(): Promise<StorageRecord | null> { return this.unsupported(); }
+  async blockSpot(): Promise<StorageRecord> { return this.unsupported(); }
+  async deleteRecord(): Promise<boolean> { return this.unsupported(); }
+  async updateRecord(): Promise<StorageRecord | null> { return this.unsupported(); }
+  async setCustomerType(): Promise<number> { return this.unsupported(); }
   async replaceAll(): Promise<{ imported: number }> { return this.unsupported(); }
   async ensureAuth(): Promise<void> { /* no-op */ }
   async getUserByUsername(): Promise<User | null> { return this.unsupported(); }
   async createUser(): Promise<void> { return this.unsupported(); }
   async setPasswordByUsername(): Promise<boolean> { return this.unsupported(); }
+  async updateUser(): Promise<boolean> { return this.unsupported(); }
   async countUsers(): Promise<number> { return 0; }
+  async listUsers(): Promise<never> { return this.unsupported(); }
+  async deleteUserByUsername(): Promise<boolean> { return this.unsupported(); }
+  async getUserPerms(): Promise<null> { return null; }
+  async setUserPerms(): Promise<boolean> { return false; }
+  async listContainers(): Promise<[]> { return []; }
+  async createContainer(): Promise<never> { return this.unsupported(); }
+  async updateContainer(): Promise<null> { return null; }
+  async renameLocation(): Promise<number> { return this.unsupported(); }
+  async deleteContainer(): Promise<boolean> { return this.unsupported(); }
+  async addEvent(e: { recordId: string; action: string; comment: string | null; actor: string | null }): Promise<import('../types.js').RecordEvent> {
+    return { id: '0', recordId: e.recordId, action: e.action, comment: e.comment, actor: e.actor, createdAt: null };
+  }
+  async listEvents(): Promise<[]> { return []; }
+  async recentEvents(): Promise<[]> { return []; }
+  async updateEvent(): Promise<null> { return null; }
+  async deleteEvent(): Promise<boolean> { return false; }
+  // Warehouse tasks and push subscriptions need a real database.
+  async listTasks(): Promise<[]> { return []; }
+  async createTask(): Promise<never> { return this.unsupported(); }
+  async setTaskStatus(): Promise<null> { return null; }
+  async closeTasksForRecord(): Promise<number> { return 0; }
+  async deleteTask(): Promise<boolean> { return false; }
+  async listPhotos(): Promise<[]> { return []; }
+  async getPhoto(): Promise<null> { return null; }
+  async addPhoto(): Promise<never> { return this.unsupported(); }
+  async deletePhoto(): Promise<boolean> { return false; }
+  async photoCounts(): Promise<Record<string, number>> { return {}; }
+  async getSetting(): Promise<null> { return null; }
+  async setSetting(): Promise<void> { return this.unsupported(); }
+  async listPushSubs(): Promise<[]> { return []; }
+  async addPushSub(): Promise<void> { /* no-op */ }
+  async deletePushSub(): Promise<boolean> { return false; }
 }
 
 // (COL_COUNT kept for reference/validation of the layout width.)
