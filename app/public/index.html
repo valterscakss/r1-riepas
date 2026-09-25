@@ -256,14 +256,28 @@ function price(){const w1=parseInt((S.t1size||'').slice(0,3))||0;const w2=S.t1qt
   const base=t?t.price:0;const mult=rimMult(cfg,S.rim);
   return {w,base,mult,total:base*mult,cls:t?`${t.from}–${t.to}`:'—'};}
 
-async function loadStats(){try{S.stats=await(await fetch('/api/stats')).json();}catch{S.stats=null;}paintSidebar();}
-async function loadActivity(){try{S.activity=(await(await fetch('/api/activity')).json()).events||[];}catch{S.activity=[];}}
+// Walking between screens used to re-fetch the same figures every time, and each
+// answer redrew the screen. `maxAge` lets a navigation reuse what was fetched a
+// moment ago; a call with no argument — which is what every action makes after
+// changing something — always goes to the server.
+const _fetchedAt={};
+const _fresh=(k,maxAge)=>!!maxAge&&(Date.now()-(_fetchedAt[k]||0)<maxAge);
+async function loadStats(maxAge){
+  if(_fresh('stats',maxAge)&&S.stats){paintSidebar();return;}
+  try{S.stats=await(await fetch('/api/stats')).json();_fetchedAt.stats=Date.now();}catch{S.stats=null;}paintSidebar();}
+async function loadActivity(maxAge){
+  if(_fresh('activity',maxAge)&&S.activity&&S.activity.length)return;
+  try{S.activity=(await(await fetch('/api/activity')).json()).events||[];_fetchedAt.activity=Date.now();}catch{S.activity=[];}}
 async function loadCustomers(){const p=new URLSearchParams();
   if(S.custQ)p.set('q',S.custQ);if(S.custType)p.set('type',S.custType);
   const qs=p.toString()?('?'+p.toString()):'';
   try{S.customers=(await(await fetch('/api/customers'+qs)).json()).customers||[];}catch{S.customers=[];}}
 async function loadPricing(){try{const d=await(await fetch('/api/pricing')).json();if(d&&d.pricing)S.pricing=d.pricing;}catch{}}
-async function loadTasks(){try{const d=await(await fetch('/api/tasks?status='+(S.taskTab==='done'?'done':'open'))).json();
+async function loadTasks(maxAge){
+  const key='tasks:'+(S.taskTab==='done'?'done':'open');
+  if(_fresh(key,maxAge)&&S.tasksLoaded){paintTaskBadge();return;}
+  try{const d=await(await fetch('/api/tasks?status='+(S.taskTab==='done'?'done':'open'))).json();
+    _fetchedAt[key]=Date.now();
     S.tasks=d.tasks||[];S.openTasks=d.open||0;
     if((S.taskTab||'open')==='open')_taskSnap=JSON.stringify(S.tasks); // keep the poll's change detector in sync
   }catch{S.tasks=[];}
@@ -299,38 +313,72 @@ function nav(screen){const k=NAV_PERM[screen];if(k&&!can(k)){screen=firstScreen(
   if(screen==='users'){render();if(!S.usersLoaded)loadUsers().then(()=>{if(S.screen==='users')render();});return;}
   if(screen==='table'){render();if(!S.tableLoaded)loadTable().then(()=>{if(S.screen==='table')render();});return;}
   if(screen==='pending'){render();loadPending().then(()=>{if(S.screen==='pending')render();});return;}
-  if(screen==='warehouse'){render();loadTasks().then(()=>{if(S.screen==='warehouse')render();});return;}
+  if(screen==='warehouse'){render();loadTasks(HOME_TTL).then(()=>{if(S.screen==='warehouse')render();});return;}
   if(screen==='history'){S.hist.page=0;S.hist.list=[];render();loadHist(true);return;}
   if(screen==='settings'){
     // Edit a copy, so "Atcelt izmaiņas" can put the saved rules back.
     S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();refreshPushStatus();
     loadPricing().then(()=>{if(S.screen==='settings'){S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();}});return;}
   if(screen==='analytics'){render();loadAnalytics().then(()=>{if(S.screen==='analytics')render();});return;}
-  if(screen==='home'){render();Promise.all([loadActivity(),loadStats()]).then(()=>{if(S.screen==='home')render();});return;}
+  if(screen==='home'){render();Promise.all([loadActivity(HOME_TTL),loadStats(HOME_TTL)]).then(()=>{if(S.screen==='home')render();});return;}
   render();}
 document.querySelectorAll('[data-nav]').forEach(b=>b.addEventListener('click',()=>{document.body.classList.remove('nav-open');if(b.dataset.nav==='intake')resetIntake();nav(b.dataset.nav);}));
 
+// Ten seconds: long enough that clicking between screens does not re-fetch, short
+// enough that a change made at the other desk shows up almost at once.
+const HOME_TTL=10000;
 function resetIntake(){Object.assign(S,{plate:'',looked:false,isNew:false,isCompany:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',t2size:'',t2brand:'',rim:'none',thread:'',history:0,smsOpen:false,smsRec:null,presetSpot:null,swapFromId:null});}
 
 // ============ RENDER ============
-function render(){
+function screenHTML(){
+  switch(S.screen){
+    case 'home':return homeHTML();
+    case 'intake':return intakeHTML();
+    case 'spots':return spotsHTML();
+    case 'customers':return customersHTML();
+    case 'release':return releaseHTML();
+    case 'pending':return pendingHTML();
+    case 'warehouse':return warehouseHTML();
+    case 'table':return tableHTML();
+    case 'analytics':return analyticsHTML();
+    case 'history':return historyHTML();
+    case 'users':return usersHTML();
+    case 'settings':return settingsHTML();
+    case 'help':return helpHTML();
+    default:return '';}}
+// Rebuilding a screen is cheap; doing it when nothing changed is what makes the
+// page feel like it reloads under your hands. Every screen is drawn the same way
+// — open it, then draw again once the data arrives — so the same view was written
+// two or three times per click, each one a visible flash.
+//
+// The markup is compared with what is already on screen and only written when it
+// really differs. When it does differ, the scroll position and whatever field you
+// were typing in (with the cursor where you left it) are put back afterwards.
+// render(true) forces a redraw for the rare case that needs one.
+let _viewKey=null;
+function bustView(){_viewKey=null;}
+function render(force){
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('on',b.dataset.nav===S.screen));
   paintHeader();
   const v=$('#view');
-  if(S.screen==='home')v.innerHTML=homeHTML();
-  else if(S.screen==='intake')v.innerHTML=intakeHTML();
-  else if(S.screen==='spots')v.innerHTML=spotsHTML();
-  else if(S.screen==='customers')v.innerHTML=customersHTML();
-  else if(S.screen==='release')v.innerHTML=releaseHTML();
-  else if(S.screen==='pending')v.innerHTML=pendingHTML();
-  else if(S.screen==='warehouse')v.innerHTML=warehouseHTML();
-  else if(S.screen==='table')v.innerHTML=tableHTML();
-  else if(S.screen==='analytics')v.innerHTML=analyticsHTML();
-  else if(S.screen==='history')v.innerHTML=historyHTML();
-  else if(S.screen==='users')v.innerHTML=usersHTML();
-  else if(S.screen==='settings')v.innerHTML=settingsHTML();
-  else if(S.screen==='help')v.innerHTML=helpHTML();
-  bind(v);renderModal();
+  const html=screenHTML();
+  const key=S.screen+'\u0000'+html;
+  if(!force&&key===_viewKey){renderModal();if(S.screen==='intake')updateSummary();return;}
+  _viewKey=key;
+  const sTop=v.scrollTop,wTop=window.scrollY;
+  const act=document.activeElement;
+  const keep=(act&&act.id&&v.contains(act))?{id:act.id,
+    s:typeof act.selectionStart==='number'?act.selectionStart:null,
+    e:typeof act.selectionEnd==='number'?act.selectionEnd:null}:null;
+  v.innerHTML=html;
+  bind(v);
+  if(sTop)v.scrollTop=sTop;
+  if(wTop)window.scrollTo(0,wTop);
+  if(keep){const el=document.getElementById(keep.id);
+    if(el&&typeof el.focus==='function'){
+      try{el.focus({preventScroll:true});}catch{el.focus();}
+      if(keep.s!=null&&typeof el.setSelectionRange==='function'){try{el.setSelectionRange(keep.s,keep.e);}catch{}}}}
+  renderModal();
   if(S.screen==='intake')updateSummary();
 }
 
@@ -1367,12 +1415,13 @@ async function loadRecPhotos(id){S.recPhotosLoading=true;
     if(c){c.innerHTML=recPhotosHTML();bind(c);
       const l=document.getElementById('rec-photos-label');
       if(l)l.textContent='Bildes'+((S.recPhotos||[]).length?' · '+S.recPhotos.length:'');
+      syncModal();
     }else renderModal();}}
 async function uploadRecPhotos(files){
   const r=S.recData;if(!r||!files||!files.length)return;
   const list=[...files].filter(f=>/^image\//.test(f.type));
   if(!list.length){alertErr('Izvēlies attēla failu');return;}
-  const updPhotos=()=>{const c=document.getElementById('rec-photos');if(c){c.innerHTML=recPhotosHTML();bind(c);}else renderModal();};
+  const updPhotos=()=>{const c=document.getElementById('rec-photos');if(c){c.innerHTML=recPhotosHTML();bind(c);syncModal();}else renderModal();};
   S.recPhotoBusy=`Augšupielādē 0/${list.length}…`;updPhotos();
   let done=0,failed=0;
   for(const f of list){
@@ -1429,7 +1478,7 @@ async function openRecordById(id){
     else alertErr('Ieraksts nav atrasts');
   }catch{alertErr('Neizdevās ielādēt ierakstu');}}
 function updRecHistory(){const c=document.getElementById('rec-history');
-  if(c){c.innerHTML=recEventsHTML();bind(c);}else if(S.recOpen)renderModal();}
+  if(c){c.innerHTML=recEventsHTML();bind(c);syncModal();}else if(S.recOpen)renderModal();}
 async function loadRecEvents(id){S.recEventsLoading=true;
   try{const d=await(await fetch('/api/storage/'+encodeURIComponent(id)+'/events')).json();if(S.recData&&String(S.recData.id)===String(id))S.recEvents=d.events||[];}catch{S.recEvents=[];}
   S.recEventsLoading=false;if(S.recOpen)updRecHistory();}
@@ -1877,7 +1926,11 @@ async function pollTasks(){
   const snap=JSON.stringify(list);
   if(snap===_taskSnap)return;
   _taskSnap=snap;
-  if(S.screen==='warehouse'&&(S.taskTab||'open')==='open'){S.tasks=list;S.tasksLoaded=true;updateTaskList();}}
+  // Keep the queue warm even when you are on another screen: the poll already has
+  // the list, so opening Noliktava can draw it once instead of drawing an empty
+  // list and then redrawing it a moment later.
+  if((S.taskTab||'open')==='open'){S.tasks=list;S.tasksLoaded=true;
+    if(S.screen==='warehouse')updateTaskList();}}
 function startTaskPolling(){if(_taskPoll)clearInterval(_taskPoll);_taskPoll=setInterval(pollTasks,20000);
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')pollTasks();});}
 
@@ -1887,7 +1940,7 @@ function startTaskPolling(){if(_taskPoll)clearInterval(_taskPoll);_taskPoll=setI
 function updSpotHist(){const c=document.getElementById('spot-hist');
   // bind() again: the rows are replaced wholesale, so they need their click
   // handlers back or the history stops opening.
-  if(c){c.innerHTML=spotHistHTML();bind(c);}else if(S.selSpot&&!S.recOpen)renderModal();}
+  if(c){c.innerHTML=spotHistHTML();bind(c);syncModal();}else if(S.selSpot&&!S.recOpen)renderModal();}
 async function loadVehicle(plate){S.spotHistLoading=true;updSpotHist();
   try{const d=await(await fetch('/api/vehicle?plate='+encodeURIComponent(plate))).json();
     if(S.selSpot&&S.selSpot.plate===plate)S.spotHist=d.history||[];
@@ -1909,14 +1962,22 @@ function spotHistHTML(){
     <div style="max-height:38vh;overflow:auto;">${rows}</div></div>`;}
 
 // ============ MODALS ============
-function renderModal(){const m=$('#modal');
+let _modalScratch=null,_modalKey=null;
+const modalScratch=()=>_modalScratch||(_modalScratch=document.createElement('div'));
+function renderModal(){const host=$('#modal');const m=modalScratch();buildModal(m);paintModal(host,m);}
+// The record card patches its own photo and comment lists in place. Once it has,
+// tell the guard what is now on screen, or the next background refresh would see
+// a difference and rebuild the whole card — throwing away the photo you were
+// looking at and the comment you were halfway through typing.
+function syncModal(){const m=modalScratch();buildModal(m);_modalKey=m.innerHTML;}
+function buildModal(m){
   // The lightbox sits above every other modal so it can open from the record card.
   if(S.photoBig){
     m.innerHTML=`<div data-close="photo" style="position:fixed;inset:0;background:oklch(0.15 0.02 260 / .88);z-index:120;display:flex;align-items:center;justify-content:center;padding:20px;animation:r1fade .15s ease;">
       <img src="${esc(S.photoBig)}" alt="Riepu foto" style="max-width:100%;max-height:100%;border-radius:12px;box-shadow:0 24px 60px oklch(0.1 0.02 260 / .5);">
       <button data-close="photo" style="position:absolute;top:16px;right:16px;width:40px;height:40px;border-radius:11px;border:0;background:oklch(1 0 0 / .16);color:#fff;cursor:pointer;font-size:20px;">✕</button>
     </div>`;
-    bind(m);return;}
+    return;}
   if(S.smsOpen&&S.smsRec){const r=S.smsRec;
     m.innerHTML=`<div data-close="sms" style="position:fixed;inset:0;background:oklch(0.2 0.02 260 / .45);z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;animation:r1fade .2s ease;">
     <div data-stop="1" style="background:var(--surface);border-radius:20px;width:640px;max-width:100%;overflow:hidden;box-shadow:0 24px 60px oklch(0.2 0.02 260 / .3);animation:r1pop .28s cubic-bezier(.2,.8,.2,1);display:grid;grid-template-columns:1fr 300px;">
@@ -2070,7 +2131,24 @@ function renderModal(){const m=$('#modal');
         </div>
       </div></div>`;
   } else m.innerHTML='';
-  bind(m);
+}
+// Only touch the open dialog when its markup really changed. Without this the
+// modal was rewritten on every background refresh, which threw away the photo you
+// were looking at and the comment you were halfway through typing.
+function paintModal(host,scratch){
+  const html=scratch.innerHTML;
+  if(html===_modalKey)return;
+  _modalKey=html;
+  const act=document.activeElement;
+  const keep=(act&&act.id&&host.contains(act))?{id:act.id,
+    s:typeof act.selectionStart==='number'?act.selectionStart:null,
+    e:typeof act.selectionEnd==='number'?act.selectionEnd:null}:null;
+  host.innerHTML=html;
+  bind(host);
+  if(keep){const el=document.getElementById(keep.id);
+    if(el&&typeof el.focus==='function'){
+      try{el.focus({preventScroll:true});}catch{el.focus();}
+      if(keep.s!=null&&typeof el.setSelectionRange==='function'){try{el.setSelectionRange(keep.s,keep.e);}catch{}}}}
 }
 
 // ============ INSTRUKCIJA (illustrated manual) ============
