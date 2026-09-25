@@ -26,7 +26,25 @@ npm test                        # uses TEST_DATABASE_URL (default: local r1_test
 npm run build
 ```
 
-CI (`.github/workflows/web.yml`) runs the same four against a Postgres service.
+Browser tests (Playwright) build the app and run it against its own database
+(`r1_e2e`, reset each run):
+
+```bash
+npm run e2e
+```
+
+CI (`.github/workflows/web.yml`) runs all of the above against a Postgres service.
+
+## Layout
+
+```
+src/domain/     business rules as pure functions (pricing, places, permissions, …)
+src/server/     database (Drizzle schema, repositories), auth, API wrapper, services
+src/app/api/    Route Handlers — same paths and JSON as the old Express API
+src/app/(app)/  screens (server components that check access, render client screens)
+src/components/ React UI; src/client/ browser-side helpers (API, dialogs, session)
+tests/          integration tests against Postgres; e2e/ browser tests
+```
 
 ## Database
 

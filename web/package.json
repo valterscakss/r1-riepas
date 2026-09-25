@@ -15,6 +15,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e": "tsx e2e/reset-db.ts && playwright test",
     "db:up": "docker compose up -d db",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",

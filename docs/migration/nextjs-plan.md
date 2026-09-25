@@ -5,6 +5,19 @@ un vanilla JS UI (`app/public/index.html`). Datubāzes shēma **paliek tā pati*
 esošā Supabase datubāze un dati strādā bez migrācijas. API ceļi un JSON formas
 paliek tādi paši, lai pāreju var pārbaudīt, salīdzinot abas aplikācijas.
 
+## Statuss
+
+| Posms | Stāvoklis |
+| :- | :- |
+| 0 — drošības labojumi vecajā app | ✅ gatavs |
+| 1 — Next.js karkass, Drizzle, CI | ✅ gatavs |
+| 2 — domēna loģika + unit testi | ✅ gatavs |
+| 3 — API (61 endpoints) + integrācijas testi | ✅ gatavs |
+| 4 — visi UI ekrāni React | ✅ gatavs |
+| 5 — PWA, E2E testi, Docker, dokumentācija | ✅ gatavs; atliek pārslēgšana produkcijā |
+
+Pārslēgšana un atgriešanās: `docs/setup/vercel-supabase.md` → *Switching over*.
+
 Darbi sakārtoti no mazākā uz lielāko. Katrs posms beidzas ar zaļiem testiem un
 atsevišķu commit, lai progresu var pārskatīt pa daļām.
 
