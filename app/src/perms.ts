@@ -153,3 +153,26 @@ export function redactAll<T extends Partial<StorageRecord>>(recs: T[], perms: Pe
   if (perms['field.phone'] && perms['field.customer'] && perms['field.price'] && perms['field.sms']) return recs;
   return recs.map((r) => redactRecord(r, perms));
 }
+
+/**
+ * The labels an edit summary uses for the sensitive fields ("Telefons: a → b").
+ * Must match EDIT_LABELS in app.ts — the summary is plain text in the history,
+ * so the values have to be cut out of it on the way out, like any other payload.
+ */
+const EDIT_FIELD_LABELS: Array<[string, PermKey]> = [
+  ['Telefons', 'field.phone'], ['Klients', 'field.customer'], ['Cena', 'field.price'], ['SMS kods', 'field.sms'],
+];
+
+/** Hide the old → new values of sensitive fields in an 'edited' event's summary. */
+export function redactEventComment(action: string, comment: string | null, perms: Perms): string | null {
+  if (!comment || action !== 'edited') return comment;
+  const hidden = EDIT_FIELD_LABELS.filter(([, k]) => !perms[k]).map(([label]) => label);
+  if (!hidden.length) return comment;
+  // Summary shape: "Label: old → new; Label: old → new · free comment".
+  const [diffs, ...rest] = comment.split(' · ');
+  const safe = diffs.split('; ').map((part) => {
+    const label = hidden.find((l) => part.startsWith(`${l}: `));
+    return label ? `${label}: mainīts` : part;
+  }).join('; ');
+  return [safe, ...rest].join(' · ');
+}
