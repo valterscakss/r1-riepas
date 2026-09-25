@@ -1,0 +1,23 @@
+{
+  "name": "R1 Tires — Riepu noliktava",
+  "short_name": "R1 Noliktava",
+  "description": "Riepu glabāšanas uzskaite un noliktavas uzdevumi",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f2f3f7",
+  "theme_color": "#1a1e29",
+  "lang": "lv",
+  "categories": ["business", "productivity"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Noliktava", "short_name": "Noliktava", "url": "/noliktava", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Pieņemšana", "short_name": "Pieņemšana", "url": "/jauna-glabasana", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

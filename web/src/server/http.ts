@@ -57,7 +57,10 @@ async function currentRow(username: string) {
 
 /** The signed-in user and their effective permissions, or null. */
 export async function sessionFrom(req: Request): Promise<{ user: SessionUser; perms: Perms } | null> {
-  const token = tokenFrom(req);
+  return sessionFromToken(tokenFrom(req));
+}
+
+export async function sessionFromToken(token: string | null | undefined): Promise<{ user: SessionUser; perms: Perms } | null> {
   const claims = token ? await verifyToken(token) : null;
   if (!claims) return null;
   const row = await currentRow(claims.username);
