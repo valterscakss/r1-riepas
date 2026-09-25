@@ -21,12 +21,20 @@ atsevišķu commit, lai progresu var pārskatīt pa daļām.
 5. 500 kļūdas klientam vairs nerāda iekšējo `err.message`.
 6. Izdzēsts nelietotais `public/app.js` un `public/styles.css`.
 
+## Datubāzes lēmums
+
+- **Postgres visur.** Aplikācija lasa tikai `DATABASE_URL`.
+- Lokāli: Postgres Docker konteinerā (`web/docker-compose.yml`).
+- Produkcija: Supabase Postgres (tur jau ir dati).
+- Shēma sākumā **1:1** ar esošo; uzlabojumi (DATE/NUMERIC, ārējās atslēgas,
+  meklēšanas indekss) — atsevišķā solī pēc pārslēgšanas.
+- SQLite un Google Sheets glabātuves jaunajā aplikācijā vairs nav.
+
 ## Posms 1 — Next.js karkass (mazs/vidējs)
 
 - `web/`: Next.js 16, React 19, TypeScript strict, ESLint, Vitest.
-- Datubāze: Drizzle ORM ar shēmu, kas **precīzi** atbilst esošajām tabulām.
-  Produkcijā `pg` (Supabase), lokāli un testos **PGlite** (īsts Postgres procesā),
-  tāpēc SQLite un Google Sheets glabātuves vairs nav vajadzīgas.
+- Datubāze: Drizzle ORM ar shēmu, kas **precīzi** atbilst esošajām tabulām,
+  `pg` draiveris. Testi iet pret atsevišķu testu datubāzi.
 - Bāzes migrācija ir idempotenta (`IF NOT EXISTS`), tāpēc tā droši iziet uz esošās
   produkcijas datubāzes.
 - CI: GitHub Actions — typecheck, lint, testi, build.
