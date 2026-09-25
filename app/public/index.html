@@ -189,7 +189,7 @@ const alertErr=(text)=>{ if(!R1){alert(text);return;} R1.fire({icon:'error',titl
 </script>
 <script>
 const $=s=>document.querySelector(s);
-const esc=s=>(s==null?'':String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])));
+const esc=s=>(s==null?'':String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
 const eur=n=>'€'+Number(n).toFixed(2).replace('.',',');
 
 // ---- Auth token + fetch wrapper: attach Bearer to /api calls, catch expiry ----
@@ -376,7 +376,8 @@ const ROLE_OPTIONS=[['staff','Personāls'],['warehouse','Noliktava (tikai uzdevu
 const roleLabel=r=>ROLE_LABEL[r]||ROLE_LABEL.staff;
 const roleTint=r=>ROLE_TINT[r]||ROLE_TINT.staff;
 function homeHTML(){const st=S.stats||{occ:'—',total:'—',free:'—',todayIntakes:'—',smsIssued:'—',revenueActive:0,containers:[]};
-  const showRev=S.role!=='staff';
+  // null = this user may not see prices, so the server left the sum out.
+  const showRev=S.role!=='staff'&&st.revenueActive!=null;
   return `<div class="page" style="padding:var(--pad);max-width:1240px;margin:0 auto;">
   <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--pad);flex-wrap:wrap;gap:12px;">
     <div><h1 style="margin:0;font-size:26px;font-weight:600;letter-spacing:-0.01em;">Pārskats</h1>

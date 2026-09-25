@@ -12,7 +12,7 @@ import {
   AUTH_DISABLED, DEMO_USER,
 } from './auth.js';
 import { pushToAll, pushEnabled, vapidPublicKey } from './push.js';
-import { PERM_KEYS, ROLE_DEFAULTS, effectivePerms, bustPerms, requirePerm, requireAnyPerm, attachPerms, permsOf, redactRecord, redactAll, type PermKey } from './perms.js';
+import { PERM_KEYS, ROLE_DEFAULTS, effectivePerms, bustPerms, requirePerm, requireAnyPerm, attachPerms, permsOf, redactRecord, redactAll, redactEventComment, type PermKey } from './perms.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -20,8 +20,10 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 const asyncH = (fn: (req: express.Request, res: express.Response) => Promise<unknown>) =>
   (req: express.Request, res: express.Response) =>
     fn(req, res).catch((err) => {
-      console.error(err);
-      res.status(500).json({ error: { message: String(err?.message ?? err) } });
+      // The detail goes to the server log only — driver and SQL errors can carry
+      // table names, values and connection details the client has no business seeing.
+      console.error(`[api] ${req.method} ${req.path} failed:`, err);
+      if (!res.headersSent) res.status(500).json({ error: { message: 'Servera kļūda. Mēģini vēlreiz.' } });
     });
 
 const cookieOpts = {
@@ -42,15 +44,46 @@ export function createApp(): express.Express {
   app.use(cookieParser());
 
   // --- Auth ---
+  // Brute-force guard. Failures are counted per username in the settings table, so
+  // the count holds across serverless instances; a second, per-IP count in memory
+  // slows down one client spraying many usernames at the same instance.
+  const LOGIN_MAX_FAILS = 5;
+  const LOGIN_IP_MAX_FAILS = 20;
+  const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+  const ipFails = new Map<string, { n: number; first: number }>();
+  type FailRec = { n: number; first: number };
+  const failKey = (u: string) => `login_fail:${u}`;
+  const readFails = async (store: Store, u: string): Promise<FailRec | null> => {
+    try {
+      const v = (await store.getSetting(failKey(u))) as FailRec | null;
+      return v && Date.now() - v.first < LOGIN_WINDOW_MS ? v : null;
+    } catch { return null; }
+  };
+  const minutesLeft = (first: number) => Math.max(1, Math.ceil((first + LOGIN_WINDOW_MS - Date.now()) / 60000));
+  const tooMany = (res: express.Response, first: number) =>
+    res.status(429).json({ error: { message: `Pārāk daudz neveiksmīgu mēģinājumu. Mēģini vēlreiz pēc ${minutesLeft(first)} min.` } });
+
   app.post('/api/login', asyncH(async (req, res) => {
     const store = await getStore();
     const { username, password } = req.body ?? {};
     if (!username || !password) return res.status(400).json({ error: { message: 'Username and password required' } });
     // Case-insensitive username (guards against mobile auto-capitalization).
-    const user = await store.getUserByUsername(String(username).trim().toLowerCase());
+    const uname = String(username).trim().toLowerCase();
+    const ip = req.ip ?? 'unknown';
+    const ipRec = ipFails.get(ip);
+    if (ipRec && Date.now() - ipRec.first < LOGIN_WINDOW_MS && ipRec.n >= LOGIN_IP_MAX_FAILS) return tooMany(res, ipRec.first);
+    const fails = await readFails(store, uname);
+    if (fails && fails.n >= LOGIN_MAX_FAILS) return tooMany(res, fails.first);
+    const user = await store.getUserByUsername(uname);
     if (!user || !(await verifyPassword(String(password), user.passwordHash))) {
+      const next = fails ? { n: fails.n + 1, first: fails.first } : { n: 1, first: Date.now() };
+      try { await store.setSetting(failKey(uname), next); } catch { /* store without settings */ }
+      const ipNext = ipRec && Date.now() - ipRec.first < LOGIN_WINDOW_MS ? { n: ipRec.n + 1, first: ipRec.first } : { n: 1, first: Date.now() };
+      if (ipFails.size > 5000) ipFails.clear(); // bounded memory; the per-user count is the real guard
+      ipFails.set(ip, ipNext);
       return res.status(401).json({ error: { message: 'Invalid username or password' } });
     }
+    if (fails) { try { await store.setSetting(failKey(uname), { n: 0, first: 0 }); } catch { /* ignore */ } }
     const session = toSession(user);
     const token = signToken(session);
     res.cookie(COOKIE, token, cookieOpts);
@@ -146,7 +179,7 @@ export function createApp(): express.Express {
     const raw = typeof req.query.plate === 'string' ? req.query.plate : '';
     const plate = raw.toUpperCase().replace(/\s+/g, '');
     if (!plate) return res.status(400).json({ error: { message: 'plate is required' } });
-    const all = await store.list({ q: plate });
+    const all = redactAll(await store.list({ q: plate }), permsOf(req));
     const hits = all
       .filter((r) => (r.plate ?? '').toUpperCase().replace(/\s+/g, '') === plate)
       .sort((a, b) => (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''));
@@ -169,7 +202,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
     if (q.length < 2) return res.json({ suggestions: [] });
-    const all = await store.list({ q });
+    const all = redactAll(await store.list({ q }), permsOf(req));
     const seen = new Map<string, { plate: string; cust: string | null; active: boolean; date: string | null }>();
     for (const r of all) {
       const p = (r.plate ?? '').toUpperCase().replace(/\s+/g, '');
@@ -196,7 +229,10 @@ export function createApp(): express.Express {
   app.get('/api/company-suggest', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase();
-    const all = await store.list();
+    const perms = permsOf(req);
+    // The suggestions ARE customer names — nothing to offer without that field.
+    if (!perms['field.customer']) return res.json({ suggestions: [] });
+    const all = redactAll(await store.list(), perms);
     const seen = new Map<string, { name: string; plates: Set<string>; phone: string | null; last: string; count: number }>();
     for (const r of all) {
       if (!r.isCompany || !r.customerName) continue;
@@ -401,8 +437,13 @@ export function createApp(): express.Express {
   };
 
   // Stats for dashboard + spots grid (design: containers, capacity, activity).
-  app.get('/api/stats', PAny(['screen.home','screen.spots','screen.intake']), asyncH(async (_req, res) => {
+  app.get('/api/stats', PAny(['screen.home','screen.spots','screen.intake']), asyncH(async (req, res) => {
     const { spots, occupied, all, defs, layouts, zoneCaps, zoneLoad } = await spotUniverse();
+    // The spot map shows who sits where: it goes out under the same field rules as
+    // any record payload, or the floor roles would read names and SMS codes here.
+    const perms = permsOf(req);
+    const custOf = (r: StorageRecord) => (perms['field.customer'] ? r.customerName : null);
+    const smsOf = (r: StorageRecord) => (perms['field.sms'] ? r.smsCode : null);
     const defByPrefix = new Map(defs.map((d) => [d.prefix, d]));
     const spotView = (code: string, zone?: { name: string; cap: number; span: number; hspan: number }) => {
       if (zone) {
@@ -412,12 +453,12 @@ export function createApp(): express.Express {
           code: zone.name, zone: true, cap: zone.cap, count: recs.length, span: zone.span, hspan: zone.hspan,
           occ: recs.length >= zone.cap, reserved: false, blocked: false, hasRims: false,
           plates: recs.slice(0, 6).map((r) => r.plate).filter(Boolean),
-          recs: recs.slice(0, 20).map((r) => ({ id: r.id, plate: r.plate, cust: r.customerName, size: r.size1, brand: r.brand, status: r.status })),
+          recs: recs.slice(0, 20).map((r) => ({ id: r.id, plate: r.plate, cust: custOf(r), size: r.size1, brand: r.brand, status: r.status })),
         };
       }
       const r = occupied.get(code);
       return r
-        ? { code, occ: true, reserved: r.status === 'prepared', blocked: r.status === 'blocked', hasRims: !!r.rimNote, id: r.id, plate: r.plate, cust: r.customerName, brand: r.brand, size: r.size1, sms: r.smsCode, thread: r.threadDepth }
+        ? { code, occ: true, reserved: r.status === 'prepared', blocked: r.status === 'blocked', hasRims: !!r.rimNote, id: r.id, plate: r.plate, cust: custOf(r), brand: r.brand, size: r.size1, sms: smsOf(r), thread: r.threadDepth }
         : { code, occ: false };
     };
     // Capacity bookkeeping: a zone contributes `cap` places and its load, not 0/1.
@@ -466,7 +507,7 @@ export function createApp(): express.Express {
       capPct: totalCap ? Math.round((occ / totalCap) * 100) : 0,
       todayIntakes: all.filter((r) => r.intakeDate === today).length,
       smsIssued: all.filter((r) => r.smsCode).length,
-      revenueActive: Math.round(revenue * 100) / 100,
+      revenueActive: perms['field.price'] ? Math.round(revenue * 100) / 100 : null,
       assignNext: firstFree?.code ?? null,
       containers,
     });
@@ -578,7 +619,8 @@ export function createApp(): express.Express {
   }));
 
   // Recent activity feed (intakes + releases by date).
-  app.get('/api/activity', P('screen.home'), asyncH(async (_req, res) => {
+  app.get('/api/activity', P('screen.home'), asyncH(async (req, res) => {
+    const perms = permsOf(req);
     const store = await getStore();
     const all = await store.list();
     const byId = new Map(all.map((r) => [String(r.id), r]));
@@ -592,7 +634,7 @@ export function createApp(): express.Express {
       const r = byId.get(String(e.recordId));
       if (e.action === 'created') hasCreated.add(String(e.recordId));
       if (e.action === 'released' || e.action === 'swapped') hasReleased.add(String(e.recordId));
-      ev.push({ type: e.action, plate: r?.plate ?? null, loc: r?.location ?? null, d: e.createdAt ?? '', comment: e.comment, actor: e.actor });
+      ev.push({ type: e.action, plate: r?.plate ?? null, loc: r?.location ?? null, d: e.createdAt ?? '', comment: redactEventComment(e.action, e.comment, perms), actor: e.actor });
     }
     // Date-derived intake/release for coverage of records with no logged event yet.
     // Skip FUTURE dates (data-entry typos like a 2026-12 release when it's July) so
@@ -639,7 +681,7 @@ export function createApp(): express.Express {
       const r = byId.get(String(e.recordId));
       if (e.action === 'created') hasCreated.add(String(e.recordId));
       if (e.action === 'released' || e.action === 'swapped') hasReleased.add(String(e.recordId));
-      ev.push({ type: e.action, d: e.createdAt ?? '', plate: r?.plate ?? null, loc: r?.location ?? null, recordId: r ? String(r.id) : null, comment: e.comment, actor: e.actor, cust: perms['field.customer'] ? (r?.customerName ?? null) : null, tires: tiresOf(r) });
+      ev.push({ type: e.action, d: e.createdAt ?? '', plate: r?.plate ?? null, loc: r?.location ?? null, recordId: r ? String(r.id) : null, comment: redactEventComment(e.action, e.comment, perms), actor: e.actor, cust: perms['field.customer'] ? (r?.customerName ?? null) : null, tires: tiresOf(r) });
     }
     const today = new Date().toISOString().slice(0, 10);
     for (const r of all) {
@@ -690,7 +732,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const q = typeof req.query.q === 'string' ? req.query.q.trim().toUpperCase() : '';
     const type = typeof req.query.type === 'string' ? req.query.type : '';
-    let all = await store.list(q ? { q } : undefined);
+    let all = redactAll(await store.list(q ? { q } : undefined), permsOf(req));
     if (type === 'company') all = all.filter((r) => r.isCompany);
     else if (type === 'private') all = all.filter((r) => !r.isCompany);
     // Grouping: a company = one card for ALL its vehicles; an individual with a
@@ -752,7 +794,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const plate = String(req.query.plate ?? '').toUpperCase().replace(/\s+/g, '');
     if (!plate) return res.status(400).json({ error: { message: 'plate is required' } });
-    const recs = (await store.list({ q: plate }))
+    const recs = redactAll(await store.list({ q: plate }), permsOf(req))
       .filter((r) => (r.plate ?? '').toUpperCase().replace(/\s+/g, '') === plate)
       .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''));
     if (recs.length === 0) return res.json({ plate, found: false, count: 0, customer: null, history: [] });
@@ -769,6 +811,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
     if (!q) return res.json({ q: '', results: [] });
+    const perms = permsOf(req);
     const active = await store.list({ status: 'active' });
     const norm = (s: string | null) => String(s ?? '').toUpperCase().replace(/\s+/g, '');
     // Most recently stored first: when a plate matches several seasons, the set
@@ -779,7 +822,9 @@ export function createApp(): express.Express {
     const chosen = exact.length
       ? exact
       : active.filter((r) => norm(r.plate).includes(q) || norm(r.smsCode).includes(q)).sort(newest).slice(0, 20);
-    const results = chosen.map((r) => ({
+    // Matching above may use the SMS code (that is how customers identify
+    // themselves); only the payload is cut down to what this user may see.
+    const results = redactAll(chosen, perms).map((r) => ({
       id: r.id, plate: r.plate, cust: r.customerName, phone: r.phone, loc: r.location,
       size: r.size1, size2: r.size2, brand: r.brand, quantity: r.quantity, sms: r.smsCode,
       thread: r.threadDepth ? `${r.threadDepth} mm` : '—',
@@ -964,9 +1009,11 @@ export function createApp(): express.Express {
   }));
 
   // --- Record history / comments (audit trail per record) ---
-  app.get('/api/storage/:id/events', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/storage/:id/events', requireAuth, PAttach, asyncH(async (req, res) => {
     const store = await getStore();
-    res.json({ events: await store.listEvents(req.params.id) });
+    const perms = permsOf(req);
+    const events = (await store.listEvents(req.params.id)).map((e) => ({ ...e, comment: redactEventComment(e.action, e.comment, perms) }));
+    res.json({ events });
   }));
   app.post('/api/storage/:id/events', P('act.media'), asyncH(async (req, res) => {
     const store = await getStore();
@@ -1405,9 +1452,9 @@ export function createApp(): express.Express {
   }));
 
   // Pending swaps: every 'prepared' set, newest first, shaped for the sidebar.
-  app.get('/api/pending', P('screen.pending'), asyncH(async (_req, res) => {
+  app.get('/api/pending', P('screen.pending'), asyncH(async (req, res) => {
     const store = await getStore();
-    const recs = (await store.list({ status: 'prepared' }))
+    const recs = redactAll(await store.list({ status: 'prepared' }), permsOf(req))
       .sort((a, b) => (b.preparedDate ?? '').localeCompare(a.preparedDate ?? ''));
     const items = recs.map((r) => ({
       id: r.id, plate: r.plate, cust: r.customerName, phone: r.phone, loc: r.location,
@@ -1535,7 +1582,7 @@ export function createApp(): express.Express {
     }
 
     if (what === 'pending') {
-      const recs = (await store.list({ status: 'prepared' }))
+      const recs = redactAll(await store.list({ status: 'prepared' }), permsOf(req))
         .sort((a, b) => (b.preparedDate ?? '').localeCompare(a.preparedDate ?? ''));
       const out = recs.map((r) => ({
         Vieta: r.location ?? '', 'Auto nr.': r.plate ?? '', Klients: r.customerName ?? '', Telefons: r.phone ?? '',
@@ -1549,8 +1596,10 @@ export function createApp(): express.Express {
 
     if (what === 'spots') {
       const { spots, occupied } = await spotUniverse();
+      const perms = permsOf(req);
       const out = spots.map((s) => {
-        const r = occupied.get(s.code);
+        const held = occupied.get(s.code);
+        const r = held ? redactRecord(held, perms) : undefined;
         return {
           Vieta: s.code, Konteiners: s.c,
           Statuss: r ? (STATUS_LV[r.status] ?? r.status) : 'Brīvs',
