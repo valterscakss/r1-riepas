@@ -8,3 +8,9 @@ export async function login(page: Page, username = E2E_ADMIN.username, password 
   await page.getByRole('button', { name: 'Pieteikties' }).click();
   await expect(page).not.toHaveURL(/\/login/);
 }
+
+/** Click a sidebar entry and wait for its screen — scoped to the menu, since screens repeat the same labels as shortcuts. */
+export async function nav(page: Page, label: string, url: RegExp) {
+  await page.getByRole('navigation', { name: 'Sadaļas' }).getByRole('link', { name: new RegExp(label) }).click();
+  await expect(page).toHaveURL(url);
+}

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { login } from './helpers';
+import { login, nav } from './helpers';
 
 test('a wrong password is refused, the right one opens the app', async ({ page }) => {
   await page.goto('/sakums');
@@ -14,7 +14,7 @@ test('a wrong password is refused, the right one opens the app', async ({ page }
 
 test('take a set in, find it by SMS code, release it', async ({ page }) => {
   await login(page);
-  await page.getByRole('link', { name: /Jauna glabāšana/ }).first().click();
+  await nav(page, 'Jauna glabāšana', /jauna-glabasana/);
   await page.getByLabel('Numura zīme').fill('e2e 101');
   await page.getByLabel('Numura zīme').press('Enter');
   await expect(page.getByText('Jauns klients — ievadi datus')).toBeVisible();
@@ -31,10 +31,10 @@ test('take a set in, find it by SMS code, release it', async ({ page }) => {
   await expect(page).toHaveURL(/\/sakums/);
 
   // The warehouse got a "store" job for it.
-  await page.getByRole('link', { name: /Noliktava/ }).click();
+  await nav(page, 'Noliktava', /noliktava/);
   await expect(page.getByText('E2E101')).toBeVisible();
 
-  await page.getByRole('link', { name: /Izsniegt glabāšanu/ }).click();
+  await nav(page, 'Izsniegt glabāšanu', /izsniegt/);
   await page.getByLabel('SMS kods vai numura zīme').fill(code.toLowerCase());
   await page.getByLabel('SMS kods vai numura zīme').press('Enter');
   await expect(page.getByText('Ieva Testa')).toBeVisible();
@@ -77,7 +77,7 @@ test('old ?view= links still land on the right screen', async ({ page }) => {
 
 test('the floor role sees the map but not names, and cannot take sets in', async ({ page }) => {
   await login(page, 'leja', 'leja-password');
-  await expect(page.getByRole('link', { name: /Jauna glabāšana/ })).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: 'Sadaļas' }).getByRole('link', { name: /Jauna glabāšana/ })).toHaveCount(0);
   await page.goto('/jauna-glabasana');
   await expect(page).not.toHaveURL(/jauna-glabasana/);
   await page.goto('/novietnes');
