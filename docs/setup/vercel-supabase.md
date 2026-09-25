@@ -86,6 +86,21 @@ while `ANONYMIZE_PHONES=true`).
 the Supabase schema and all data into it (`pg_dump` → `psql`, run inside the
 `postgres:17` image).
 
+**Easiest — no DB password, over HTTPS** (uses the Supabase secret API key):
+
+```powershell
+docker compose up -d db
+cd app; npm install
+$env:SUPABASE_URL="https://[ref].supabase.co"; $env:SUPABASE_SECRET_KEY="sb_secret_…"
+$env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/postgres"
+npm run clone:supabase
+```
+
+Copies every app table (same ids), and can be re-run for a fresh copy. The secret
+key bypasses RLS — keep it out of git and chat, and rotate it if exposed.
+
+**Alternative — `pg_dump`** (needs the database password):
+
 ```bash
 docker compose up -d db
 SUPABASE_DB_URL="postgresql://postgres.[ref]:[PASSWORD]@aws-0-[region].pooler.supabase.com:5432/postgres" \

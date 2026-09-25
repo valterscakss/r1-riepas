@@ -7,7 +7,7 @@ import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, T
  * first use, so pointing at an empty database just works; the same DDL lives in
  * db/supabase/001_storage.sql for review / manual runs.
  */
-const DDL = `
+export const DDL = `
 CREATE TABLE IF NOT EXISTS storage (
   id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   season        TEXT,
