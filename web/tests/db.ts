@@ -1,6 +1,7 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { createPool, setDb, type DB } from '@/server/db/client';
 import { runMigrations } from '@/server/db/migrate';
+import { clearUserCache } from '@/server/http';
 import * as schema from '@/server/db/schema';
 import type pg from 'pg';
 
@@ -16,6 +17,7 @@ export async function freshDb(): Promise<DB> {
   await runMigrations(pool);
   const db = drizzle(pool, { schema });
   setDb(db, pool);
+  clearUserCache();
   return db;
 }
 

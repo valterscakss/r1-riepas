@@ -17,8 +17,9 @@ const nextConfig: NextConfig = {
           { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=()' },
         ],
       },
-      // API responses are live data — never cache them anywhere.
-      { source: '/api/:path*', headers: [{ key: 'Cache-Control', value: 'no-store' }] },
+      // API responses are live data — never cache them anywhere. Photos are the
+      // exception: immutable by id, they set their own long-lived private cache.
+      { source: '/api/:path((?!photos/).*)', headers: [{ key: 'Cache-Control', value: 'no-store' }] },
     ];
   },
 };
