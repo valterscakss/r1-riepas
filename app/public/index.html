@@ -128,6 +128,10 @@ button{font-family:'IBM Plex Sans',sans-serif;}
     <div style="width:38px;height:38px;flex:none;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:16px;">R1</div>
     <div><div style="font-weight:600;font-size:15px;">R1 Tires</div><div style="font-size:11px;color:var(--ink-3);">Riepu noliktava · <span id="buildtag">build 39</span></div></div>
   </div>
+  <div id="branch-box" style="display:none;padding:12px 12px 0;">
+    <label class="label" style="display:block;margin-bottom:5px;">Filiāle</label>
+    <select id="branch-pick" style="width:100%;height:38px;padding:0 10px;border:1px solid var(--border-2);border-radius:9px;background:var(--surface);font-weight:600;font-size:14px;color:var(--ink);cursor:pointer;"></select>
+  </div>
   <nav style="padding:14px 12px;display:flex;flex-direction:column;gap:2px;flex:1;">
     <button class="navbtn" data-nav="home"><span>◧&nbsp; Sākums</span></button>
     <button class="navbtn" data-nav="warehouse"><span>▦&nbsp; Noliktava <span id="nav-task-badge" style="display:none;margin-left:auto;font-size:10px;font-weight:700;background:var(--danger);color:#fff;border-radius:9px;padding:1px 7px;"></span></span></button>
@@ -196,6 +200,11 @@ const eur=n=>'€'+Number(n).toFixed(2).replace('.',',');
 const TOKEN_KEY='r1_token';
 function getToken(){try{return localStorage.getItem(TOKEN_KEY)||'';}catch{return'';}}
 function setToken(t){try{if(t)localStorage.setItem(TOKEN_KEY,t);else localStorage.removeItem(TOKEN_KEY);}catch{}}
+// Which shop this browser is working in. Sent with every request; the server only
+// honours it if the user may open that branch, so it is a preference, not a key.
+const BRANCH_KEY='r1_branch';
+function getBranch(){try{return localStorage.getItem(BRANCH_KEY)||'';}catch{return'';}}
+function setBranch(b){try{if(b)localStorage.setItem(BRANCH_KEY,b);else localStorage.removeItem(BRANCH_KEY);}catch{}}
 let _reauth=false;
 function handle401(){if(_reauth)return;_reauth=true;setToken('');S.auth=null;showLogin();}
 const _origFetch=window.fetch.bind(window);
@@ -207,6 +216,8 @@ window.fetch=function(input,init){
     const h=new Headers(init.headers||(typeof input==='object'&&input&&input.headers)||{});
     const t=getToken();
     if(t&&!h.has('Authorization'))h.set('Authorization','Bearer '+t);
+    const b=getBranch();
+    if(b&&!h.has('X-Branch'))h.set('X-Branch',b);
     init.headers=h;
     if(!init.credentials)init.credentials='same-origin';
   }
@@ -216,7 +227,7 @@ window.fetch=function(input,init){
   });
 };
 
-const S={screen:'home',role:'staff',auth:null,users:[],usersLoaded:false,stats:null,activity:[],customers:[],selCustomer:0,custQ:'',custType:'',
+const S={screen:'home',role:'staff',auth:null,branch:'',branches:[],users:[],usersLoaded:false,stats:null,activity:[],customers:[],selCustomer:0,custQ:'',custType:'',
   plate:'',looked:false,isNew:false,isCompany:false,cust:'',phone:'',t1size:'',t1brand:'',t1qty:'4',t2size:'',t2brand:'',rim:'none',thread:'',history:0,
   smsOpen:false,smsRec:null,selSpot:null,presetSpot:null,spotHist:[],spotHistLoading:false,spotPickOpen:false,
   relQ:'',relResults:[],relLoading:false,relSearched:false,
@@ -323,6 +334,7 @@ function nav(screen){const k=NAV_PERM[screen];if(k&&!can(k)){screen=firstScreen(
   if(screen==='home'){render();Promise.all([loadActivity(HOME_TTL),loadStats(HOME_TTL)]).then(()=>{if(S.screen==='home')render();});return;}
   render();}
 document.querySelectorAll('[data-nav]').forEach(b=>b.addEventListener('click',()=>{document.body.classList.remove('nav-open');if(b.dataset.nav==='intake')resetIntake();nav(b.dataset.nav);}));
+{const sel=document.getElementById('branch-pick');if(sel)sel.addEventListener('change',()=>switchBranch(sel.value));}
 
 // Ten seconds: long enough that clicking between screens does not re-fetch, short
 // enough that a change made at the other desk shows up almost at once.
@@ -1687,6 +1699,11 @@ function settingsHTML(){
       </div>
       <div style="display:flex;flex-direction:column;gap:var(--gap);min-width:0;">
         <div class="card" style="padding:var(--card);">
+          <h2 style="margin:0 0 4px;font-size:15px;font-weight:600;">Filiāles</h2>
+          <div style="color:var(--ink-3);font-size:12px;margin-bottom:14px;line-height:1.6;">Šobrīd: <b>${esc(((S.branches||[]).find(b=>String(b.id)===String(S.branch))||{}).name||'—')}</b>${(S.branches||[]).length>1?` · pieejamas ${(S.branches||[]).length}`:''}. Katrai filiālei ir savi plaukti un savas riepas. Kam kura filiāle pieejama — sadaļā <b>Lietotāji</b>.</div>
+          <button data-act="branch-admin" style="width:100%;height:44px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:600;cursor:pointer;color:var(--ink-2);">⌂ Pārvaldīt filiāles</button>
+        </div>
+        <div class="card" style="padding:var(--card);">
           <h2 style="margin:0 0 12px;font-size:15px;font-weight:600;">Pārbaudi cenu</h2>
           <div class="field" style="margin-bottom:14px;"><label>Riepas izmērs</label>
             <input id="price-test" class="mono" inputmode="numeric" value="${esc(S.priceTest)}" placeholder="225/45/17"></div>
@@ -2371,6 +2388,7 @@ function bind(root){
     else if(a==='price-reset'){S.pricingDraft=JSON.parse(JSON.stringify(S.pricing||DEF_PRICING));render();toast('Izmaiņas atceltas','info');}
     else if(a==='price-recalc')await recalcPrices();
     else if(a==='push-test')await sendTestPush();
+    else if(a==='branch-admin')await branchAdminDialog();
     else if(a==='hist-more')await loadHist(false);
     else if(a==='hist-clear'){Object.assign(S.hist,{from:'',to:'',type:'',q:'',page:0,list:[]});render();await loadHist(true);}
     else if(a==='go-history')nav('history');
@@ -2455,6 +2473,7 @@ function bind(root){
   root.querySelectorAll('[data-sort]').forEach(el=>el.addEventListener('click',()=>{const k=el.dataset.sort;
     if(S.tabSort.col===k)S.tabSort.dir=S.tabSort.dir==='asc'?'desc':'asc';else S.tabSort={col:k,dir:'asc'};updateTabContent();}));
   root.querySelectorAll('[data-edit-user]').forEach(el=>el.addEventListener('click',()=>editUserDialog(el.dataset.editUser,el.dataset.name,el.dataset.role)));
+  root.querySelectorAll('[data-branch-user]').forEach(el=>el.addEventListener('click',()=>userBranchesDialog(el.dataset.branchUser,el.dataset.name)));
   root.querySelectorAll('[data-reset-user]').forEach(el=>el.addEventListener('click',()=>resetUserDialog(el.dataset.resetUser,el.dataset.name)));
   root.querySelectorAll('[data-perms-user]').forEach(el=>el.addEventListener('click',()=>permsDialog(el.dataset.permsUser,el.dataset.name)));
   root.querySelectorAll('[data-del-user]').forEach(el=>el.addEventListener('click',()=>deleteUserDialog(el.dataset.delUser,el.dataset.name)));
@@ -2711,6 +2730,7 @@ function usersHTML(){
     <span><span style="font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;${roleTint(u.role)}">${esc(roleLabel(u.role))}</span></span>
     <span style="display:flex;gap:6px;flex-wrap:wrap;">
     <button data-edit-user="${esc(u.username)}" data-name="${esc(u.name)}" data-role="${esc(u.role)}" title="Mainīt vārdu, lietotājvārdu vai lomu" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Rediģēt</button>
+    ${(S.branches||[]).length>1?`<button data-branch-user="${esc(u.username)}" data-name="${esc(u.name)}" title="Kurās filiālēs šis lietotājs strādā" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Filiāles</button>`:''}
     ${u.role!=='admin'?`<button data-perms-user="${esc(u.username)}" data-name="${esc(u.name)}" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Tiesības</button>`:''}
     <button data-reset-user="${esc(u.username)}" data-name="${esc(u.name)}" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:12px;padding:7px 12px;cursor:pointer;font-weight:500;">Atiestatīt paroli</button></span>
     <button data-del-user="${esc(u.username)}" data-name="${esc(u.name)}" title="Dzēst lietotāju" style="border:1px solid var(--border-2);background:var(--surface);border-radius:8px;font-size:13px;padding:7px 11px;cursor:pointer;color:var(--danger);">✕</button>
@@ -2855,6 +2875,78 @@ async function editUserDialog(username,name,role){
   else if(data.reauth)toast('Saglabāts · lietotājam jāpiesakās no jauna');
   else toast('Saglabāts');}
 
+// Which shops one person may open. Everything ticked = no restriction, so a
+// branch added later is included automatically.
+async function userBranchesDialog(username,name){
+  if(!R1)return;
+  let data;
+  try{const res=await fetch('/api/users/'+encodeURIComponent(username)+'/branches');
+    data=await res.json();if(!res.ok)throw new Error(data.error?.message);}
+  catch(e){alertErr(e.message||'Neizdevās ielādēt');return;}
+  const live=(data.all||[]).filter(b=>b.active);
+  const on=new Set((data.branches||live.map(b=>String(b.id))).map(String));
+  const html=`<div style="text-align:left;">
+    <div style="color:var(--ink-3);font-size:12px;margin-bottom:12px;">Atzīmē, kurās filiālēs <b>@${esc(username)}</b> drīkst strādāt. Ja atzīmētas visas, lietotājs redzēs arī vēlāk pievienotās.</div>
+    ${live.map(b=>`<label style="display:flex;align-items:center;gap:9px;padding:7px 4px;cursor:pointer;font-size:14px;">
+      <input type="checkbox" data-bk="${esc(b.id)}" ${on.has(String(b.id))?'checked':''} style="width:17px;height:17px;accent-color:var(--accent);cursor:pointer;">
+      <span>${esc(b.name)}</span></label>`).join('')}
+  </div>`;
+  const r=await R1.fire({title:'Filiāles · '+(name||username),width:460,html,
+    showCancelButton:true,confirmButtonText:'Saglabāt',cancelButtonText:'Atcelt',customClass:{popup:'r1-swal'},
+    preConfirm:()=>{const ids=[...document.querySelectorAll('[data-bk]')].filter(x=>x.checked).map(x=>x.dataset.bk);
+      if(!ids.length){Swal.showValidationMessage('Jāatzīmē vismaz viena filiāle');return false;}
+      return ids;}});
+  if(!r.isConfirmed||!r.value)return;
+  const res=await fetch('/api/users/'+encodeURIComponent(username)+'/branches',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({branches:r.value})});
+  const d=await res.json().catch(()=>({}));
+  if(!res.ok||!d.ok){alertErr(d.error?.message||'Neizdevās saglabāt');return;}
+  toast('Saglabāts · stājas spēkā uzreiz');}
+
+// Branch administration, from Iestatījumi.
+async function branchAdminDialog(){
+  if(!R1)return;
+  let list=[];
+  try{const res=await fetch('/api/branches/all');const d=await res.json();
+    if(!res.ok)throw new Error(d.error?.message);list=d.branches||[];}
+  catch(e){alertErr(e.message||'Neizdevās ielādēt filiāles');return;}
+  const row=b=>`<div style="display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+    <input data-bn="${esc(b.id)}" value="${esc(b.name)}" maxlength="40" style="flex:1;min-width:0;height:36px;padding:0 10px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);font-size:14px;">
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);white-space:nowrap;cursor:pointer;">
+      <input type="checkbox" data-ba="${esc(b.id)}" ${b.active?'checked':''} style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">Aktīva</label>
+  </div>`;
+  const html=`<div style="text-align:left;">
+    <div style="color:var(--ink-3);font-size:12px;margin-bottom:10px;">Katrai filiālei ir savi plaukti, savas riepas un savi noliktavas uzdevumi. <b>Plauktu burtiem jābūt atšķirīgiem</b> — piem. vienā A, B, C, otrā D, E, F.</div>
+    ${list.map(row).join('')}
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <input id="bnew" placeholder="Jaunas filiāles nosaukums" maxlength="40" style="flex:1;min-width:0;height:38px;padding:0 10px;border:1px solid var(--border-2);border-radius:8px;background:var(--surface);font-size:14px;">
+      <button type="button" id="badd" class="r1-btn r1-btn-ghost" style="height:38px;padding:0 14px;white-space:nowrap;">＋ Pievienot</button>
+    </div>
+    <div id="bmsg" style="font-size:12px;color:var(--ok);margin-top:8px;min-height:16px;"></div>
+  </div>`;
+  await R1.fire({title:'Filiāles',width:520,html,showCancelButton:true,
+    confirmButtonText:'Saglabāt izmaiņas',cancelButtonText:'Aizvērt',customClass:{popup:'r1-swal'},
+    didOpen:()=>{
+      const add=document.getElementById('badd');
+      add.addEventListener('click',async()=>{
+        const el=document.getElementById('bnew'),name=(el.value||'').trim();
+        if(!name){Swal.showValidationMessage('Ievadi nosaukumu');return;}
+        const res=await fetch('/api/branches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+        const d=await res.json().catch(()=>({}));
+        if(!res.ok){Swal.showValidationMessage(d.error?.message||'Neizdevās');return;}
+        Swal.resetValidationMessage&&Swal.resetValidationMessage();
+        el.value='';document.getElementById('bmsg').textContent='Pievienota: '+name+'. Aizver un atver vēlreiz, lai rediģētu.';
+        await loadBranches();});},
+    preConfirm:async()=>{
+      for(const el of document.querySelectorAll('[data-bn]')){
+        const id=el.dataset.bn,name=(el.value||'').trim();
+        const act=document.querySelector(`[data-ba="${id}"]`);
+        const res=await fetch('/api/branches/'+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({name,active:!!(act&&act.checked)})});
+        if(!res.ok){const d=await res.json().catch(()=>({}));Swal.showValidationMessage(d.error?.message||'Neizdevās saglabāt');return false;}
+      }
+      return true;}});
+  await loadBranches();render();}
+
 async function resetUserDialog(username,name){
   if(!R1)return;
   const {value:form}=await R1.fire({title:'Atiestatīt paroli',width:460,
@@ -2958,9 +3050,48 @@ function initialScreen(){
 // Effective permissions from the server; admin is always all-on.
 function can(key){if(S.auth&&S.auth.role==='admin')return true;return !!(S.perms&&S.perms[key]);}
 const NAV_PERM={home:'screen.home',warehouse:'screen.warehouse',intake:'screen.intake',release:'screen.release',pending:'screen.pending',spots:'screen.spots',customers:'screen.customers',table:'screen.table',analytics:'screen.analytics',history:'screen.history'};
+// ---- Filiāles ----
+// The switcher only appears when there is more than one to choose from, so a
+// single-shop setup looks exactly as it did before.
+async function loadBranches(){
+  try{const d=await(await fetch('/api/branches')).json();
+    S.branches=d.branches||[];
+    // The server decides what is actually active — it refuses a branch this user
+    // may not open, so follow its answer rather than what the browser remembered.
+    if(d.active)setBranch(String(d.active));
+    S.branch=String(d.active||'');
+  }catch{S.branches=[];S.branch='';}
+  paintBranch();}
+function paintBranch(){
+  const box=document.getElementById('branch-box'),sel=document.getElementById('branch-pick');
+  if(!box||!sel)return;
+  const list=S.branches||[];
+  box.style.display=list.length>1?'':'none';
+  if(list.length<2)return;
+  const want=list.map(b=>`<option value="${esc(b.id)}"${String(b.id)===String(S.branch)?' selected':''}>${esc(b.name)}</option>`).join('');
+  if(sel.innerHTML!==want)sel.innerHTML=want;
+  sel.value=String(S.branch);}
+async function switchBranch(id){
+  if(!id||String(id)===String(S.branch))return;
+  setBranch(String(id));S.branch=String(id);
+  // Everything on screen belongs to the old shop — drop it all and load again,
+  // rather than leaving one branch's tires next to another's spot map.
+  S.table=null;S.tableLoaded=false;S.customers=[];S.pending=[];S.pendingLoaded=false;
+  S.tasks=[];S.tasksLoaded=false;S.activity=[];S.stats=null;S.selSpot=null;S.recOpen=false;S.recData=null;
+  S.hist={list:[],page:0,pages:1,total:0,from:'',to:'',type:'',q:'',loading:false};
+  S.analytics=null;S.analyticsLoaded=false;S.usersLoaded=false;S.users=[];
+  S.relQ='';S.relResults=[];S.relSearched=false;S.selCustomer=0;
+  S.spotHist=[];S.recEvents=[];S.recPhotos=[];S.presetSpot=null;S.swapFromId=null;
+  resetIntake();
+  bustView();
+  await startApp();
+  const b=(S.branches||[]).find(x=>String(x.id)===String(id));
+  toast('Filiāle: '+((b&&b.name)||id));}
+
 async function startApp(){
   S.role=(S.auth&&S.auth.role==='admin')?'owner':'staff';
   paintHeader();
+  await loadBranches();
   nav(initialScreen());
   const loads=[pollTasks()];
   if(can('screen.home')||can('screen.spots')||can('screen.intake'))loads.push(loadStats());

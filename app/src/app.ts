@@ -3,7 +3,7 @@ import cookieParser from 'cookie-parser';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import type { IntakeInput, StorageRecord, Store, PricingConfig, PricingTier, Role } from './types.js';
+import type { IntakeInput, StorageRecord, Store, PricingConfig, PricingTier, Role, Branch } from './types.js';
 import { DEFAULT_PRICING, matches, cellMap, parseZones } from './types.js';
 import { getStore } from './store.js';
 import { parseWorkbook } from './importExcel.js';
@@ -75,6 +75,92 @@ export function createApp(): express.Express {
     res.json({ user: u, perms: await effectivePerms(await getStore(), u) });
   }));
 
+  // ============ FILIĀLES (branches) ============
+  // Everything that physically sits somewhere — the racks, the tires on them and
+  // the warehouse jobs — belongs to one shop. A request says which shop it is
+  // working in with the X-Branch header, and that value is always checked against
+  // the branches the user may open, so the header can never widen access.
+  //
+  // It is resolved once per request by the middleware below and read back with
+  // bid(req), rather than re-queried at each of the ~40 places that need it.
+  const branchCache = new Map<string, { ids: string[] | null; at: number }>();
+  let branchList: { at: number; rows: Branch[] } | null = null;
+  const TTL = 30_000;
+  const bustBranches = (username?: string) => {
+    branchList = null;
+    if (username) branchCache.delete(username.toLowerCase());
+    else branchCache.clear();
+  };
+  const activeBranches = async (): Promise<Branch[]> => {
+    if (branchList && Date.now() - branchList.at < TTL) return branchList.rows;
+    let rows: Branch[] = [];
+    try { rows = (await (await getStore()).listBranches()).filter((b) => b.active); } catch { rows = []; }
+    branchList = { at: Date.now(), rows };
+    return rows;
+  };
+  const allowedBranches = async (username: string): Promise<string[] | null> => {
+    const key = username.toLowerCase();
+    const hit = branchCache.get(key);
+    if (hit && Date.now() - hit.at < TTL) return hit.ids;
+    let ids: string[] | null = null;
+    try { ids = await (await getStore()).getUserBranches(key); } catch { ids = null; }
+    branchCache.set(key, { ids, at: Date.now() });
+    return ids;
+  };
+  /** The branches this user may open. No restriction stored = all of them. */
+  const branchesFor = async (username?: string | null): Promise<Branch[]> => {
+    const all = await activeBranches();
+    if (!username) return all;
+    const allowed = await allowedBranches(username);
+    if (!allowed) return all;
+    const set = new Set(allowed.map(String));
+    return all.filter((b) => set.has(String(b.id)));
+  };
+
+  type BranchRequest = express.Request & { __branch?: string; __branches?: Branch[] };
+  /** The branch the current request works in. '' only when there are none at all. */
+  const bid = (req: express.Request): string => (req as BranchRequest).__branch ?? '';
+
+  // Resolve it once, for every /api route declared below this point.
+  app.use('/api', (req, _res, next) => {
+    (async () => {
+      const u = AUTH_DISABLED() ? DEMO_USER : currentUser(req);
+      const mine = await branchesFor(u?.username);
+      const asked = String(req.header('X-Branch') ?? '').trim();
+      const r = req as BranchRequest;
+      r.__branches = mine;
+      r.__branch = mine.some((b) => String(b.id) === asked) ? asked : String(mine[0]?.id ?? '');
+      next();
+    })().catch(next);
+  });
+
+  /**
+   * Refuse a record that lives in another shop. Lists are already filtered, but a
+   * record can also be reached by its id — without this, guessing an id would read
+   * or change data in a branch the user was never given.
+   */
+  const sameBranch: express.RequestHandler = (req, res, next) => {
+    (async () => {
+      const id = String(req.params.id ?? '');
+      if (!id) return next();
+      const rec = await (await getStore()).get(id);
+      if (rec && String(rec.branchId) !== String(bid(req))) {
+        return res.status(404).json({ error: { message: 'Ieraksts nav šajā filiālē' } });
+      }
+      next();
+    })().catch(next);
+  };
+  /** The same, for a rack. */
+  const containerInBranch = async (req: express.Request, id: string) => {
+    const def = (await (await getStore()).listContainers(bid(req))).find((c) => String(c.id) === String(id));
+    return def ?? null;
+  };
+
+  app.get('/api/branches', requireAuth, asyncH(async (req, res) => {
+    const mine = (req as BranchRequest).__branches ?? [];
+    res.json({ branches: mine.map((b) => ({ id: String(b.id), name: b.name })), active: bid(req) });
+  }));
+
   app.get('/api/health', asyncH(async (_req, res) => {
     const store = await getStore();
     res.json({ ok: true, store: store.kind() });
@@ -85,11 +171,11 @@ export function createApp(): express.Express {
     const store = await getStore();
     const status = req.query.status === 'released' ? 'released' : req.query.status === 'active' ? 'active' : undefined;
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
-    const records = redactAll(await store.list({ status, q }), permsOf(req));
+    const records = redactAll(await store.list({ status, q, branchId: bid(req) }), permsOf(req));
     res.json({ count: records.length, records });
   }));
 
-  app.get('/api/storage/:id', requireAuth, PAttach, asyncH(async (req, res) => {
+  app.get('/api/storage/:id', requireAuth, PAttach, sameBranch, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.get(req.params.id);
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -97,7 +183,7 @@ export function createApp(): express.Express {
   }));
 
   // Manual edit of a record's data fields (Tabula). Only allowlisted keys are applied.
-  app.patch('/api/storage/:id', P('act.edit'), asyncH(async (req, res) => {
+  app.patch('/api/storage/:id', P('act.edit'), sameBranch, asyncH(async (req, res) => {
     const store = await getStore();
     const EDITABLE = ['season', 'location', 'plate', 'makeModel', 'customerName', 'phone',
       'size1', 'brand', 'quantity', 'size2', 'rimNote', 'notes', 'intakeDate', 'releaseDate',
@@ -146,7 +232,7 @@ export function createApp(): express.Express {
     const raw = typeof req.query.plate === 'string' ? req.query.plate : '';
     const plate = raw.toUpperCase().replace(/\s+/g, '');
     if (!plate) return res.status(400).json({ error: { message: 'plate is required' } });
-    const all = await store.list({ q: plate });
+    const all = await store.list({ q: plate, branchId: bid(req) });
     const hits = all
       .filter((r) => (r.plate ?? '').toUpperCase().replace(/\s+/g, '') === plate)
       .sort((a, b) => (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''));
@@ -169,7 +255,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
     if (q.length < 2) return res.json({ suggestions: [] });
-    const all = await store.list({ q });
+    const all = await store.list({ q, branchId: bid(req) });
     const seen = new Map<string, { plate: string; cust: string | null; active: boolean; date: string | null }>();
     for (const r of all) {
       const p = (r.plate ?? '').toUpperCase().replace(/\s+/g, '');
@@ -196,7 +282,7 @@ export function createApp(): express.Express {
   app.get('/api/company-suggest', P('act.operate'), asyncH(async (req, res) => {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase();
-    const all = await store.list();
+    const all = await store.list({ branchId: bid(req) });
     const seen = new Map<string, { name: string; plates: Set<string>; phone: string | null; last: string; count: number }>();
     for (const r of all) {
       if (!r.isCompany || !r.customerName) continue;
@@ -221,10 +307,18 @@ export function createApp(): express.Express {
 
   // ---- Domain helpers (per design: pricing, spot assignment, SMS codes) ----
   const SPOT_RE = /^([A-ZĀ-Ž]{1,4})(\d{1,3})$/;
-  async function spotUniverse() {
+  // Spot codes must not reach into another shop's letters: "Z5" in this branch while
+  // rack Z lives in the other one would make a paper slip ambiguous.
+  async function foreignPrefix(name: string, branchId: string): Promise<string | null> {
     const store = await getStore();
-    const all = await store.list();
-    const defs = await store.listContainers();
+    const others = (await store.listContainers()).filter((c) => c.branchId !== branchId);
+    const hit = others.find((c) => name.startsWith(c.prefix));
+    return hit ? hit.prefix : null;
+  }
+  async function spotUniverse(branchId?: string) {
+    const store = await getStore();
+    const all = await store.list({ branchId });
+    const defs = await store.listContainers(branchId);
     const seen = new Map<string, { code: string; c: string; n: number }>();
     const occupied = new Map<string, (typeof all)[number]>();
     // A place carries rows from every season it has ever been used in, so the one
@@ -401,8 +495,8 @@ export function createApp(): express.Express {
   };
 
   // Stats for dashboard + spots grid (design: containers, capacity, activity).
-  app.get('/api/stats', PAny(['screen.home','screen.spots','screen.intake']), asyncH(async (_req, res) => {
-    const { spots, occupied, all, defs, layouts, zoneCaps, zoneLoad } = await spotUniverse();
+  app.get('/api/stats', PAny(['screen.home','screen.spots','screen.intake']), asyncH(async (req, res) => {
+    const { spots, occupied, all, defs, layouts, zoneCaps, zoneLoad } = await spotUniverse(bid(req));
     const defByPrefix = new Map(defs.map((d) => [d.prefix, d]));
     const spotView = (code: string, zone?: { name: string; cap: number; span: number; hspan: number }) => {
       if (zone) {
@@ -498,7 +592,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     // Placeholder rows (manually blocked spots, "BRĪVS" free markers) hold no tires
     // and would only skew the counts.
-    const everything = (await store.list()).filter((r) => r.status !== 'blocked' && r.status !== 'free');
+    const everything = (await store.list({ branchId: bid(req) })).filter((r) => r.status !== 'blocked' && r.status !== 'free');
     // Distinct source seasons (from the full set, so the dropdown is stable when
     // filtered). Year-prefixed seasons come first, newest first; oddly-named sheets last.
     const seasonOptions = [...new Set(everything.map((r) => (r.season ?? '').trim()).filter(Boolean))]
@@ -578,9 +672,9 @@ export function createApp(): express.Express {
   }));
 
   // Recent activity feed (intakes + releases by date).
-  app.get('/api/activity', P('screen.home'), asyncH(async (_req, res) => {
+  app.get('/api/activity', P('screen.home'), asyncH(async (req, res) => {
     const store = await getStore();
-    const all = await store.list();
+    const all = await store.list({ branchId: bid(req) });
     const byId = new Map(all.map((r) => [String(r.id), r]));
     type Feed = { type: string; plate: string | null; loc: string | null; d: string; comment?: string | null; actor?: string | null };
     const ev: Feed[] = [];
@@ -627,7 +721,7 @@ export function createApp(): express.Express {
   const buildHistory = async (req: express.Request) => {
     const store = await getStore();
     const perms = permsOf(req);
-    const all = await store.list();
+    const all = await store.list({ branchId: bid(req) });
     const byId = new Map(all.map((r) => [String(r.id), r]));
     type H = { type: string; d: string; plate: string | null; loc: string | null; recordId: string | null; comment: string | null; actor: string | null; cust: string | null; tires: string | null };
     const ev: H[] = [];
@@ -690,7 +784,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const q = typeof req.query.q === 'string' ? req.query.q.trim().toUpperCase() : '';
     const type = typeof req.query.type === 'string' ? req.query.type : '';
-    let all = await store.list(q ? { q } : undefined);
+    let all = await store.list(q ? { q, branchId: bid(req) } : { branchId: bid(req) });
     if (type === 'company') all = all.filter((r) => r.isCompany);
     else if (type === 'private') all = all.filter((r) => !r.isCompany);
     // Grouping: a company = one card for ALL its vehicles; an individual with a
@@ -752,7 +846,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const plate = String(req.query.plate ?? '').toUpperCase().replace(/\s+/g, '');
     if (!plate) return res.status(400).json({ error: { message: 'plate is required' } });
-    const recs = (await store.list({ q: plate }))
+    const recs = (await store.list({ q: plate, branchId: bid(req) }))
       .filter((r) => (r.plate ?? '').toUpperCase().replace(/\s+/g, '') === plate)
       .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || (b.intakeDate ?? '').localeCompare(a.intakeDate ?? ''));
     if (recs.length === 0) return res.json({ plate, found: false, count: 0, customer: null, history: [] });
@@ -769,7 +863,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const q = String(req.query.q ?? '').trim().toUpperCase().replace(/\s+/g, '');
     if (!q) return res.json({ q: '', results: [] });
-    const active = await store.list({ status: 'active' });
+    const active = await store.list({ status: 'active', branchId: bid(req) });
     const norm = (s: string | null) => String(s ?? '').toUpperCase().replace(/\s+/g, '');
     // Most recently stored first: when a plate matches several seasons, the set
     // that came in last is the one being asked about.
@@ -798,7 +892,7 @@ export function createApp(): express.Express {
     const plate = String(b.plate).toUpperCase().replace(/\s+/g, '');
     // Auto-assign the first free spot unless one was provided (design FR-2.2.5).
     let location = b.location ? String(b.location).toUpperCase().replace(/\s+/g, '') : null;
-    const { spots, occupied, all } = await spotUniverse();
+    const { spots, occupied, all } = await spotUniverse(bid(req));
     if (!location) {
       const firstFree = spots.find((s) => !occupied.has(s.code));
       location = firstFree?.code ?? null;
@@ -840,7 +934,7 @@ export function createApp(): express.Express {
         await store.closeTasksForRecord(String(b.releaseId), actorOf(req));
       } catch { /* already closed */ }
     }
-    const rec = await store.create(input);
+    const rec = await store.create({ ...input, branchId: bid(req) });
     await logEvent(store, rec.id, 'created', b.notes, req);
     // Hand the shelving to the warehouse: a 'store' job saying which place this
     // set must go INTO. Ticking it done = the tires are physically on the shelf.
@@ -848,14 +942,14 @@ export function createApp(): express.Express {
       const task = await store.createTask({
         kind: 'store', recordId: String(rec.id), title: taskTitleFor(rec),
         details: taskDetailsFor(rec), location: rec.location, plate: rec.plate,
-        createdBy: actorOf(req),
+        createdBy: actorOf(req), branchId: bid(req),
       });
       announceTask(task);
     } catch (e) { console.error('[tasks] could not queue store job:', e); }
     res.status(201).json(rec);
   }));
 
-  app.post('/api/storage/:id/release', P('act.operate'), asyncH(async (req, res) => {
+  app.post('/api/storage/:id/release', P('act.operate'), sameBranch, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.release(req.params.id, { releaseDate: req.body?.releaseDate });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -866,7 +960,7 @@ export function createApp(): express.Express {
   }));
 
   // Stage a set for a seasonal swap: tires out, spot stays reserved ('prepared').
-  app.post('/api/storage/:id/prepare', P('act.operate'), asyncH(async (req, res) => {
+  app.post('/api/storage/:id/prepare', P('act.operate'), sameBranch, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.prepare(req.params.id, {});
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -878,14 +972,14 @@ export function createApp(): express.Express {
       task = await store.createTask({
         kind: 'prepare', recordId: String(rec.id), title: taskTitleFor(rec),
         details: [taskDetailsFor(rec), comment].filter(Boolean).join(' · ') || null,
-        location: rec.location, plate: rec.plate, createdBy: actorOf(req),
+        location: rec.location, plate: rec.plate, createdBy: actorOf(req), branchId: bid(req),
       });
       announceTask(task);
     } catch (e) { console.error('[tasks] could not queue prepare job:', e); }
     res.json({ ...rec, task });
   }));
   // Undo a prepare — put the set back in its spot ('active').
-  app.post('/api/storage/:id/unprepare', P('act.operate'), asyncH(async (req, res) => {
+  app.post('/api/storage/:id/unprepare', P('act.operate'), sameBranch, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.prepare(req.params.id, { active: true });
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -907,9 +1001,11 @@ export function createApp(): express.Express {
       return res.status(400).json({ error: { message: 'Nosaukums: 1–10 burti/cipari/domuzīmes (piem. B7 vai PLAUKTS-1)' } });
     }
     if (from === to) return res.json({ ok: true, changed: 0, name: to });
-    const { spots, layouts, defs } = await spotUniverse();
+    const { spots, layouts, defs } = await spotUniverse(bid(req));
     if (!spots.some((s) => s.code === from)) return res.status(404).json({ error: { message: 'Vieta nav atrasta' } });
     if (spots.some((s) => s.code === to)) return res.status(409).json({ error: { message: `Vieta ${to} jau eksistē` } });
+    const fp = await foreignPrefix(to, bid(req));
+    if (fp) return res.status(409).json({ error: { message: `Burts "${fp}" pieder citai filiālei — izvēlies citu nosaukumu` } });
     // If the place belongs to a drawn container, persist the name by position so
     // it survives with no record to carry it. Any name works here — the layout
     // itself keeps the place on the grid.
@@ -946,15 +1042,15 @@ export function createApp(): express.Express {
     const code = String(req.params.code).toUpperCase().replace(/\s+/g, '');
     // Membership in the spot universe is the real check — custom-named places
     // (PLAUKTS-1) don't match the letters+number pattern but are perfectly valid.
-    const { spots, occupied } = await spotUniverse();
+    const { spots, occupied } = await spotUniverse(bid(req));
     if (!spots.some((s) => s.code === code)) return res.status(404).json({ error: { message: 'Nezināma vieta' } });
     if (occupied.has(code)) return res.status(409).json({ error: { message: 'Vieta jau ir aizņemta' } });
-    const rec = await store.blockSpot(code);
+    const rec = await store.blockSpot(code, bid(req));
     await logEvent(store, rec.id, 'blocked', req.body?.comment, req);
     res.status(201).json(rec);
   }));
   // Unblock: remove the placeholder that was holding the spot.
-  app.post('/api/storage/:id/unblock', P('act.operate'), asyncH(async (req, res) => {
+  app.post('/api/storage/:id/unblock', P('act.operate'), sameBranch, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.get(req.params.id);
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -964,11 +1060,11 @@ export function createApp(): express.Express {
   }));
 
   // --- Record history / comments (audit trail per record) ---
-  app.get('/api/storage/:id/events', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/storage/:id/events', requireAuth, sameBranch, asyncH(async (req, res) => {
     const store = await getStore();
     res.json({ events: await store.listEvents(req.params.id) });
   }));
-  app.post('/api/storage/:id/events', P('act.media'), asyncH(async (req, res) => {
+  app.post('/api/storage/:id/events', P('act.media'), sameBranch, asyncH(async (req, res) => {
     const store = await getStore();
     const rec = await store.get(req.params.id);
     if (!rec) return res.status(404).json({ error: { message: 'Not found' } });
@@ -1016,8 +1112,8 @@ export function createApp(): express.Express {
     const store = await getStore();
     const s = req.query.status;
     const status = s === 'done' ? 'done' : s === 'all' ? undefined : 'open';
-    const tasks = await store.listTasks({ status, limit: status === 'done' ? 50 : 200 });
-    const open = status === 'open' ? tasks.length : (await store.listTasks({ status: 'open', limit: 500 })).length;
+    const tasks = await store.listTasks({ status, limit: status === 'done' ? 50 : 200, branchId: bid(req) });
+    const open = status === 'open' ? tasks.length : (await store.listTasks({ status: 'open', limit: 500, branchId: bid(req) })).length;
     res.json({ tasks, open });
   }));
 
@@ -1035,7 +1131,7 @@ export function createApp(): express.Express {
       details: rest.join('\n').trim().slice(0, 800) || null,
       location: typeof b.location === 'string' && b.location.trim() ? b.location.trim().toUpperCase() : null,
       plate: typeof b.plate === 'string' && b.plate.trim() ? b.plate.trim().toUpperCase() : null,
-      createdBy: actorOf(req),
+      createdBy: actorOf(req), branchId: bid(req),
     });
     announceTask(task);
     res.status(201).json({ ok: true, task });
@@ -1092,7 +1188,7 @@ export function createApp(): express.Express {
     const store = await getStore();
     const cfg = await loadPricing();
     const dryRun = req.query.dryRun === '1';
-    const all = await store.list();
+    const all = await store.list({ branchId: bid(req) });
     const targets = all.filter((r) => r.status === 'active' || r.status === 'prepared');
     let changed = 0, unchanged = 0, skipped = 0;
     const sample: Array<{ plate: string | null; size: string | null; from: string | null; to: string }> = [];
@@ -1154,13 +1250,13 @@ export function createApp(): express.Express {
   const PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
   const photoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
-  app.get('/api/storage/:id/photos', requireAuth, asyncH(async (req, res) => {
+  app.get('/api/storage/:id/photos', requireAuth, sameBranch, asyncH(async (req, res) => {
     const store = await getStore();
     const photos = await store.listPhotos(req.params.id);
     res.json({ photos: photos.map((p) => ({ ...p, url: `/api/photos/${p.id}` })) });
   }));
 
-  app.post('/api/storage/:id/photos', P('act.media'), photoUpload.single('photo'), asyncH(async (req, res) => {
+  app.post('/api/storage/:id/photos', P('act.media'), photoUpload.single('photo'), sameBranch, asyncH(async (req, res) => {
     const store = await getStore();
     const file = (req as express.Request & { file?: { buffer: Buffer; mimetype: string } }).file;
     if (!file) return res.status(400).json({ error: { message: 'Fails nav pievienots' } });
@@ -1195,9 +1291,9 @@ export function createApp(): express.Express {
   }));
 
   // --- Storage containers (user-defined shelves/racks) ---
-  app.get('/api/containers', PAny(['screen.spots','screen.intake']), asyncH(async (_req, res) => {
+  app.get('/api/containers', PAny(['screen.spots','screen.intake']), asyncH(async (req, res) => {
     const store = await getStore();
-    res.json({ containers: await store.listContainers() });
+    res.json({ containers: await store.listContainers(bid(req)) });
   }));
   // Validate a grid + drawn shape. `cells` arrives as a '1'/'0' string, one char
   // per grid position; anything shorter is padded with "present".
@@ -1227,10 +1323,17 @@ export function createApp(): express.Express {
     const grid = readGrid(b);
     if ('error' in grid) return res.status(400).json({ error: { message: grid.error } });
     const label = typeof b.label === 'string' && b.label.trim() ? b.label.trim() : null;
+    // Rack letters are unique across ALL branches, so a code like "A1" always names
+    // exactly one physical spot — no guessing which shop a slip refers to.
     const existing = await store.listContainers();
-    if (existing.some((c) => c.prefix === prefix)) return res.status(409).json({ error: { message: `Konteiners "${prefix}" jau eksistē` } });
+    const clash = existing.find((c) => c.prefix === prefix);
+    if (clash) {
+      const mine = clash.branchId === bid(req);
+      const where = mine ? '' : ' citā filiālē';
+      return res.status(409).json({ error: { message: `Konteiners "${prefix}" jau eksistē${where} — izvēlies citu burtu` } });
+    }
     try {
-      let created = await store.createContainer({ prefix, label, rows: grid.rows, cols: grid.cols, cells: grid.cells });
+      let created = await store.createContainer({ prefix, label, rows: grid.rows, cols: grid.cols, cells: grid.cells, branchId: bid(req) });
       // Zones drawn during creation are saved in a follow-up write; validation for
       // them lives in the PATCH path and a brand-new container has no records to guard.
       if (typeof b.zones === 'string' && b.zones.length) {
@@ -1248,7 +1351,7 @@ export function createApp(): express.Express {
   app.patch('/api/containers/:id', requireAdmin, asyncH(async (req, res) => {
     const store = await getStore();
     const b = (req.body ?? {}) as Record<string, unknown>;
-    const all = await store.listContainers();
+    const all = await store.listContainers(bid(req));
     const def = all.find((c) => String(c.id) === String(req.params.id));
     if (!def) return res.status(404).json({ error: { message: 'Konteiners nav atrasts' } });
     const grid = readGrid({ rows: b.rows ?? def.rows, cols: b.cols ?? def.cols, cells: b.cells });
@@ -1283,7 +1386,7 @@ export function createApp(): express.Express {
     const zoneCells = new Set(newZones.flatMap((z) => z.cells));
     const activeMap = cellMap({ rows: grid.rows, cols: grid.cols, cells: grid.cells });
     // Codes this container was responsible for BEFORE the edit:
-    const { spots, occupied, layouts, zoneLoad } = await spotUniverse();
+    const { spots, occupied, layouts, zoneLoad } = await spotUniverse(bid(req));
     const before = new Set((layouts.get(def.prefix) ?? []).flatMap((c) => (c && c.code ? [c.code] : [])));
 
     // `names` is the code each place carries, by position. The editor sends the
@@ -1313,6 +1416,10 @@ export function createApp(): express.Express {
         // two different shelves into one.
         if (!before.has(name) && spots.some((s) => s.code === name)) {
           return res.status(409).json({ error: { message: `Vieta ${name} jau eksistē citur` } });
+        }
+        if (!before.has(name)) {
+          const fp2 = await foreignPrefix(name, bid(req));
+          if (fp2) return res.status(409).json({ error: { message: `Burts "${fp2}" pieder citai filiālei — izvēlies citu nosaukumu` } });
         }
         if (name !== `${def.prefix}${idx + 1}`) next[String(idx)] = name;
       }
@@ -1347,7 +1454,7 @@ export function createApp(): express.Express {
   // on the place changes. Zones keep their own names and are skipped.
   app.post('/api/containers/:id/renumber', requireAdmin, asyncH(async (req, res) => {
     const store = await getStore();
-    const all = await store.listContainers();
+    const all = await store.listContainers(bid(req));
     const def = all.find((c) => String(c.id) === String(req.params.id));
     if (!def) return res.status(404).json({ error: { message: 'Konteiners nav atrasts' } });
     let names: Record<string, string> = {};
@@ -1364,7 +1471,7 @@ export function createApp(): express.Express {
     if (!plan.length) return res.status(400).json({ error: { message: 'Konteinerā nav numurējamu vietu' } });
     // Never take a number that already belongs to something else.
     const mine = new Set(plan.map((p) => p.from));
-    const { spots } = await spotUniverse();
+    const { spots } = await spotUniverse(bid(req));
     const clash = plan.find((p) => p.to !== p.from && (zoneNames.has(p.to) || (spots.some((s) => s.code === p.to) && !mine.has(p.to))));
     if (clash) return res.status(409).json({ error: { message: `Numurs ${clash.to} jau pieder citai vietai` } });
 
@@ -1405,9 +1512,9 @@ export function createApp(): express.Express {
   }));
 
   // Pending swaps: every 'prepared' set, newest first, shaped for the sidebar.
-  app.get('/api/pending', P('screen.pending'), asyncH(async (_req, res) => {
+  app.get('/api/pending', P('screen.pending'), asyncH(async (req, res) => {
     const store = await getStore();
-    const recs = (await store.list({ status: 'prepared' }))
+    const recs = (await store.list({ status: 'prepared', branchId: bid(req) }))
       .sort((a, b) => (b.preparedDate ?? '').localeCompare(a.preparedDate ?? ''));
     const items = recs.map((r) => ({
       id: r.id, plate: r.plate, cust: r.customerName, phone: r.phone, loc: r.location,
@@ -1450,7 +1557,7 @@ export function createApp(): express.Express {
 
     if (what === 'storage') {
       const status = req.query.status;
-      let rows = redactAll(await store.list(), permsOf(req));
+      let rows = redactAll(await store.list({ branchId: bid(req) }), permsOf(req));
       if (status === 'active' || status === 'released' || status === 'prepared') rows = rows.filter((r) => r.status === status);
       if (q) rows = rows.filter((r) => matches(r, q));
       const out = rows.map((r) => ({
@@ -1499,7 +1606,7 @@ export function createApp(): express.Express {
       // One row per storage entry, grouped under its client — so the sheet can be
       // pivoted or filtered per customer in Excel.
       const type = typeof req.query.type === 'string' ? req.query.type : '';
-      let all = redactAll(await store.list(q ? { q } : undefined), permsOf(req));
+      let all = redactAll(await store.list(q ? { q, branchId: bid(req) } : { branchId: bid(req) }), permsOf(req));
       if (type === 'company') all = all.filter((r) => r.isCompany);
       else if (type === 'private') all = all.filter((r) => !r.isCompany);
       const out = all
@@ -1522,7 +1629,7 @@ export function createApp(): express.Express {
     if (what === 'tasks') {
       const s = req.query.status;
       const status = s === 'done' ? 'done' : s === 'all' ? undefined : 'open';
-      const tasks = await store.listTasks({ status, limit: 500 });
+      const tasks = await store.listTasks({ status, limit: 500, branchId: bid(req) });
       const out = tasks.map((t) => ({
         Veids: t.kind === 'prepare' ? 'Sagatavot riepas' : t.kind === 'store' ? 'Novietot glabāšanā' : 'Pasūtījums',
         Nosaukums: t.title, Apraksts: t.details ?? '', Vieta: t.location ?? '', 'Auto nr.': t.plate ?? '',
@@ -1535,7 +1642,7 @@ export function createApp(): express.Express {
     }
 
     if (what === 'pending') {
-      const recs = (await store.list({ status: 'prepared' }))
+      const recs = (await store.list({ status: 'prepared', branchId: bid(req) }))
         .sort((a, b) => (b.preparedDate ?? '').localeCompare(a.preparedDate ?? ''));
       const out = recs.map((r) => ({
         Vieta: r.location ?? '', 'Auto nr.': r.plate ?? '', Klients: r.customerName ?? '', Telefons: r.phone ?? '',
@@ -1548,7 +1655,7 @@ export function createApp(): express.Express {
     }
 
     if (what === 'spots') {
-      const { spots, occupied } = await spotUniverse();
+      const { spots, occupied } = await spotUniverse(bid(req));
       const out = spots.map((s) => {
         const r = occupied.get(s.code);
         return {
@@ -1590,7 +1697,7 @@ export function createApp(): express.Express {
       return res.json({ ok: true, dryRun: true, sample, ...parsed.summary });
     }
     const store = await getStore();
-    const { imported } = await store.replaceAll(parsed.records);
+    const { imported } = await store.replaceAll(parsed.records, bid(req));
     res.json({ ok: true, imported, ...parsed.summary });
   }));
 
@@ -1705,6 +1812,68 @@ export function createApp(): express.Express {
       token: isSelf ? signToken(next) : undefined,
       reauth: !isSelf && !!(patch.username || patch.role),
     });
+  }));
+
+  // --- Branch administration (admin only) ---
+  app.get('/api/branches/all', requireAdmin, asyncH(async (_req, res) => {
+    res.json({ branches: await (await getStore()).listBranches() });
+  }));
+  app.post('/api/branches', requireAdmin, asyncH(async (req, res) => {
+    const name = String((req.body ?? {}).name ?? '').trim();
+    if (!name || name.length > 40) return res.status(400).json({ error: { message: 'Nosaukums: 1–40 rakstzīmes' } });
+    const b = await (await getStore()).createBranch(name);
+    bustBranches();
+    res.status(201).json({ ok: true, branch: b });
+  }));
+  app.patch('/api/branches/:id', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const patch: { name?: string; active?: boolean } = {};
+    if (body.name !== undefined) {
+      const name = String(body.name).trim();
+      if (!name || name.length > 40) return res.status(400).json({ error: { message: 'Nosaukums: 1–40 rakstzīmes' } });
+      patch.name = name;
+    }
+    if (body.active !== undefined) {
+      const active = !!body.active;
+      // Never leave the shop with no branch to work in.
+      if (!active) {
+        const live = (await store.listBranches()).filter((b) => b.active && String(b.id) !== String(req.params.id));
+        if (!live.length) return res.status(400).json({ error: { message: 'Vismaz vienai filiālei jāpaliek aktīvai' } });
+      }
+      patch.active = active;
+    }
+    const b = await store.updateBranch(String(req.params.id), patch);
+    if (!b) return res.status(404).json({ error: { message: 'Filiāle nav atrasta' } });
+    bustBranches();
+    res.json({ ok: true, branch: b });
+  }));
+
+  // Which branches one user may open. An empty list means every branch, including
+  // ones added later — that is what an owner wants, and what existing users keep.
+  app.get('/api/users/:username/branches', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const u = String(req.params.username ?? '').trim().toLowerCase();
+    if (!(await store.getUserByUsername(u))) return res.status(404).json({ error: { message: 'Lietotājs nav atrasts' } });
+    res.json({ username: u, branches: await store.getUserBranches(u), all: await store.listBranches() });
+  }));
+  app.put('/api/users/:username/branches', requireAdmin, asyncH(async (req, res) => {
+    const store = await getStore();
+    const u = String(req.params.username ?? '').trim().toLowerCase();
+    if (!(await store.getUserByUsername(u))) return res.status(404).json({ error: { message: 'Lietotājs nav atrasts' } });
+    const raw = (req.body ?? {}).branches;
+    let ids: string[] | null = null;
+    if (Array.isArray(raw)) {
+      const live = new Set((await store.listBranches()).map((b) => String(b.id)));
+      ids = [...new Set(raw.map(String))].filter((x) => live.has(x));
+      if (!ids.length) return res.status(400).json({ error: { message: 'Jāatzīmē vismaz viena filiāle' } });
+      // Ticking every branch is the same as no restriction, and keeps working when
+      // a third shop is added later.
+      if (ids.length === live.size) ids = null;
+    }
+    await store.setUserBranches(u, ids);
+    bustBranches(u);
+    res.json({ ok: true, branches: ids });
   }));
 
   app.post('/api/users/:username/reset', requireAdmin, asyncH(async (req, res) => {
