@@ -217,14 +217,15 @@ export class PostgresStore implements Store {
     await this.init();
     const res = await this.pool.query<Row>(
       `INSERT INTO storage
-        (season, location, plate, make_model, customer_name, is_company, phone, size1, brand, quantity, size2, rim_note, notes, intake_date, release_date, status, thread_depth, sms_code, fee_eur)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULL,'active',$15,$16,$17) RETURNING *`,
+        (season, location, plate, make_model, customer_name, is_company, phone, size1, brand, quantity, size2, rim_note, notes, intake_date, release_date, status, thread_depth, sms_code, fee_eur, branch_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULL,'active',$15,$16,$17,$18) RETURNING *`,
       [
         input.season ?? null, input.location ?? null, input.plate ?? null, input.makeModel ?? null,
         input.customerName ?? null, input.isCompany ?? false, input.phone ?? null,
         input.size1 ?? null, input.brand ?? null, input.quantity ?? null, input.size2 ?? null,
         input.rimNote ?? null, input.notes ?? null, input.intakeDate ?? new Date().toISOString().slice(0, 10),
         input.threadDepth ?? null, input.smsCode ?? null, input.feeEur ?? null,
+        Number(input.branchId ?? await this.firstBranchId()),
       ],
     );
     return toRecord(res.rows[0]);
