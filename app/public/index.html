@@ -51,7 +51,11 @@ button{font-family:'IBM Plex Sans',sans-serif;}
 #print-area{display:none;}
 @media print{
   body > *{display:none !important;}
-  #print-area{display:block !important;}
+  /* The app lays the screen out as a flex row with a sidebar; on paper the sheet
+     is the only thing left, so give it the whole page instead of the width a
+     leftover flex item would take. */
+  body{display:block !important;margin:0 !important;padding:0 !important;}
+  #print-area{display:block !important;width:100% !important;max-width:none !important;}
   @page{size:A4;margin:14mm;}
   html,body{background:#fff !important;}
   #print-area,#print-area *{color:#000 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-family:'Inter',system-ui,sans-serif;}
@@ -612,6 +616,7 @@ function spotsHTML(){const st=S.stats||{containers:[],occ:'—',total:'—',capP
   <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--pad);flex-wrap:wrap;gap:12px;">
     <div><h1 style="margin:0;font-size:24px;font-weight:600;">Novietnes</h1>
     <div style="color:var(--ink-3);font-size:13px;margin-top:4px;">${st.occ} / ${st.total} aizņemtas · ${st.capPct}% noslodze</div></div>
+    <button data-act="print-spots" title="Izdrukāt plauktu karti, kā tā redzama ekrānā" style="height:40px;padding:0 16px;background:var(--surface);border:1px solid var(--border-2);border-radius:10px;font-weight:600;cursor:pointer;color:var(--ink-2);">⎙ Drukāt karti</button>
     ${exportBtn('spots','','Excel')}
     ${isAdmin?`<button data-act="add-container" style="height:40px;padding:0 16px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer;">＋ Pievienot konteineru</button>`:''}
   </div>
@@ -2309,6 +2314,7 @@ function helpHTML(){
   </div>`;}
 function printHelp(){
   const box=document.getElementById('print-area');if(!box)return;
+  setPrintOrientation(false);
   box.innerHTML=`<div style="max-width:180mm;margin:0 auto;">
     <h1 style="font-size:20px;margin:0 0 2px;">R1 Tires — lietošanas instrukcija</h1>
     <p style="margin:0 0 20px;font-size:12px;color:#555;">Kā pieņemt riepas, kā tās izsniegt un kā strādā noliktava</p>
@@ -2403,6 +2409,127 @@ function printSheetHTML(r){
       <div style="font-size:11px;color:#555;margin-top:14px;">Datums: ${esc(printDateStr(now))}</div>
     </div>
   </div>`;}
+// ---- Novietņu karte uz papīra ----
+// The same grid the screen draws, but readable in black and white: colour tells
+// you nothing once it leaves a laser printer, so each state says what it is in
+// words and carries its own fill and border.
+function printSpotCell(s, opts, cols){
+  const fs = cols <= 8 ? 10 : cols <= 14 ? 8.5 : 7.5;
+  const h = cols <= 8 ? 16 : cols <= 14 ? 13 : 11;
+  const box = `border:1px solid #000;padding:2px 1px;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:${h}mm;line-height:1.2;`;
+  if(s.zone){
+    const full=s.count>=s.cap;
+    return `<div style="${box}grid-column:span ${Math.max(1,s.hspan||1)};${full?'background:#e4e4e4;':''}">
+      <div style="font-weight:700;font-size:${fs}px;">${esc(s.code)}</div>
+      <div style="font-size:${fs-1}px;">${opts.blank?'___ / '+s.cap:s.count+' / '+s.cap}</div>
+      ${(!opts.blank&&s.plates&&s.plates.length)?`<div style="font-size:${fs-1.5}px;">${esc(s.plates.join(' '))}</div>`:''}
+    </div>`;}
+  // A blank map is for walking the racks with a pen: the code, and room to write.
+  if(opts.blank){
+    return `<div style="${box}"><div style="font-weight:700;font-size:${fs}px;">${esc(s.code)}</div>
+      <div style="border-bottom:1px solid #bbb;width:80%;margin-top:${h>13?'4mm':'2.5mm'};"></div></div>`;}
+  if(!s.occ){
+    return `<div style="${box}"><div style="font-weight:700;font-size:${fs}px;">${esc(s.code)}</div>
+      <div style="font-size:${fs-1.5}px;color:#777;">brīvs</div></div>`;}
+  if(s.blocked){
+    return `<div style="${box}background:repeating-linear-gradient(45deg,#fff,#fff 2px,#cfcfcf 2px,#cfcfcf 4px);">
+      <div style="font-weight:700;font-size:${fs}px;">${esc(s.code)}</div>
+      <div style="font-size:${fs-1.5}px;">bloķēts</div></div>`;}
+  const nm=(s.cust||'').trim();
+  const shortName=nm.length>16?nm.slice(0,15)+'…':nm;
+  return `<div style="${box}background:#ededed;${s.reserved?'border:2px dashed #000;':''}">
+    <div style="font-weight:700;font-size:${fs}px;">${esc(s.code)}</div>
+    <div class="mono" style="font-size:${fs}px;font-weight:700;">${esc(s.plate||'—')}</div>
+    ${cols<=14?`<div style="font-size:${fs-1.5}px;">${esc(shortName)}</div>`:''}
+    ${(cols<=10&&s.size)?`<div style="font-size:${fs-1.5}px;">${esc(s.size)}</div>`:''}
+    ${s.reserved?`<div style="font-size:${fs-1.5}px;font-weight:600;">sagatavots</div>`:''}
+  </div>`;}
+
+function printSpotsHTML(opts){
+  const st=S.stats||{containers:[]};
+  const list=(st.containers||[]);
+  const branch=((S.branches||[]).find(b=>String(b.id)===String(S.branch))||{}).name||'';
+  const now=new Date();
+  const rack=(c,i)=>{
+    const last=i===list.length-1;
+    const cols=c.cols||4;
+    const cells=c.cells||c.spots||[];
+    let skip=0;const out=[];
+    for(const s of cells){
+      if(skip>0){skip--;continue;}
+      if(!s){out.push('<div></div>');continue;}
+      if(s.zoneFill)continue;
+      if(s.zone)skip=Math.max(0,(s.hspan||1)-1);
+      out.push(printSpotCell(s,opts,cols));
+    }
+    return `<div style="break-inside:avoid;page-break-inside:avoid;margin-bottom:7mm;${(opts.perPage&&!last)?'break-after:page;page-break-after:always;':''}">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1.5px solid #000;padding-bottom:2px;margin-bottom:3mm;">
+        <div style="font-size:14px;font-weight:700;">Konteiners ${esc(c.letter)}${c.label?` · <span style="font-weight:400;">${esc(c.label)}</span>`:''}</div>
+        <div style="font-size:11px;">${opts.blank?c.total+' vietas':c.occ+' no '+c.total+' aizņemtas'}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:1.2mm;">${out.join('')}</div>
+    </div>`;};
+  const sw=(st,txt)=>`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;"><span style="width:12px;height:12px;border:1px solid #000;${st}"></span>${txt}</span>`;
+  return `<div style="font-size:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #000;padding-bottom:5px;margin-bottom:5mm;">
+      <div>
+        <div style="font-size:19px;font-weight:700;letter-spacing:-0.01em;">Novietņu karte${opts.blank?' · inventarizācijai':''}</div>
+        <div style="font-size:11px;margin-top:2px;">R1 Tires${branch?' · '+esc(branch):''}</div>
+      </div>
+      <div style="text-align:right;font-size:11px;">
+        <div>${esc(printDateStr(now))} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}</div>
+        ${opts.blank?'':`<div style="font-weight:600;">${st.occ} no ${st.total} aizņemtas · ${st.free} brīvas</div>`}
+      </div>
+    </div>
+    ${opts.blank?'':`<div style="font-size:10px;margin-bottom:4mm;">
+      ${sw('background:#fff;','Brīvs')}
+      ${sw('background:#ededed;','Aizņemts')}
+      ${sw('background:#ededed;border:2px dashed #000;','Sagatavots')}
+      ${sw('background:repeating-linear-gradient(45deg,#fff,#fff 2px,#cfcfcf 2px,#cfcfcf 4px);','Bloķēts')}
+    </div>`}
+    ${list.length?list.map((c,i)=>rack(c,i)).join(''):'<div style="font-size:12px;">Nav neviena konteinera.</div>'}
+    ${opts.blank?`<div style="margin-top:6mm;font-size:11px;">Pārbaudīja: ______________________________    Datums: ______________</div>`:''}
+  </div>`;}
+
+// Wide racks do not fit across a portrait page, so the sheet turns itself.
+function setPrintOrientation(landscape){
+  let el=document.getElementById('print-page-style');
+  if(!el){el=document.createElement('style');el.id='print-page-style';document.head.appendChild(el);}
+  el.textContent=`@media print{@page{size:A4 ${landscape?'landscape':'portrait'};margin:${landscape?'10mm':'12mm'};}}`;}
+
+async function printSpots(){
+  // Always refetch: paper outlives the screen, so a map that is a few minutes
+  // stale is worse than a moment's wait.
+  await loadStats();
+  const list=(S.stats&&S.stats.containers)||[];
+  if(!list.length){alertErr('Nav neviena konteinera, ko drukāt');return;}
+  const wide=list.some(c=>(c.cols||4)>9);
+  const html=`<div style="text-align:left;">
+    <div style="color:var(--ink-3);font-size:12px;margin-bottom:12px;">Izdrukā plauktus tādus, kādi tie redzami ekrānā — ${list.length} ${list.length===1?'konteineru':'konteinerus'}, ${S.stats.total} vietas.</div>
+    <label style="display:flex;gap:9px;align-items:flex-start;padding:7px 4px;cursor:pointer;font-size:14px;">
+      <input type="radio" name="pm" value="full" checked style="margin-top:3px;width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+      <span>Ar auto numuriem<div style="color:var(--ink-3);font-size:12px;">Katrā vietā redzams numurs, klients un izmērs.</div></span></label>
+    <label style="display:flex;gap:9px;align-items:flex-start;padding:7px 4px;cursor:pointer;font-size:14px;">
+      <input type="radio" name="pm" value="blank" style="margin-top:3px;width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+      <span>Tukša karte inventarizācijai<div style="color:var(--ink-3);font-size:12px;">Tikai vietu nosaukumi un līnija, kur ierakstīt ar roku.</div></span></label>
+    <div style="height:1px;background:var(--border);margin:8px 0;"></div>
+    <label style="display:flex;gap:9px;align-items:center;cursor:pointer;font-size:14px;padding:4px;">
+      <input type="checkbox" id="p-page" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+      Katru konteineru uz atsevišķas lapas</label>
+    <label style="display:flex;gap:9px;align-items:center;cursor:pointer;font-size:14px;padding:4px;">
+      <input type="checkbox" id="p-land" ${wide?'checked':''} style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+      Gulošā lapa (A4 landscape)${wide?'<span style="color:var(--ink-3);font-size:12px;"> — plati plaukti citādi neiztur</span>':''}</label>
+  </div>`;
+  const r=await ask({title:'Drukāt novietņu karti',html,width:470,confirmButtonText:'⎙ Drukāt',cancelButtonText:'Atcelt',
+    preConfirm:()=>{const m=document.querySelector('input[name="pm"]:checked');
+      return {blank:!!(m&&m.value==='blank'),perPage:!!document.getElementById('p-page').checked,land:!!document.getElementById('p-land').checked};}});
+  if(!r.isConfirmed||!r.value)return;
+  const box=document.getElementById('print-area');
+  if(!box)return;
+  setPrintOrientation(r.value.land);
+  box.innerHTML=printSpotsHTML(r.value);
+  setTimeout(()=>{window.print();},80);}
+
 async function printRecordById(id){
   try{const r=await(await fetch('/api/storage/'+encodeURIComponent(id))).json();
     if(r&&r.id)printRecord(r);else alertErr('Ieraksts nav atrasts');}
@@ -2410,6 +2537,8 @@ async function printRecordById(id){
 function printRecord(r){
   const box=document.getElementById('print-area');
   if(!box||!r){alertErr('Nav ko drukāt');return;}
+  // A rack map may have left the page turned sideways; the act is always upright.
+  setPrintOrientation(false);
   box.innerHTML=printSheetHTML(r);
   // Let the layout settle before the print dialog freezes the page.
   setTimeout(()=>{window.print();},60);}
@@ -2438,6 +2567,7 @@ function bind(root){
     else if(a==='price-recalc')await recalcPrices();
     else if(a==='push-test')await sendTestPush();
     else if(a==='branch-admin')await branchAdminDialog();
+    else if(a==='print-spots')await printSpots();
     else if(a==='hist-more')await loadHist(false);
     else if(a==='hist-clear'){Object.assign(S.hist,{from:'',to:'',type:'',q:'',page:0,list:[]});render();await loadHist(true);}
     else if(a==='go-history')nav('history');
