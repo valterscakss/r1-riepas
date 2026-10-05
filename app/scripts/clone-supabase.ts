@@ -18,6 +18,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/+$/, '');
 const KEY = process.env.SUPABASE_SECRET_KEY;
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/postgres';
 if (!SUPABASE_URL || !KEY) { console.error('SUPABASE_URL and SUPABASE_SECRET_KEY are required'); process.exit(1); }
+if (KEY.startsWith('sb_publishable_')) { console.error('SUPABASE_SECRET_KEY must be the secret key (sb_secret_…). The publishable key is limited by RLS and copies 0 rows.'); process.exit(1); }
 if (/supabase/.test(DATABASE_URL)) { console.error('DATABASE_URL points at Supabase — this script only writes to a local copy.'); process.exit(1); }
 
 // Table → column to page by (its primary key).
