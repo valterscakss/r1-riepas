@@ -2032,5 +2032,12 @@ export function createApp(): express.Express {
   // Static UI (also served on Vercel via the catch-all rewrite).
   app.use(express.static(join(__dirname, '..', 'public')));
 
+  // One page, many addresses: /novietnes, /tabula and the rest are screens inside
+  // the app, so hand the page to the browser and let it open the right screen.
+  // Anything that looks like a file (it has a dot) stays a 404, as does /api.
+  app.get(/^\/(?!api\/)[^.]*$/, (_req, res) => {
+    res.sendFile(join(__dirname, '..', 'public', 'index.html'));
+  });
+
   return app;
 }

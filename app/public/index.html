@@ -325,6 +325,7 @@ function paintHeader(){
 
 function nav(screen){const k=NAV_PERM[screen];if(k&&!can(k)){screen=firstScreen();}S.screen=screen;S.selSpot=null;
   try{localStorage.setItem('r1_last_view',screen);}catch{}
+  paintPath(screen);
   if(screen==='users'){render();if(!S.usersLoaded)loadUsers().then(()=>{if(S.screen==='users')render();});return;}
   if(screen==='table'){render();if(!S.tableLoaded)loadTable().then(()=>{if(S.screen==='table')render();});return;}
   if(screen==='pending'){render();loadPending().then(()=>{if(S.screen==='pending')render();});return;}
@@ -3220,7 +3221,25 @@ const ADMIN_SCREENS=['users','settings']; // never the screen a session reopens 
 const LAST_KEY='r1_last_view';
 function openView(v){if(SCREENS.includes(v)){document.body.classList.remove('nav-open');nav(v);}}
 function firstScreen(){for(const v of ['home','warehouse','table','history','spots','customers']){if(can(NAV_PERM[v]))return v;}return 'warehouse';}
+// Every screen has an address you can type, bookmark or send to someone:
+// /novietnes, /tabula, /noliktava…  The old ?view=spots still works.
+const PATHS={home:'sakums',warehouse:'noliktava',intake:'jauna-glabasana',release:'izsniegt',
+  pending:'sagatavotie',spots:'novietnes',customers:'klienti',table:'tabula',
+  analytics:'analitika',history:'vesture',users:'lietotaji',settings:'iestatijumi',help:'instrukcija'};
+const screenFromPath=()=>{
+  const seg=(location.pathname||'/').replace(/^\/+|\/+$/g,'').toLowerCase();
+  if(!seg)return '';
+  const hit=Object.keys(PATHS).find(k=>PATHS[k]===seg);
+  return hit||(SCREENS.includes(seg)?seg:'');};
+// Keep the address bar on the screen you are actually looking at, without adding
+// a history entry for every click — Back should leave the app, not walk the tabs.
+function paintPath(screen){
+  const want='/'+(PATHS[screen]||'');
+  if(location.pathname!==want){try{history.replaceState(null,'',want+location.search);}catch{}}}
+
 function initialScreen(){
+  const fromPath=screenFromPath();
+  if(fromPath)return fromPath;
   const p=new URLSearchParams(location.search).get('view');
   if(p&&SCREENS.includes(p))return p;
   try{const v=localStorage.getItem(LAST_KEY);if(v&&SCREENS.includes(v)&&!ADMIN_SCREENS.includes(v)&&(!NAV_PERM[v]||can(NAV_PERM[v])))return v;}catch{}
