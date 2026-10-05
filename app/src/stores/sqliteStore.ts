@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub, Photo, Role } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub, Photo, Role, Branch } from '../types.js';
 
 /**
  * SQLite datastore — the self-contained default backend. A real, durable, local
@@ -100,6 +100,13 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS branches (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS push_subs (
   endpoint   TEXT PRIMARY KEY,
   p256dh     TEXT NOT NULL,
@@ -125,7 +132,7 @@ const HELD_SPOT_FIX = `UPDATE storage SET status = 'blocked', plate = NULL
    AND TRIM(COALESCE(plate, '')) IN ('AIZŅEMTS','Aizņemts','aizņemts','AIZNEMTS','Aiznemts','AIZŅEMTA','AIZNEMTA','REZERVĒTS','Rezervēts','REZERVETS')`;
 
 interface Row {
-  id: number; season: string | null; location: string | null; plate: string | null;
+  id: number; branch_id?: number | null; season: string | null; location: string | null; plate: string | null;
   makeModel: string | null; customerName: string | null; isCompany: number;
   phone: string | null; size1: string | null; brand: string | null; quantity: string | null;
   size2: string | null; rimNote: string | null; notes: string | null;
@@ -141,7 +148,7 @@ const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' |
     : s === 'free' ? 'free' : 'active';
 
 const toRecord = (r: Row): StorageRecord => ({
-  id: String(r.id), season: r.season, location: r.location, plate: r.plate,
+  id: String(r.id), branchId: String(r.branch_id ?? 1), season: r.season, location: r.location, plate: r.plate,
   makeModel: r.makeModel, customerName: r.customerName, isCompany: !!r.isCompany,
   phone: r.phone, size1: r.size1, brand: r.brand, quantity: r.quantity,
   size2: r.size2, rimNote: r.rimNote, notes: r.notes,
@@ -167,11 +174,26 @@ export class SqliteStore implements Store {
     try { this.db.exec('ALTER TABLE containers ADD COLUMN names TEXT'); } catch { /* exists */ }
     try { this.db.exec('ALTER TABLE containers ADD COLUMN zones TEXT'); } catch { /* exists */ }
     try { this.db.exec('ALTER TABLE users ADD COLUMN perms TEXT'); } catch { /* exists */ }
+    try { this.db.exec('ALTER TABLE users ADD COLUMN branches TEXT'); } catch { /* exists */ }
+    // Branches arrived after the first shop was already in use: everything that
+    // exists belongs to it, so create it and adopt every orphan row.
+    for (const t of ['storage', 'containers', 'tasks']) {
+      try { this.db.exec(`ALTER TABLE ${t} ADD COLUMN branch_id INTEGER`); } catch { /* exists */ }
+    }
+    const branches = (this.db.prepare('SELECT COUNT(*) AS n FROM branches').get() as { n: number }).n;
+    if (branches === 0) this.db.prepare("INSERT INTO branches (name) VALUES ('Filiāle 1')").run();
     const count = (this.db.prepare('SELECT COUNT(*) AS n FROM storage').get() as { n: number }).n;
     if (count === 0 && seedFile && existsSync(seedFile)) this.seed(seedFile);
     // Runs after seeding too — a JSON seed predates the importer's free-spot fix.
     this.db.prepare(FREE_SPOT_FIX).run();
     this.db.prepare(HELD_SPOT_FIX).run();
+    // Adopt every row that has no branch yet — rows that predate branches, and the
+    // seed, which is written after the schema is set up. Must come last, or the
+    // seeded rows stay orphaned and no branch-scoped query ever returns them.
+    const first = this.firstBranchId();
+    for (const t of ['storage', 'containers', 'tasks']) {
+      this.db.prepare(`UPDATE ${t} SET branch_id = ? WHERE branch_id IS NULL`).run(first);
+    }
   }
 
   private seed(seedFile: string) {
@@ -211,9 +233,10 @@ export class SqliteStore implements Store {
     return `sqlite (${n} records${this.seededFrom ? `, seeded from ${this.seededFrom}` : ''})`;
   }
 
-  async list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string }): Promise<StorageRecord[]> {
+  async list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string; branchId?: string }): Promise<StorageRecord[]> {
     const where: string[] = [];
     const params: Record<string, unknown> = {};
+    if (opts?.branchId) { where.push('branch_id = @branchId'); params.branchId = Number(opts.branchId); }
     if (opts?.status) { where.push('status = @status'); params.status = opts.status; }
     if (opts?.q) {
       where.push('(UPPER(plate) LIKE @q OR UPPER(location) LIKE @q OR UPPER(customerName) LIKE @q OR phone LIKE @q OR UPPER(makeModel) LIKE @q)');
@@ -238,10 +261,11 @@ export class SqliteStore implements Store {
       intakeDate: input.intakeDate ?? new Date().toISOString().slice(0, 10),
       releaseDate: null as string | null, status: 'active',
       threadDepth: input.threadDepth ?? null, smsCode: input.smsCode ?? null, feeEur: input.feeEur ?? null,
+      branch_id: Number(input.branchId ?? this.firstBranchId()),
     };
     const info = this.db.prepare(`INSERT INTO storage
-      (season, location, plate, makeModel, customerName, isCompany, phone, size1, brand, quantity, size2, rimNote, notes, intakeDate, releaseDate, status, threadDepth, smsCode, feeEur)
-      VALUES (@season, @location, @plate, @makeModel, @customerName, @isCompany, @phone, @size1, @brand, @quantity, @size2, @rimNote, @notes, @intakeDate, @releaseDate, @status, @threadDepth, @smsCode, @feeEur)`).run(rec);
+      (season, location, plate, makeModel, customerName, isCompany, phone, size1, brand, quantity, size2, rimNote, notes, intakeDate, releaseDate, status, threadDepth, smsCode, feeEur, branch_id)
+      VALUES (@season, @location, @plate, @makeModel, @customerName, @isCompany, @phone, @size1, @brand, @quantity, @size2, @rimNote, @notes, @intakeDate, @releaseDate, @status, @threadDepth, @smsCode, @feeEur, @branch_id)`).run(rec);
     return (await this.get(String(info.lastInsertRowid)))!;
   }
 
@@ -261,9 +285,9 @@ export class SqliteStore implements Store {
     return this.get(id);
   }
 
-  async blockSpot(location: string): Promise<StorageRecord> {
-    const info = this.db.prepare(`INSERT INTO storage (location, status, intakeDate, notes) VALUES (?, 'blocked', ?, 'Bloķēts')`)
-      .run(location, new Date().toISOString().slice(0, 10));
+  async blockSpot(location: string, branchId?: string): Promise<StorageRecord> {
+    const info = this.db.prepare(`INSERT INTO storage (location, status, intakeDate, notes, branch_id) VALUES (?, 'blocked', ?, 'Bloķēts', ?)`)
+      .run(location, new Date().toISOString().slice(0, 10), Number(branchId ?? this.firstBranchId()));
     return (await this.get(String(info.lastInsertRowid)))!;
   }
 
@@ -302,15 +326,17 @@ export class SqliteStore implements Store {
       .run(isCompany ? 1 : 0, customerName).changes;
   }
 
-  async replaceAll(records: IntakeInput[]): Promise<{ imported: number }> {
+  async replaceAll(records: IntakeInput[], branchId?: string): Promise<{ imported: number }> {
+    const branch = Number(branchId ?? this.firstBranchId());
     const insert = this.db.prepare(`INSERT INTO storage
-      (season, location, plate, makeModel, customerName, isCompany, phone, size1, brand, quantity, size2, rimNote, notes, intakeDate, releaseDate, status)
-      VALUES (@season, @location, @plate, @makeModel, @customerName, @isCompany, @phone, @size1, @brand, @quantity, @size2, @rimNote, @notes, @intakeDate, @releaseDate, @status)`);
+      (season, location, plate, makeModel, customerName, isCompany, phone, size1, brand, quantity, size2, rimNote, notes, intakeDate, releaseDate, status, branch_id)
+      VALUES (@season, @location, @plate, @makeModel, @customerName, @isCompany, @phone, @size1, @brand, @quantity, @size2, @rimNote, @notes, @intakeDate, @releaseDate, @status, @branch_id)`);
     const tx = this.db.transaction((items: IntakeInput[]) => {
-      this.db.prepare('DELETE FROM storage').run();
-      this.db.prepare('DELETE FROM record_events').run(); // record IDs are reused → stale history would mis-attach
-      this.db.prepare('DELETE FROM tasks WHERE record_id IS NOT NULL').run(); // same for record-linked warehouse jobs
-      this.db.prepare('DELETE FROM photos').run();                            // …and for photos
+      // Only this branch is replaced — the other shop's data is untouched.
+      this.db.prepare('DELETE FROM record_events WHERE record_id IN (SELECT CAST(id AS TEXT) FROM storage WHERE branch_id = ?)').run(branch);
+      this.db.prepare('DELETE FROM photos WHERE record_id IN (SELECT CAST(id AS TEXT) FROM storage WHERE branch_id = ?)').run(branch);
+      this.db.prepare('DELETE FROM tasks WHERE record_id IS NOT NULL AND branch_id = ?').run(branch);
+      this.db.prepare('DELETE FROM storage WHERE branch_id = ?').run(branch);
       for (const r of items) {
         insert.run({
           season: r.season ?? null, location: r.location ?? null, plate: r.plate ?? null,
@@ -320,6 +346,7 @@ export class SqliteStore implements Store {
           size2: r.size2 ?? null, rimNote: r.rimNote ?? null, notes: r.notes ?? null,
           intakeDate: r.intakeDate ?? null, releaseDate: (r as { releaseDate?: string }).releaseDate ?? null,
           status: (r as { status?: string }).status ?? ((r as { releaseDate?: string }).releaseDate ? 'released' : 'active'),
+          branch_id: branch,
         });
       }
       return items.length;
@@ -387,20 +414,57 @@ export class SqliteStore implements Store {
   // --- Containers ---
   private containerRow(r: ContainerRow): Container {
     return {
-      id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols,
+      id: String(r.id), branchId: String(r.branch_id ?? 1), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols,
       cells: r.cells ?? null, names: r.names ?? null, zones: r.zones ?? null, createdAt: r.created_at ?? null,
     };
   }
-  async listContainers(): Promise<Container[]> {
-    const rows = this.db.prepare('SELECT id, prefix, label, rows, cols, cells, names, zones, created_at FROM containers ORDER BY prefix ASC')
-      .all() as ContainerRow[];
+  /** The oldest branch — what anything without an explicit one belongs to. */
+  private firstBranchId(): number {
+    const r = this.db.prepare('SELECT id FROM branches ORDER BY id LIMIT 1').get() as { id: number } | undefined;
+    return r?.id ?? 1;
+  }
+  async listContainers(branchId?: string): Promise<Container[]> {
+    const sql = 'SELECT id, branch_id, prefix, label, rows, cols, cells, names, zones, created_at FROM containers'
+      + (branchId ? ' WHERE branch_id = ?' : '') + ' ORDER BY prefix ASC';
+    const rows = (branchId ? this.db.prepare(sql).all(Number(branchId)) : this.db.prepare(sql).all()) as ContainerRow[];
     return rows.map((r) => this.containerRow(r));
   }
 
-  async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null }): Promise<Container> {
-    const info = this.db.prepare('INSERT INTO containers (prefix, label, rows, cols, cells) VALUES (?,?,?,?,?)')
-      .run(c.prefix, c.label, c.rows, c.cols, c.cells);
-    const r = this.db.prepare('SELECT id, prefix, label, rows, cols, cells, names, zones, created_at FROM containers WHERE id = ?')
+  // --- Branches ---
+  private branchRow(r: { id: number; name: string; active: number; created_at: string | null }): Branch {
+    return { id: String(r.id), name: r.name, active: !!r.active, createdAt: r.created_at };
+  }
+  async listBranches(): Promise<Branch[]> {
+    return (this.db.prepare('SELECT * FROM branches ORDER BY id ASC').all() as never[]).map((r) => this.branchRow(r));
+  }
+  async createBranch(name: string): Promise<Branch> {
+    const info = this.db.prepare('INSERT INTO branches (name) VALUES (?)').run(name);
+    return this.branchRow(this.db.prepare('SELECT * FROM branches WHERE id = ?').get(info.lastInsertRowid) as never);
+  }
+  async updateBranch(id: string, patch: { name?: string; active?: boolean }): Promise<Branch | null> {
+    const sets: string[] = []; const params: unknown[] = [];
+    if (patch.name !== undefined) { sets.push('name = ?'); params.push(patch.name); }
+    if (patch.active !== undefined) { sets.push('active = ?'); params.push(patch.active ? 1 : 0); }
+    if (!sets.length) return null;
+    params.push(Number(id));
+    this.db.prepare(`UPDATE branches SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+    const r = this.db.prepare('SELECT * FROM branches WHERE id = ?').get(Number(id)) as never;
+    return r ? this.branchRow(r) : null;
+  }
+  async getUserBranches(username: string): Promise<string[] | null> {
+    const r = this.db.prepare('SELECT branches FROM users WHERE username = ?').get(username.toLowerCase()) as { branches: string | null } | undefined;
+    if (!r || !r.branches) return null;
+    try { const a = JSON.parse(r.branches); return Array.isArray(a) ? a.map(String) : null; } catch { return null; }
+  }
+  async setUserBranches(username: string, ids: string[] | null): Promise<boolean> {
+    return this.db.prepare('UPDATE users SET branches = ? WHERE username = ?')
+      .run(ids && ids.length ? JSON.stringify(ids.map(String)) : null, username.toLowerCase()).changes > 0;
+  }
+
+  async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null; branchId?: string }): Promise<Container> {
+    const info = this.db.prepare('INSERT INTO containers (prefix, label, rows, cols, cells, branch_id) VALUES (?,?,?,?,?,?)')
+      .run(c.prefix, c.label, c.rows, c.cols, c.cells, Number(c.branchId ?? this.firstBranchId()));
+    const r = this.db.prepare('SELECT id, branch_id, prefix, label, rows, cols, cells, names, zones, created_at FROM containers WHERE id = ?')
       .get(info.lastInsertRowid) as ContainerRow;
     return this.containerRow(r);
   }
@@ -454,23 +518,28 @@ export class SqliteStore implements Store {
   // --- Warehouse tasks ---
   private taskRow(r: TaskRow): Task {
     return {
-      id: String(r.id), kind: r.kind === 'prepare' ? 'prepare' : r.kind === 'store' ? 'store' : 'order', recordId: r.record_id,
+      id: String(r.id), branchId: String(r.branch_id ?? 1),
+      kind: r.kind === 'prepare' ? 'prepare' : r.kind === 'store' ? 'store' : 'order', recordId: r.record_id,
       title: r.title, details: r.details, location: r.location, plate: r.plate,
       status: r.status === 'done' ? 'done' : 'open', createdBy: r.created_by,
       createdAt: r.created_at ?? null, doneBy: r.done_by, doneAt: r.done_at ?? null,
     };
   }
-  async listTasks(opts?: { status?: 'open' | 'done'; limit?: number }): Promise<Task[]> {
+  async listTasks(opts?: { status?: 'open' | 'done'; limit?: number; branchId?: string }): Promise<Task[]> {
     const limit = Math.max(1, Math.min(500, opts?.limit ?? 200));
-    const rows = (opts?.status
-      ? this.db.prepare('SELECT * FROM tasks WHERE status = ? ORDER BY id DESC LIMIT ?').all(opts.status, limit)
-      : this.db.prepare('SELECT * FROM tasks ORDER BY id DESC LIMIT ?').all(limit)) as TaskRow[];
+    const where: string[] = []; const params: unknown[] = [];
+    if (opts?.status) { where.push('status = ?'); params.push(opts.status); }
+    if (opts?.branchId) { where.push('branch_id = ?'); params.push(Number(opts.branchId)); }
+    params.push(limit);
+    const rows = this.db.prepare(
+      `SELECT * FROM tasks ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT ?`)
+      .all(...params) as TaskRow[];
     return rows.map((r) => this.taskRow(r));
   }
   async createTask(t: TaskInput): Promise<Task> {
     const info = this.db.prepare(
-      'INSERT INTO tasks (kind, record_id, title, details, location, plate, created_by) VALUES (?,?,?,?,?,?,?)')
-      .run(t.kind, t.recordId, t.title, t.details, t.location, t.plate, t.createdBy);
+      'INSERT INTO tasks (kind, record_id, title, details, location, plate, created_by, branch_id) VALUES (?,?,?,?,?,?,?,?)')
+      .run(t.kind, t.recordId, t.title, t.details, t.location, t.plate, t.createdBy, Number(t.branchId ?? this.firstBranchId()));
     return this.taskRow(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid) as TaskRow);
   }
   async setTaskStatus(id: string, status: 'open' | 'done', actor: string | null): Promise<Task | null> {
@@ -551,13 +620,13 @@ export class SqliteStore implements Store {
 }
 
 interface TaskRow {
-  id: number; kind: string; record_id: string | null; title: string; details: string | null;
+  id: number; branch_id?: number | null; kind: string; record_id: string | null; title: string; details: string | null;
   location: string | null; plate: string | null; status: string; created_by: string | null;
   created_at: string | null; done_by: string | null; done_at: string | null;
 }
 
 interface ContainerRow {
-  id: number; prefix: string; label: string | null; rows: number; cols: number;
+  id: number; branch_id?: number | null; prefix: string; label: string | null; rows: number; cols: number;
   cells: string | null; names: string | null; zones: string | null; created_at: string | null;
 }
 

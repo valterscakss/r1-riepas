@@ -1,6 +1,22 @@
 /** The canonical storage record used across the API and stores. */
+/**
+ * A shop. Everything that physically sits somewhere — the racks, the tires on
+ * them and the warehouse jobs — belongs to exactly one. Rack prefixes stay unique
+ * across the whole system (branch 1 uses A–C, branch 2 uses D–F), so a spot code
+ * still names one place and SMS codes and searches work unchanged.
+ */
+export interface Branch {
+  id: string;
+  name: string;
+  active: boolean;
+  createdAt: string | null;
+}
+/** The branch a request is working in, plus what the user is allowed to reach. */
+export const ALL_BRANCHES = null; // a user with no restriction sees every branch
+
 export interface StorageRecord {
   id: string;
+  branchId: string;
   season: string | null;
   location: string | null;   // VIETA, e.g. "A1"
   plate: string | null;      // AUTO NR.
@@ -29,8 +45,8 @@ export interface StorageRecord {
   feeEur: string | null;      // aprēķinātā cena, EUR
 }
 
-export type IntakeInput = Omit<StorageRecord, 'id' | 'status' | 'releaseDate' | 'preparedDate'> &
-  Partial<Pick<StorageRecord, 'intakeDate'>>;
+export type IntakeInput = Omit<StorageRecord, 'id' | 'status' | 'releaseDate' | 'preparedDate' | 'branchId'> &
+  Partial<Pick<StorageRecord, 'intakeDate' | 'branchId'>>;
 
 /**
  * What a user is, before per-user permissions are applied. The role only supplies
@@ -67,6 +83,7 @@ export interface RecordEvent {
  */
 export interface Task {
   id: string;
+  branchId: string;
   kind: 'prepare' | 'order' | 'store';
   recordId: string | null;  // linked storage record (prepare tasks)
   title: string;            // headline: plate for prepares, first line for orders
@@ -81,7 +98,7 @@ export interface Task {
 }
 
 export type TaskInput = Pick<Task, 'kind' | 'recordId' | 'title' | 'details' | 'location' | 'plate'> &
-  { createdBy: string | null };
+  { createdBy: string | null; branchId?: string };
 
 /**
  * Editable pricing rules. A tier matches on the tire's WIDTH (the first number of
@@ -141,7 +158,8 @@ export interface PushSub {
  */
 export interface Container {
   id: string;
-  prefix: string;   // spot code prefix, e.g. "D" → D1, D2, …
+  branchId: string;
+  prefix: string;   // spot code prefix, e.g. "D" → D1, D2, … (unique across branches)
   label: string | null; // optional display name
   rows: number;     // physical rows
   cols: number;     // places per row; grid size = rows × cols
@@ -196,7 +214,7 @@ export interface ImportSummary {
 
 export interface Store {
   /** List records, optionally filtered by status and a free-text query. */
-  list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string }): Promise<StorageRecord[]>;
+  list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string; branchId?: string }): Promise<StorageRecord[]>;
   get(id: string): Promise<StorageRecord | null>;
   /** Create a new intake record. */
   create(input: IntakeInput): Promise<StorageRecord>;
@@ -205,7 +223,7 @@ export interface Store {
   /** Stage a set for a swap: tires out, spot stays reserved ('prepared'). status back to 'active' via `active:true`. */
   prepare(id: string, opts: { preparedDate?: string; active?: boolean }): Promise<StorageRecord | null>;
   /** Reserve an empty spot with a placeholder 'blocked' record (no tires). */
-  blockSpot(location: string): Promise<StorageRecord>;
+  blockSpot(location: string, branchId?: string): Promise<StorageRecord>;
   /** Hard-delete a record (used to unblock a spot). */
   deleteRecord(id: string): Promise<boolean>;
   /** Patch editable fields of a record (Tabula manual edit). Only allowlisted keys apply. */
@@ -221,7 +239,8 @@ export interface Store {
    * Replace ALL storage rows with the given records, transactionally.
    * Used by the Excel import pipeline (Excel = source of truth).
    */
-  replaceAll(records: IntakeInput[]): Promise<{ imported: number }>;
+  /** Replace ONE branch's records wholesale (Excel import). Other branches are untouched. */
+  replaceAll(records: IntakeInput[], branchId?: string): Promise<{ imported: number }>;
   /** Which backend is active (for the UI banner). */
   kind(): string;
 
@@ -244,12 +263,23 @@ export interface Store {
   /** Per-user permission overrides (JSON of {key: boolean}), null = role defaults. */
   getUserPerms(username: string): Promise<string | null>;
   setUserPerms(username: string, permsJson: string | null): Promise<boolean>;
+  /**
+   * Which branches a user may open, as a JSON array of branch ids. null means no
+   * restriction — every branch, including ones added later.
+   */
+  getUserBranches(username: string): Promise<string[] | null>;
+  setUserBranches(username: string, ids: string[] | null): Promise<boolean>;
+
+  // --- Branches (shops) ---
+  listBranches(): Promise<Branch[]>;
+  createBranch(name: string): Promise<Branch>;
+  updateBranch(id: string, patch: { name?: string; active?: boolean }): Promise<Branch | null>;
 
   // --- Storage containers (user-defined shelves/racks) ---
   /** List all defined containers, ordered by prefix. */
-  listContainers(): Promise<Container[]>;
+  listContainers(branchId?: string): Promise<Container[]>;
   /** Create a container. Returns the created row. */
-  createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null }): Promise<Container>;
+  createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null; branchId?: string }): Promise<Container>;
   /** Update a container's label, grid size, drawn shape or place names. */
   updateContainer(id: string, patch: { label?: string | null; rows?: number; cols?: number; cells?: string | null; names?: string | null; zones?: string | null }): Promise<Container | null>;
   /** Move every record from one spot code to another (a place was renamed). */
@@ -271,7 +301,7 @@ export interface Store {
 
   // --- Warehouse tasks (prepare jobs + free-text orders) ---
   /** List tasks, newest first. Omit `status` for everything. */
-  listTasks(opts?: { status?: 'open' | 'done'; limit?: number }): Promise<Task[]>;
+  listTasks(opts?: { status?: 'open' | 'done'; limit?: number; branchId?: string }): Promise<Task[]>;
   /** Create a task. Returns the created row. */
   createTask(t: TaskInput): Promise<Task>;
   /** Mark a task done/open. `actor` is stamped as doneBy when closing. */

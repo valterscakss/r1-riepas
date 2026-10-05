@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub, Photo, Role } from '../types.js';
+import type { Store, StorageRecord, IntakeInput, User, Container, RecordEvent, Task, TaskInput, PushSub, Photo, Role, Branch } from '../types.js';
 
 /**
  * Postgres datastore — the production backend for Supabase (or any Postgres).
@@ -124,10 +124,28 @@ CREATE TABLE IF NOT EXISTS push_subs (
   username   TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS branches (
+  id         SERIAL PRIMARY KEY,
+  name       TEXT NOT NULL,
+  active     BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS branches TEXT;
+ALTER TABLE storage ADD COLUMN IF NOT EXISTS branch_id INTEGER;
+ALTER TABLE containers ADD COLUMN IF NOT EXISTS branch_id INTEGER;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS branch_id INTEGER;
+
+-- Branches arrived after the first shop was already in use: create it once, then
+-- adopt every row that predates them. Both statements are no-ops on later boots.
+INSERT INTO branches (name) SELECT 'Filiāle 1' WHERE NOT EXISTS (SELECT 1 FROM branches);
+UPDATE storage    SET branch_id = (SELECT MIN(id) FROM branches) WHERE branch_id IS NULL;
+UPDATE containers SET branch_id = (SELECT MIN(id) FROM branches) WHERE branch_id IS NULL;
+UPDATE tasks      SET branch_id = (SELECT MIN(id) FROM branches) WHERE branch_id IS NULL;
 `;
 
 interface Row {
-  id: number; season: string | null; location: string | null; plate: string | null;
+  id: number; branch_id?: number | null; season: string | null; location: string | null; plate: string | null;
   make_model: string | null; customer_name: string | null; is_company: boolean;
   phone: string | null; size1: string | null; brand: string | null; quantity: string | null;
   size2: string | null; rim_note: string | null; notes: string | null;
@@ -143,7 +161,7 @@ const normStatus = (s: string): 'active' | 'prepared' | 'blocked' | 'released' |
     : s === 'free' ? 'free' : 'active';
 
 const toRecord = (r: Row): StorageRecord => ({
-  id: String(r.id), season: r.season, location: r.location, plate: r.plate,
+  id: String(r.id), branchId: String(r.branch_id ?? 1), season: r.season, location: r.location, plate: r.plate,
   makeModel: r.make_model, customerName: r.customer_name, isCompany: !!r.is_company,
   phone: r.phone, size1: r.size1, brand: r.brand, quantity: r.quantity,
   size2: r.size2, rimNote: r.rim_note, notes: r.notes,
@@ -173,10 +191,11 @@ export class PostgresStore implements Store {
     return 'postgres (supabase)';
   }
 
-  async list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string }): Promise<StorageRecord[]> {
+  async list(opts?: { status?: 'active' | 'prepared' | 'released'; q?: string; branchId?: string }): Promise<StorageRecord[]> {
     await this.init();
     const where: string[] = [];
     const params: unknown[] = [];
+    if (opts?.branchId) { params.push(Number(opts.branchId)); where.push(`branch_id = $${params.length}`); }
     if (opts?.status) { params.push(opts.status); where.push(`status = $${params.length}`); }
     if (opts?.q) {
       params.push(`%${opts.q.toUpperCase()}%`);
@@ -198,14 +217,15 @@ export class PostgresStore implements Store {
     await this.init();
     const res = await this.pool.query<Row>(
       `INSERT INTO storage
-        (season, location, plate, make_model, customer_name, is_company, phone, size1, brand, quantity, size2, rim_note, notes, intake_date, release_date, status, thread_depth, sms_code, fee_eur)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULL,'active',$15,$16,$17) RETURNING *`,
+        (season, location, plate, make_model, customer_name, is_company, phone, size1, brand, quantity, size2, rim_note, notes, intake_date, release_date, status, thread_depth, sms_code, fee_eur, branch_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULL,'active',$15,$16,$17,$18) RETURNING *`,
       [
         input.season ?? null, input.location ?? null, input.plate ?? null, input.makeModel ?? null,
         input.customerName ?? null, input.isCompany ?? false, input.phone ?? null,
         input.size1 ?? null, input.brand ?? null, input.quantity ?? null, input.size2 ?? null,
         input.rimNote ?? null, input.notes ?? null, input.intakeDate ?? new Date().toISOString().slice(0, 10),
         input.threadDepth ?? null, input.smsCode ?? null, input.feeEur ?? null,
+        Number(input.branchId ?? await this.firstBranchId()),
       ],
     );
     return toRecord(res.rows[0]);
@@ -230,11 +250,11 @@ export class PostgresStore implements Store {
     return res.rows[0] ? toRecord(res.rows[0]) : null;
   }
 
-  async blockSpot(location: string): Promise<StorageRecord> {
+  async blockSpot(location: string, branchId?: string): Promise<StorageRecord> {
     await this.init();
     const res = await this.pool.query<Row>(
-      `INSERT INTO storage (location, status, intake_date, notes) VALUES ($1,'blocked',$2,'Bloķēts') RETURNING *`,
-      [location, new Date().toISOString().slice(0, 10)]);
+      `INSERT INTO storage (location, status, intake_date, notes, branch_id) VALUES ($1,'blocked',$2,'Bloķēts',$3) RETURNING *`,
+      [location, new Date().toISOString().slice(0, 10), Number(branchId ?? await this.firstBranchId())]);
     return toRecord(res.rows[0]);
   }
 
@@ -286,19 +306,21 @@ export class PostgresStore implements Store {
     return res.rowCount ?? 0;
   }
 
-  async replaceAll(records: IntakeInput[]): Promise<{ imported: number }> {
+  async replaceAll(records: IntakeInput[], branchId?: string): Promise<{ imported: number }> {
     await this.init();
+    const branch = Number(branchId ?? await this.firstBranchId());
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('TRUNCATE storage RESTART IDENTITY');
-      // Record IDs reset here, so the old per-record history/comments no longer map — clear them.
-      await client.query('DELETE FROM record_events');
+      // Only this branch is replaced — the other shop's data is untouched, so a
+      // TRUNCATE is no longer safe here.
+      await client.query("DELETE FROM record_events WHERE record_id IN (SELECT id::text FROM storage WHERE branch_id = $1)", [branch]);
       // Same reasoning for record-linked warehouse jobs and photos; free-text
       // orders survive. The import dialog warns that both are cleared.
-      await client.query('DELETE FROM tasks WHERE record_id IS NOT NULL');
-      await client.query('DELETE FROM photos');
-      const COLS = ['season', 'location', 'plate', 'make_model', 'customer_name', 'is_company', 'phone', 'size1', 'brand', 'quantity', 'size2', 'rim_note', 'notes', 'intake_date', 'release_date', 'status'];
+      await client.query("DELETE FROM photos WHERE record_id IN (SELECT id::text FROM storage WHERE branch_id = $1)", [branch]);
+      await client.query('DELETE FROM tasks WHERE record_id IS NOT NULL AND branch_id = $1', [branch]);
+      await client.query('DELETE FROM storage WHERE branch_id = $1', [branch]);
+      const COLS = ['season', 'location', 'plate', 'make_model', 'customer_name', 'is_company', 'phone', 'size1', 'brand', 'quantity', 'size2', 'rim_note', 'notes', 'intake_date', 'release_date', 'status', 'branch_id'];
       const BATCH = 500;
       let imported = 0;
       for (let i = 0; i < records.length; i += BATCH) {
@@ -311,7 +333,7 @@ export class PostgresStore implements Store {
             r.season ?? null, r.location ?? null, r.plate ?? null, r.makeModel ?? null,
             r.customerName ?? null, r.isCompany ?? false, r.phone ?? null, r.size1 ?? null,
             r.brand ?? null, r.quantity ?? null, r.size2 ?? null, r.rimNote ?? null,
-            r.notes ?? null, r.intakeDate ?? null, rd, st,
+            r.notes ?? null, r.intakeDate ?? null, rd, st, branch,
           );
           const base = idx * COLS.length;
           return `(${COLS.map((_, c) => `$${base + c + 1}`).join(',')})`;
@@ -402,23 +424,68 @@ export class PostgresStore implements Store {
   // --- Containers ---
   private containerRow(r: ContainerRow): Container {
     return {
-      id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols,
+      id: String(r.id), branchId: String(r.branch_id ?? 1), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols,
       cells: r.cells ?? null, names: r.names ?? null, zones: r.zones ?? null,
       createdAt: r.created_at ? String(r.created_at) : null,
     };
   }
-  async listContainers(): Promise<Container[]> {
+  async listContainers(branchId?: string): Promise<Container[]> {
     await this.init();
     const res = await this.pool.query<ContainerRow>(
-      'SELECT id, prefix, label, rows, cols, cells, names, zones, created_at FROM containers ORDER BY prefix ASC');
+      'SELECT id, branch_id, prefix, label, rows, cols, cells, names, zones, created_at FROM containers'
+      + (branchId ? ' WHERE branch_id = $1' : '') + ' ORDER BY prefix ASC',
+      branchId ? [Number(branchId)] : []);
     return res.rows.map((r) => this.containerRow(r));
   }
 
-  async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null }): Promise<Container> {
+  // --- Branches ---
+  /** The oldest branch — what anything without an explicit one belongs to. */
+  private async firstBranchId(): Promise<number> {
+    const r = await this.pool.query<{ id: number }>('SELECT MIN(id) AS id FROM branches');
+    return r.rows[0]?.id ?? 1;
+  }
+  private branchRow(r: { id: number; name: string; active: boolean; created_at: unknown }): Branch {
+    return { id: String(r.id), name: r.name, active: !!r.active, createdAt: r.created_at ? String(r.created_at) : null };
+  }
+  async listBranches(): Promise<Branch[]> {
+    await this.init();
+    const res = await this.pool.query<never>('SELECT * FROM branches ORDER BY id ASC');
+    return res.rows.map((r) => this.branchRow(r));
+  }
+  async createBranch(name: string): Promise<Branch> {
+    await this.init();
+    const res = await this.pool.query<never>('INSERT INTO branches (name) VALUES ($1) RETURNING *', [name]);
+    return this.branchRow(res.rows[0]);
+  }
+  async updateBranch(id: string, patch: { name?: string; active?: boolean }): Promise<Branch | null> {
+    await this.init();
+    const sets: string[] = []; const params: unknown[] = [];
+    if (patch.name !== undefined) { params.push(patch.name); sets.push(`name = $${params.length}`); }
+    if (patch.active !== undefined) { params.push(patch.active); sets.push(`active = $${params.length}`); }
+    if (!sets.length) return null;
+    params.push(Number(id));
+    const res = await this.pool.query<never>(`UPDATE branches SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+    return res.rows[0] ? this.branchRow(res.rows[0]) : null;
+  }
+  async getUserBranches(username: string): Promise<string[] | null> {
+    await this.init();
+    const res = await this.pool.query<{ branches: string | null }>('SELECT branches FROM users WHERE username = $1', [username.toLowerCase()]);
+    const raw = res.rows[0]?.branches;
+    if (!raw) return null;
+    try { const a = JSON.parse(raw); return Array.isArray(a) ? a.map(String) : null; } catch { return null; }
+  }
+  async setUserBranches(username: string, ids: string[] | null): Promise<boolean> {
+    await this.init();
+    const res = await this.pool.query('UPDATE users SET branches = $1 WHERE username = $2',
+      [ids && ids.length ? JSON.stringify(ids.map(String)) : null, username.toLowerCase()]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null; branchId?: string }): Promise<Container> {
     await this.init();
     const res = await this.pool.query<ContainerRow>(
-      'INSERT INTO containers (prefix, label, rows, cols, cells) VALUES ($1,$2,$3,$4,$5) RETURNING id, prefix, label, rows, cols, cells, names, zones, created_at',
-      [c.prefix, c.label, c.rows, c.cols, c.cells]);
+      'INSERT INTO containers (prefix, label, rows, cols, cells, branch_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, branch_id, prefix, label, rows, cols, cells, names, zones, created_at',
+      [c.prefix, c.label, c.rows, c.cols, c.cells, Number(c.branchId ?? await this.firstBranchId())]);
     return this.containerRow(res.rows[0]);
   }
 
@@ -485,17 +552,20 @@ export class PostgresStore implements Store {
       return isNaN(d.getTime()) ? String(v) : d.toISOString();
     };
     return {
-      id: String(r.id), kind: r.kind === 'prepare' ? 'prepare' : r.kind === 'store' ? 'store' : 'order', recordId: r.record_id,
+      id: String(r.id), branchId: String(r.branch_id ?? 1),
+      kind: r.kind === 'prepare' ? 'prepare' : r.kind === 'store' ? 'store' : 'order', recordId: r.record_id,
       title: r.title, details: r.details, location: r.location, plate: r.plate,
       status: r.status === 'done' ? 'done' : 'open', createdBy: r.created_by,
       createdAt: iso(r.created_at), doneBy: r.done_by, doneAt: iso(r.done_at),
     };
   }
-  async listTasks(opts?: { status?: 'open' | 'done'; limit?: number }): Promise<Task[]> {
+  async listTasks(opts?: { status?: 'open' | 'done'; limit?: number; branchId?: string }): Promise<Task[]> {
     await this.init();
     const params: unknown[] = [];
-    let where = '';
-    if (opts?.status) { params.push(opts.status); where = `WHERE status = $${params.length}`; }
+    const conds: string[] = [];
+    if (opts?.status) { params.push(opts.status); conds.push(`status = $${params.length}`); }
+    if (opts?.branchId) { params.push(Number(opts.branchId)); conds.push(`branch_id = $${params.length}`); }
+    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
     params.push(Math.max(1, Math.min(500, opts?.limit ?? 200)));
     const res = await this.pool.query<TaskRow>(`SELECT * FROM tasks ${where} ORDER BY id DESC LIMIT $${params.length}`, params);
     return res.rows.map((r) => this.taskRow(r));
@@ -503,9 +573,9 @@ export class PostgresStore implements Store {
   async createTask(t: TaskInput): Promise<Task> {
     await this.init();
     const res = await this.pool.query<TaskRow>(
-      `INSERT INTO tasks (kind, record_id, title, details, location, plate, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [t.kind, t.recordId, t.title, t.details, t.location, t.plate, t.createdBy]);
+      `INSERT INTO tasks (kind, record_id, title, details, location, plate, created_by, branch_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [t.kind, t.recordId, t.title, t.details, t.location, t.plate, t.createdBy, Number(t.branchId ?? await this.firstBranchId())]);
     return this.taskRow(res.rows[0]);
   }
   async setTaskStatus(id: string, status: 'open' | 'done', actor: string | null): Promise<Task | null> {
@@ -608,13 +678,13 @@ export class PostgresStore implements Store {
 }
 
 interface TaskRow {
-  id: number; kind: string; record_id: string | null; title: string; details: string | null;
+  id: number; branch_id?: number | null; kind: string; record_id: string | null; title: string; details: string | null;
   location: string | null; plate: string | null; status: string; created_by: string | null;
   created_at: string | Date | null; done_by: string | null; done_at: string | Date | null;
 }
 
 interface ContainerRow {
-  id: number; prefix: string; label: string | null; rows: number; cols: number;
+  id: number; branch_id?: number | null; prefix: string; label: string | null; rows: number; cols: number;
   cells: string | null; names: string | null; zones: string | null; created_at: string | null;
 }
 

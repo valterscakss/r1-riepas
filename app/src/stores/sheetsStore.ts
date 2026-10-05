@@ -56,6 +56,7 @@ export class SheetsStore implements Store {
     const release = g(11);
     return {
       id: `${this.tab}:${rowNumber}`,
+      branchId: '1',
       season: this.tab,
       location: g(0),
       plate: g(1),
@@ -155,6 +156,12 @@ export class SheetsStore implements Store {
   async listUsers(): Promise<never> { return this.unsupported(); }
   async deleteUserByUsername(): Promise<boolean> { return this.unsupported(); }
   async getUserPerms(): Promise<null> { return null; }
+  // The legacy Sheets backend predates branches and only ever held one shop.
+  async getUserBranches(): Promise<null> { return null; }
+  async setUserBranches(): Promise<boolean> { return this.unsupported(); }
+  async listBranches(): Promise<never> { return this.unsupported(); }
+  async createBranch(): Promise<never> { return this.unsupported(); }
+  async updateBranch(): Promise<never> { return this.unsupported(); }
   async setUserPerms(): Promise<boolean> { return false; }
   async listContainers(): Promise<[]> { return []; }
   async createContainer(): Promise<never> { return this.unsupported(); }
