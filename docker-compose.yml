@@ -1,0 +1,25 @@
+# Local Postgres for development — a copy of the Supabase database.
+# Start:   docker compose up -d db
+# Clone:   SUPABASE_DB_URL="postgresql://…" tools/db/clone-supabase.sh
+# App:     DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
+services:
+  db:
+    image: postgres:17
+    container_name: r1-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - r1-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  r1-pgdata:

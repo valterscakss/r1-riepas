@@ -11,9 +11,11 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "load:supabase": "tsx scripts/load-postgres.ts",
+    "clone:supabase": "tsx scripts/clone-supabase.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@types/web-push": "^3.6.4",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^13.0.1",
     "cookie-parser": "^1.4.7",
@@ -22,6 +24,8 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
     "pg": "^8.22.0",
+    "sweetalert2": "^11.26.25",
+    "web-push": "^3.6.7",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
