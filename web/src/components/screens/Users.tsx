@@ -8,7 +8,8 @@ import { useToast } from '@/client/toast';
 import { initialsOf } from '@/domain/format';
 import { ROLE_LABEL } from '@/domain/perms';
 import type { Role, UserSummary } from '@/domain/types';
-import { Credentials, EditUserDialog, loadPerms, NewUserDialog, PermsDialog, ResetPasswordDialog } from '../users/UserDialogs';
+import { useBranches } from '@/client/queries';
+import { BranchAccessDialog, Credentials, EditUserDialog, loadPerms, NewUserDialog, PermsDialog, ResetPasswordDialog } from '../users/UserDialogs';
 
 const ROLE_TONE: Record<Role, string> = { admin: 'accent', warehouse: 'violet', leja: 'teal', staff: 'plain' };
 
@@ -19,6 +20,7 @@ export function UsersScreen() {
   const toast = useToast();
   const q = useQuery({ queryKey: ['users'], queryFn: () => api<{ users: UserSummary[] }>('/api/users') });
   const users = q.data?.users ?? [];
+  const branchCount = useBranches().data?.branches.length ?? 0;
   const reload = () => void q.refetch();
   const showCreds = (title: string, username: string, password: string) =>
     dialogs.open<void>((done) => <Credentials title={title} username={username} password={password} done={() => done(undefined)} />);
@@ -47,6 +49,9 @@ export function UsersScreen() {
     if (r === 'saved') toast('Tiesības saglabātas · stājas spēkā uzreiz');
     if (r === 'reset') toast('Atjaunoti lomas noklusējumi');
   };
+  const branchAccess = async (u: UserSummary) => {
+    if (await dialogs.open<boolean>((done) => <BranchAccessDialog u={u} done={done} />)) toast('Filiāļu piekļuve saglabāta');
+  };
   const remove = async (u: UserSummary) => {
     const c = await dialogs.confirm({ icon: 'warning', title: 'Dzēst lietotāju?', confirmText: 'Dzēst', danger: true, body: <><b className="mono">@{u.username}</b> · {u.name} vairs nevarēs pieteikties.</> });
     if (!c.ok) return;
@@ -73,6 +78,7 @@ export function UsersScreen() {
             <span className="row" style={{ gap: 6 }}>
               <button className="btn sm" title="Mainīt vārdu, lietotājvārdu vai lomu" onClick={() => edit(u)}>Rediģēt</button>
               {u.role !== 'admin' && <button className="btn sm" onClick={() => perms(u)}>Tiesības</button>}
+              {branchCount > 1 && <button className="btn sm" onClick={() => branchAccess(u)}>Filiāles</button>}
               <button className="btn sm" onClick={() => reset(u)}>Atiestatīt paroli</button>
             </span>
             <button className="btn sm danger-text" title="Dzēst lietotāju" aria-label={`Dzēst ${u.username}`} onClick={() => remove(u)}>✕</button>

@@ -15,35 +15,35 @@ const SHEETS: Record<string, [sheet: string, file: string]> = {
 };
 
 /** Every list leaves as .xlsx with the same filters and field rules as on screen. */
-export const GET = api<{ what: string }>({ perm: 'act.export' }, async ({ params, query, perms }) => {
+export const GET = api<{ what: string }>({ perm: 'act.export' }, async ({ params, query, perms, branchId }) => {
   const what = params.what;
   if (!SHEETS[what]) throw bad('Nezināms eksporta veids');
   const q = qs(query, 'q');
   let rows: Array<Record<string, string | number>>;
   if (what === 'storage') {
     const status = qs(query, 'status');
-    let recs = redactAll(await listRecords(), perms);
+    let recs = redactAll(await listRecords({ branchId }), perms);
     if (status === 'active' || status === 'released' || status === 'prepared') recs = recs.filter((r) => r.status === status);
     if (q) recs = recs.filter((r) => matches(r, q));
     rows = storageRows(recs);
   } else if (what === 'history') {
-    rows = historyRows(await loadHistory(query, perms));
+    rows = historyRows(await loadHistory(query, perms, branchId));
   } else if (what === 'analytics') {
-    rows = analyticsRows(analytics(await listRecords(), { season: qs(query, 'season'), status: qs(query, 'status'), customer: qs(query, 'customer'), rims: qs(query, 'rims') }));
+    rows = analyticsRows(analytics(await listRecords({ branchId }), { season: qs(query, 'season'), status: qs(query, 'status'), customer: qs(query, 'customer'), rims: qs(query, 'rims') }));
   } else if (what === 'customers') {
     const type = qs(query, 'type');
-    let recs = redactAll(await listRecords(q ? { q } : {}), perms);
+    let recs = redactAll(await listRecords(q ? { q, branchId } : { branchId }), perms);
     if (type === 'company') recs = recs.filter((r) => r.isCompany);
     else if (type === 'private') recs = recs.filter((r) => !r.isCompany);
     rows = customerRows(recs);
   } else if (what === 'tasks') {
     const s = qs(query, 'status');
-    rows = taskRows(await listTasks({ status: s === 'done' ? 'done' : s === 'all' ? undefined : 'open', limit: 500 }));
+    rows = taskRows(await listTasks({ status: s === 'done' ? 'done' : s === 'all' ? undefined : 'open', limit: 500, branchId }));
   } else if (what === 'pending') {
-    const recs = redactAll(await listRecords({ status: 'prepared' }), perms).sort((a, b) => (b.preparedDate ?? '').localeCompare(a.preparedDate ?? ''));
+    const recs = redactAll(await listRecords({ status: 'prepared', branchId }), perms).sort((a, b) => (b.preparedDate ?? '').localeCompare(a.preparedDate ?? ''));
     rows = pendingRows(recs);
   } else {
-    rows = spotRows(await loadUniverse(), perms);
+    rows = spotRows(await loadUniverse(branchId), perms);
   }
   if (!rows.length) throw notFound(what === 'pending' ? 'Nav sagatavotu riepu' : 'Nav ko eksportēt');
   const [sheet, file] = SHEETS[what];

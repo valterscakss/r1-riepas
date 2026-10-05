@@ -1,8 +1,8 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../db/client';
-import { containers, photos, pushSubs, recordEvents, settings, tasks } from '../db/schema';
-import type { Container, Photo, PushSub, RecordEvent, Task, TaskInput } from '@/domain/types';
-import { idNum } from './records';
+import { branches, containers, photos, pushSubs, recordEvents, settings, tasks } from '../db/schema';
+import type { Branch, Container, Photo, PushSub, RecordEvent, Task, TaskInput } from '@/domain/types';
+import { firstBranchId, idNum } from './records';
 
 /** timestamptz → ISO, so the client sorts and formats consistently. */
 const iso = (v: string | null | undefined): string | null => {
@@ -13,16 +13,19 @@ const iso = (v: string | null | undefined): string | null => {
 
 // ---- Containers ----
 const toContainer = (r: typeof containers.$inferSelect): Container => ({
-  id: String(r.id), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols,
+  id: String(r.id), branchId: String(r.branchId ?? 1), prefix: r.prefix, label: r.label, rows: r.rows, cols: r.cols,
   cells: r.cells ?? null, names: r.names ?? null, zones: r.zones ?? null, createdAt: iso(r.createdAt),
 });
 
-export async function listContainers(): Promise<Container[]> {
-  return (await getDb().select().from(containers).orderBy(asc(containers.prefix))).map(toContainer);
+export async function listContainers(branchId?: string): Promise<Container[]> {
+  return (await getDb().select().from(containers)
+    .where(branchId ? eq(containers.branchId, Number(branchId)) : undefined)
+    .orderBy(asc(containers.prefix))).map(toContainer);
 }
 
-export async function createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null; zones?: string | null }): Promise<Container> {
-  const [r] = await getDb().insert(containers).values(c).returning();
+export async function createContainer(c: { prefix: string; label: string | null; rows: number; cols: number; cells: string | null; zones?: string | null; branchId?: string }): Promise<Container> {
+  const { branchId, ...rest } = c;
+  const [r] = await getDb().insert(containers).values({ ...rest, branchId: branchId ? Number(branchId) : await firstBranchId() }).returning();
   return toContainer(r);
 }
 
@@ -58,8 +61,12 @@ export async function listEvents(recordId: string): Promise<RecordEvent[]> {
   return (await getDb().select().from(recordEvents).where(eq(recordEvents.recordId, recordId)).orderBy(asc(recordEvents.id))).map(toEvent);
 }
 
-export async function recentEvents(limit: number): Promise<RecordEvent[]> {
-  return (await getDb().select().from(recordEvents).orderBy(desc(recordEvents.id)).limit(Math.max(1, Math.min(5000, limit)))).map(toEvent);
+/** Newest first. With a branch, events of records that live in ANOTHER branch are left out. */
+export async function recentEvents(limit: number, branchId?: string): Promise<RecordEvent[]> {
+  const other = branchId
+    ? sql`NOT EXISTS (SELECT 1 FROM storage s WHERE s.id::text = ${recordEvents.recordId} AND s.branch_id IS DISTINCT FROM ${Number(branchId)})`
+    : undefined;
+  return (await getDb().select().from(recordEvents).where(other).orderBy(desc(recordEvents.id)).limit(Math.max(1, Math.min(5000, limit)))).map(toEvent);
 }
 
 export async function getEvent(id: string): Promise<RecordEvent | null> {
@@ -84,26 +91,28 @@ export async function deleteEvent(id: string): Promise<boolean> {
 
 // ---- Tasks ----
 const toTask = (r: typeof tasks.$inferSelect): Task => ({
-  id: String(r.id), kind: r.kind === 'prepare' ? 'prepare' : r.kind === 'store' ? 'store' : 'order', recordId: r.recordId,
+  id: String(r.id), branchId: String(r.branchId ?? 1), kind: r.kind === 'prepare' ? 'prepare' : r.kind === 'store' ? 'store' : 'order', recordId: r.recordId,
   title: r.title, details: r.details, location: r.location, plate: r.plate,
   status: r.status === 'done' ? 'done' : 'open', createdBy: r.createdBy,
   createdAt: iso(r.createdAt), doneBy: r.doneBy, doneAt: iso(r.doneAt),
 });
 
-export async function listTasks(opts: { status?: 'open' | 'done'; limit?: number } = {}): Promise<Task[]> {
+export async function listTasks(opts: { status?: 'open' | 'done'; limit?: number; branchId?: string } = {}): Promise<Task[]> {
   const rows = await getDb().select().from(tasks)
-    .where(opts.status ? eq(tasks.status, opts.status) : undefined)
+    .where(and(opts.status ? eq(tasks.status, opts.status) : undefined, opts.branchId ? eq(tasks.branchId, Number(opts.branchId)) : undefined))
     .orderBy(desc(tasks.id)).limit(Math.max(1, Math.min(500, opts.limit ?? 200)));
   return rows.map(toTask);
 }
 
-export async function countOpenTasks(): Promise<number> {
-  const [r] = await getDb().select({ n: sql<number>`count(*)::int` }).from(tasks).where(eq(tasks.status, 'open'));
+export async function countOpenTasks(branchId?: string): Promise<number> {
+  const [r] = await getDb().select({ n: sql<number>`count(*)::int` }).from(tasks)
+    .where(and(eq(tasks.status, 'open'), branchId ? eq(tasks.branchId, Number(branchId)) : undefined));
   return r.n;
 }
 
 export async function createTask(t: TaskInput): Promise<Task> {
-  const [r] = await getDb().insert(tasks).values(t).returning();
+  const { branchId, ...rest } = t;
+  const [r] = await getDb().insert(tasks).values({ ...rest, branchId: branchId ? Number(branchId) : await firstBranchId() }).returning();
   return toTask(r);
 }
 
@@ -200,4 +209,24 @@ export async function addPushSub(s: PushSub): Promise<void> {
 
 export async function deletePushSub(endpoint: string): Promise<boolean> {
   return (await getDb().delete(pushSubs).where(eq(pushSubs.endpoint, endpoint)).returning({ e: pushSubs.endpoint })).length > 0;
+}
+
+// ---- Branches ----
+const toBranch = (r: typeof branches.$inferSelect): Branch =>
+  ({ id: String(r.id), name: r.name, active: !!r.active, createdAt: iso(r.createdAt) });
+
+export async function listBranches(): Promise<Branch[]> {
+  return (await getDb().select().from(branches).orderBy(asc(branches.id))).map(toBranch);
+}
+
+export async function createBranch(name: string): Promise<Branch> {
+  const [r] = await getDb().insert(branches).values({ name }).returning();
+  return toBranch(r);
+}
+
+export async function updateBranch(id: string, patch: { name?: string; active?: boolean }): Promise<Branch | null> {
+  const n = idNum(id);
+  if (n === null || !Object.keys(patch).length) return null;
+  const [r] = await getDb().update(branches).set(patch).where(eq(branches.id, n)).returning();
+  return r ? toBranch(r) : null;
 }

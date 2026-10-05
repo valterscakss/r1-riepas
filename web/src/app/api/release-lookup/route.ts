@@ -9,9 +9,9 @@ import { listRecords } from '@/server/repo/records';
  * code (that is how customers identify themselves); only the payload is cut
  * down to what this user may see.
  */
-export const GET = api({ perm: 'act.operate' }, async ({ query, perms }) => {
+export const GET = api({ perm: 'act.operate' }, async ({ query, perms, branchId }) => {
   const q = normCode(qs(query, 'q'));
   if (!q) return { q: '', results: [] };
-  const hits = releaseMatches(await listRecords({ status: 'active' }), q);
+  const hits = releaseMatches(await listRecords({ status: 'active', branchId }), q);
   return { q, results: redactAll(hits, perms).map(setCard) };
 });

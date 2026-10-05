@@ -50,3 +50,15 @@ export async function setUserPerms(username: string, perms: string | null): Prom
 export async function deleteUser(username: string): Promise<boolean> {
   return (await getDb().delete(users).where(eq(users.username, lc(username))).returning({ id: users.id })).length > 0;
 }
+
+/** The branch ids a user is restricted to; null = every branch. */
+export async function getUserBranches(username: string): Promise<string[] | null> {
+  const [r] = await getDb().select({ b: users.branches }).from(users).where(eq(users.username, lc(username)));
+  if (!r?.b) return null;
+  try { const a = JSON.parse(r.b); return Array.isArray(a) ? a.map(String) : null; } catch { return null; }
+}
+
+export async function setUserBranches(username: string, ids: string[] | null): Promise<boolean> {
+  const v = ids && ids.length ? JSON.stringify(ids.map(String)) : null;
+  return (await getDb().update(users).set({ branches: v }).where(eq(users.username, lc(username))).returning({ id: users.id })).length > 0;
+}

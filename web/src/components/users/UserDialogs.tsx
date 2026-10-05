@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { api, enc, patch, post, put } from '@/client/api';
+import { useEffect, useState } from 'react';
+import { api, enc, errMsg, patch, post, put } from '@/client/api';
 import { Modal } from '@/client/dialogs';
 import { useToast } from '@/client/toast';
 import { PERM_GROUPS, ROLE_LABEL, ROLE_OPTIONS, type PermKey } from '@/domain/perms';
@@ -136,3 +136,40 @@ export function PermsDialog({ u, initial, done }: { u: UserSummary; initial: Per
 }
 
 export const loadPerms = (username: string) => api<PermsData>(`/api/users/${enc(username)}/perms`);
+
+/** Which branches one user may open. Ticking all (or none restricted) means every branch, now and later. */
+export function BranchAccessDialog({ u, done }: { u: UserSummary; done: (saved: boolean) => void }) {
+  const [state, setState] = useState<{ all: Array<{ id: string; name: string; active: boolean }>; picked: Set<string> } | null>(null);
+  const [loadError, setLoadError] = useState('');
+  useEffect(() => {
+    let live = true;
+    api<{ branches: string[] | null; all: Array<{ id: string; name: string; active: boolean }> }>(`/api/users/${enc(u.username)}/branches`)
+      .then((r) => { if (live) setState({ all: r.all, picked: new Set(r.branches ?? r.all.map((b) => b.id)) }); })
+      .catch((e) => { if (live) setLoadError(errMsg(e)); });
+    return () => { live = false; };
+  }, [u.username]);
+  const toggle = (id: string) => setState((s) => {
+    if (!s) return s;
+    const picked = new Set(s.picked);
+    if (picked.has(id)) picked.delete(id); else picked.add(id);
+    return { ...s, picked };
+  });
+  return (
+    <FormDialog title={`Filiāles · ${u.name}`} submitText="Saglabāt" onCancel={() => done(false)} onSubmit={async () => {
+      if (!state) return loadError || 'Vēl ielādē…';
+      if (!state.picked.size) return 'Jāatzīmē vismaz viena filiāle';
+      await put(`/api/users/${enc(u.username)}/branches`, { branches: [...state.picked] });
+      done(true);
+    }}>
+      {loadError && <div className="dialog-error" role="alert">{loadError}</div>}
+      {!state && !loadError && <div className="muted">Ielādē…</div>}
+      {state?.all.map((b) => (
+        <label key={b.id} className="row" style={{ gap: 10, flexWrap: 'nowrap', cursor: 'pointer' }}>
+          <input type="checkbox" checked={state.picked.has(b.id)} onChange={() => toggle(b.id)} />
+          <span>{b.name}{!b.active && <span className="muted"> · izslēgta</span>}</span>
+        </label>
+      ))}
+      {state && <div className="muted" style={{ fontSize: 12 }}>Lietotājs strādā vienā filiālē vienlaikus un var pārslēgties starp atzīmētajām.</div>}
+    </FormDialog>
+  );
+}

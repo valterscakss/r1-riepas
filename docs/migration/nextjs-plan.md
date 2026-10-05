@@ -15,6 +15,7 @@ paliek tādi paši, lai pāreju var pārbaudīt, salīdzinot abas aplikācijas.
 | 3 — API (61 endpoints) + integrācijas testi | ✅ gatavs |
 | 4 — visi UI ekrāni React | ✅ gatavs |
 | 5 — PWA, E2E testi, Docker, dokumentācija | ✅ gatavs; atliek pārslēgšana produkcijā |
+| 6 — filiāles (Express app 30.09–05.10) pārnestas uz Next.js | ✅ gatavs: shēma (migrācija 0001), API, UI, importa sezonas izvēle |
 
 Pārslēgšana un atgriešanās: `docs/setup/vercel-supabase.md` → *Switching over*.
 

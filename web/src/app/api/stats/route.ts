@@ -4,5 +4,5 @@ import { todayIso } from '@/domain/format';
 import { loadUniverse } from '@/server/services';
 
 /** Dashboard numbers and the spot map. */
-export const GET = api({ any: ['screen.home', 'screen.spots', 'screen.intake'] }, async ({ perms }) =>
-  statsView(await loadUniverse(), perms, todayIso()));
+export const GET = api({ any: ['screen.home', 'screen.spots', 'screen.intake'] }, async ({ perms, branchId }) =>
+  statsView(await loadUniverse(branchId), perms, todayIso()));

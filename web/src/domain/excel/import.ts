@@ -8,8 +8,29 @@ import type { IntakeInput } from '../types';
  * (Excel = source of truth). The file itself is never stored — only parsed.
  */
 export type ParsedRecord = IntakeInput & { releaseDate: string | null; status: 'active' | 'released' | 'free' | 'blocked' };
+/**
+ * What one sheet (= one season) contributes, so the admin can pick which season
+ * describes the warehouse as it stands today.
+ */
+export interface SeasonInfo {
+  name: string;
+  rows: number;
+  /** Distinct place codes (A1, B12…) written in the VIETA column. */
+  places: number;
+  /** Rows that hold tires right now. */
+  active: number;
+  /** Rows marked BRĪVS — a place that exists but is empty. */
+  free: number;
+  /** Rows marked AIZŅEMTS — held, with nothing recorded about the contents. */
+  held: number;
+  /** Rows with an issue date: tires already handed back. */
+  released: number;
+  /** Every place code the sheet mentions, for reconciling the drawn racks. */
+  codes: string[];
+}
 export interface ParseResult {
   records: ParsedRecord[];
+  seasons: SeasonInfo[];
   summary: { sheets: number; rows: number; parsed: number; skipped: number };
 }
 
@@ -145,6 +166,8 @@ export function parseWorkbook(buffer: Buffer | Uint8Array, opts: ParseOptions = 
   const records: ParsedRecord[] = [];
   const dummy = opts.dummyPhone ?? null;
   let sheets = 0, rows = 0, parsed = 0, skipped = 0;
+  const seasons: SeasonInfo[] = [];
+  const PLACE_RE = /^[A-ZĀ-Ž]{1,4}\d{1,3}$/;
 
   for (const name of wb.SheetNames) {
     const grid = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], { header: 1, defval: null, blankrows: false });
@@ -153,6 +176,9 @@ export function parseWorkbook(buffer: Buffer | Uint8Array, opts: ParseOptions = 
     const m = buildColMap(grid[hdr]);
     const at = (row: unknown[], i: number) => (i >= 0 ? row[i] : null);
     sheets++;
+    const info: SeasonInfo = { name, rows: 0, places: 0, active: 0, free: 0, held: 0, released: 0, codes: [] };
+    const codes = new Set<string>();
+    seasons.push(info);
     for (let r = hdr + 1; r < grid.length; r++) {
       const row = grid[r] as unknown[];
       rows++;
@@ -202,7 +228,16 @@ export function parseWorkbook(buffer: Buffer | Uint8Array, opts: ParseOptions = 
         threadDepth: thread, smsCode: null, feeEur: null,
       });
       parsed++;
+      const rec = records[records.length - 1];
+      info.rows++;
+      if (rec.location && PLACE_RE.test(rec.location)) codes.add(rec.location);
+      if (rec.status === 'free') info.free++;
+      else if (rec.status === 'blocked') info.held++;
+      else if (rec.status === 'released') info.released++;
+      else info.active++;
     }
+    info.codes = [...codes].sort();
+    info.places = info.codes.length;
   }
-  return { records, summary: { sheets, rows, parsed, skipped } };
+  return { records, seasons, summary: { sheets, rows, parsed, skipped } };
 }

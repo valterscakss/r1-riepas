@@ -1,6 +1,6 @@
 import { and, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '../db/client';
-import { storage } from '../db/schema';
+import { branches, storage } from '../db/schema';
 import { normStatus, type IntakeInput, type StorageRecord } from '@/domain/types';
 import type { ParsedRecord } from '@/domain/excel/import';
 import { recordEvents, photos, tasks } from '../db/schema';
@@ -9,7 +9,7 @@ import { todayIso } from '@/domain/format';
 type Row = typeof storage.$inferSelect;
 
 export const toRecord = (r: Row): StorageRecord => ({
-  id: String(r.id), season: r.season, location: r.location, plate: r.plate,
+  id: String(r.id), branchId: String(r.branchId ?? 1), season: r.season, location: r.location, plate: r.plate,
   makeModel: r.makeModel, customerName: r.customerName, isCompany: !!r.isCompany,
   phone: r.phone, size1: r.size1, brand: r.brand, quantity: r.quantity,
   size2: r.size2, rimNote: r.rimNote, notes: r.notes,
@@ -18,14 +18,21 @@ export const toRecord = (r: Row): StorageRecord => ({
   threadDepth: r.threadDepth ?? null, smsCode: r.smsCode ?? null, feeEur: r.feeEur ?? null,
 });
 
+/** The oldest branch — what anything without an explicit one belongs to. */
+export async function firstBranchId(): Promise<number> {
+  const [r] = await getDb().select({ id: sql<number>`min(${branches.id})` }).from(branches);
+  return r?.id ?? 1;
+}
+
 /** Ids are BIGINT; anything that isn't a positive integer matches nothing. */
 export const idNum = (id: string): number | null => (/^\d{1,15}$/.test(id) ? Number(id) : null);
 
-export interface ListOpts { status?: 'active' | 'prepared' | 'released'; q?: string }
+export interface ListOpts { status?: 'active' | 'prepared' | 'released'; q?: string; branchId?: string }
 
 /** Newest first. `q` searches plate, place, name, phone and car, case-insensitively. */
 export async function listRecords(opts: ListOpts = {}): Promise<StorageRecord[]> {
   const where: SQL[] = [];
+  if (opts.branchId) where.push(eq(storage.branchId, Number(opts.branchId)));
   if (opts.status) where.push(eq(storage.status, opts.status));
   if (opts.q) {
     const p = `%${opts.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -44,6 +51,7 @@ export async function getRecord(id: string): Promise<StorageRecord | null> {
 
 export async function createRecord(input: IntakeInput): Promise<StorageRecord> {
   const [r] = await getDb().insert(storage).values({
+    branchId: input.branchId ? Number(input.branchId) : await firstBranchId(),
     season: input.season, location: input.location, plate: input.plate, makeModel: input.makeModel,
     customerName: input.customerName, isCompany: input.isCompany ?? false, phone: input.phone,
     size1: input.size1, brand: input.brand, quantity: input.quantity, size2: input.size2,
@@ -83,8 +91,8 @@ export async function updateRecord(id: string, patch: Record<string, unknown>): 
   return update(id, set);
 }
 
-export async function blockSpot(location: string): Promise<StorageRecord> {
-  const [r] = await getDb().insert(storage).values({ location, status: 'blocked', intakeDate: todayIso(), notes: 'Bloķēts' }).returning();
+export async function blockSpot(location: string, branchId?: string): Promise<StorageRecord> {
+  const [r] = await getDb().insert(storage).values({ branchId: branchId ? Number(branchId) : await firstBranchId(), location, status: 'blocked', intakeDate: todayIso(), notes: 'Bloķēts' }).returning();
   return toRecord(r);
 }
 
@@ -109,19 +117,21 @@ export async function setCustomerType(name: string, isCompany: boolean): Promise
 }
 
 /**
- * Replace ALL storage rows (Excel import), in one transaction. Record ids are
- * reset, so per-record history, photos and record-linked tasks no longer map and
- * are cleared too; free-text orders survive.
+ * Replace one branch's storage rows (Excel import), in one transaction. The other
+ * shop's rows are untouched. The replaced rows' history, photos and record-linked
+ * tasks no longer map and are cleared with them; free-text orders survive.
  */
-export async function replaceAll(records: ParsedRecord[]): Promise<number> {
+export async function replaceAll(records: ParsedRecord[], branchId?: string): Promise<number> {
+  const branch = branchId ? Number(branchId) : await firstBranchId();
   return getDb().transaction(async (tx) => {
-    await tx.execute(sql`TRUNCATE storage RESTART IDENTITY`);
-    await tx.delete(recordEvents);
-    await tx.delete(tasks).where(sql`${tasks.recordId} IS NOT NULL`);
-    await tx.delete(photos);
+    const mine = sql`(SELECT id::text FROM storage WHERE branch_id = ${branch})`;
+    await tx.delete(recordEvents).where(sql`${recordEvents.recordId} IN ${mine}`);
+    await tx.delete(photos).where(sql`${photos.recordId} IN ${mine}`);
+    await tx.delete(tasks).where(sql`${tasks.recordId} IS NOT NULL AND ${tasks.branchId} = ${branch}`);
+    await tx.delete(storage).where(eq(storage.branchId, branch));
     for (let i = 0; i < records.length; i += 500) {
       await tx.insert(storage).values(records.slice(i, i + 500).map((r) => ({
-        season: r.season, location: r.location, plate: r.plate, makeModel: r.makeModel,
+        branchId: branch, season: r.season, location: r.location, plate: r.plate, makeModel: r.makeModel,
         customerName: r.customerName, isCompany: r.isCompany ?? false, phone: r.phone, size1: r.size1,
         brand: r.brand, quantity: r.quantity, size2: r.size2, rimNote: r.rimNote,
         notes: r.notes, intakeDate: r.intakeDate, releaseDate: r.releaseDate,

@@ -5,8 +5,8 @@ import { normCode } from '@/domain/types';
 import { listRecords } from '@/server/repo/records';
 
 /** Intake prefill: what we know about this plate from its latest record. */
-export const GET = api({ perm: 'act.operate' }, async ({ query, perms }) => {
+export const GET = api({ perm: 'act.operate' }, async ({ query, perms, branchId }) => {
   const plate = normCode(qs(query, 'plate'));
   if (!plate) throw bad('plate is required');
-  return plateLookup(redactAll(await listRecords({ q: plate }), perms), plate);
+  return plateLookup(redactAll(await listRecords({ q: plate, branchId }), perms), plate);
 });

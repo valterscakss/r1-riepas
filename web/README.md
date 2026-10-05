@@ -46,6 +46,17 @@ src/components/ React UI; src/client/ browser-side helpers (API, dialogs, sessio
 tests/          integration tests against Postgres; e2e/ browser tests
 ```
 
+## Branches (two shops)
+
+Every rack, stored set and warehouse job belongs to a branch. A request names the
+branch it works in with the `X-Branch` header (the browser remembers the choice);
+the server checks it against the branches the user may open and falls back to the
+first allowed one. Admins add and switch off branches in *Iestatījumi* and set each
+user's branches in *Lietotāji*. Rack letters are unique across branches.
+
+The Excel import replaces **one branch's** rows only, and asks which season's sheet
+describes the warehouse as it stands today — that sheet decides which places exist.
+
 ## Database
 
 - Schema: `src/server/db/schema.ts` (Drizzle), a 1:1 copy of the production tables.
@@ -54,5 +65,9 @@ tests/          integration tests against Postgres; e2e/ browser tests
   `npm run db:generate`, review the SQL, commit.
 - `npm run build` applies migrations first when `DATABASE_URL` is set, except on
   Vercel preview builds (production builds only).
+- Pointing the app at an existing Postgres (a restore of the Supabase data, say):
+  set `DATABASE_URL` and run `npm run db:migrate`. Migrations are idempotent — they
+  only add what is missing (branches, `branch_id` columns) and give rows that predate
+  branches to the first branch. Nothing is rewritten or dropped.
 - Production TLS: set `DATABASE_CA_CERT` to Supabase's root certificate for a
   verified connection.

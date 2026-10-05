@@ -105,6 +105,8 @@ h1, h2, h3 { margin: 0; }
 .navbtn.main:hover { background: oklch(0.93 0.05 256); }
 .navbtn.main.on { background: var(--accent); color: #fff; border-color: transparent; }
 .navbtn.main.on::after { background: #fff; }
+.branch-pick { padding: 12px 18px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.branch-pick select { height: 38px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; background: var(--surface, #fff); font-weight: 600; }
 .capacity { padding: 16px 18px; border-top: 1px solid var(--border); }
 .bar { height: 8px; background: var(--border); border-radius: 6px; overflow: hidden; }
 .bar > div { height: 100%; border-radius: 6px; background: var(--accent); }

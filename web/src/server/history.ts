@@ -5,8 +5,8 @@ import { listRecords } from './repo/records';
 import { recentEvents } from './repo/misc';
 
 /** Shared by the Vēsture screen and its Excel export, so both show the same rows. */
-export async function loadHistory(query: URLSearchParams, perms: Perms) {
-  const [all, events] = await Promise.all([listRecords(), recentEvents(5000)]);
+export async function loadHistory(query: URLSearchParams, perms: Perms, branchId: string) {
+  const [all, events] = await Promise.all([listRecords({ branchId }), recentEvents(5000, branchId)]);
   const types = query.get('types');
   return buildHistory(all, events, perms, todayIso(), {
     from: query.get('from') ?? '', to: query.get('to') ?? '',

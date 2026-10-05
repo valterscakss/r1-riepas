@@ -18,6 +18,10 @@ export const useOpenTasks = () =>
 export const usePending = (enabled = true) =>
   useQuery({ queryKey: ['pending'], queryFn: () => api<{ count: number; pending: SetCard[] }>('/api/pending'), enabled });
 
+/** The branches this user may open, and the one the server is using for this browser. */
+export const useBranches = () =>
+  useQuery({ queryKey: ['branches'], queryFn: () => api<{ branches: Array<{ id: string; name: string }>; active: string }>('/api/branches'), staleTime: 60_000 });
+
 export const usePricing = (enabled = true) =>
   useQuery({ queryKey: ['pricing'], queryFn: () => api<{ pricing: PricingConfig; defaults: PricingConfig }>('/api/pricing'), enabled, staleTime: 60_000 });
 

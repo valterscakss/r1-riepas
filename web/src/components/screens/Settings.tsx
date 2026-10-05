@@ -9,6 +9,7 @@ import { usePricing, useRefresh } from '@/client/queries';
 import type { PushCfg } from '@/client/push';
 import { eur } from '@/domain/format';
 import { maskSize } from '@/domain/sizes';
+import { BranchesCard } from './BranchesCard';
 import { DEFAULT_PRICING, rimMult, tierFor, type PricingConfig } from '@/domain/pricing';
 
 type Recalc = { changed: number; unchanged: number; skipped: number; total: number; sample: Array<{ plate: string | null; size: string | null; from: string | null; to: string }> };
@@ -120,6 +121,7 @@ export function SettingsScreen() {
         </div>
         <div className="stack">
           <PriceTest cfg={d} />
+          <BranchesCard />
           <div className="card pad">
             <h2 style={{ marginBottom: 4 }}>Paziņojumi</h2>
             <div className="muted" style={{ fontSize: 12, marginBottom: 14, lineHeight: 1.6 }}>

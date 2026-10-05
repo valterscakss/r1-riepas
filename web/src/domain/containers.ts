@@ -210,3 +210,63 @@ export function planSpotRename(fromRaw: unknown, toRaw: unknown, u: SpotUniverse
   }
   return ok({ from, to, container: null });
 }
+
+// ---- Reconciling drawn racks with the chosen season's sheet ----
+
+export interface RackPlan {
+  deleted: { id: string; prefix: string; cells: number }[];
+  trimmed: { id: string; prefix: string; off: number; left: number; cells: string; names: string | null }[];
+  kept: number;
+  protectedCells: { code: string; plate: string | null }[];
+}
+
+/**
+ * A drawn rack whose places are not in the chosen season's sheet is not in the
+ * warehouse any more: switch those cells off so the rack keeps its shape, and drop
+ * the rack when nothing is left. A cell that holds tires is never touched — hiding
+ * a place with a customer's set in it would lose the set.
+ *
+ * `holders` is what the records WILL be: on a preview the rows in the database are
+ * the ones about to be replaced, so judging against them would protect places the
+ * new file does not have and hide the real consequence.
+ */
+export function planRacks(
+  defs: Container[],
+  codes: Set<string>,
+  holders: { location: string | null; status: string; plate: string | null }[],
+): RackPlan {
+  const held = new Map<string, string | null>();
+  for (const r of holders) {
+    if (r.status !== 'active' && r.status !== 'prepared' && r.status !== 'blocked') continue;
+    const c = (r.location ?? '').toUpperCase();
+    if (c) held.set(c, r.plate);
+  }
+  const plan: RackPlan = { deleted: [], trimmed: [], kept: 0, protectedCells: [] };
+  for (const d of defs) {
+    const map = cellMap(d);
+    const names = parseNames(d.names);
+    // Merged zones are drawn by hand and carry no per-cell code, so leave them be.
+    const zoneCells = new Set<number>();
+    for (const z of parseZones(d.zones)) z.cells.forEach((i) => zoneCells.add(i));
+    const next = [...map];
+    const keptNames: Record<string, string> = {};
+    let off = 0, left = 0;
+    map.forEach((on, i) => {
+      if (!on) return;
+      const keep = () => { left++; if (names[String(i)]) keptNames[String(i)] = names[String(i)]; };
+      if (zoneCells.has(i)) return keep();
+      const code = (names[String(i)] || `${d.prefix}${i + 1}`).toUpperCase();
+      if (codes.has(code)) return keep();
+      if (held.has(code)) { plan.protectedCells.push({ code, plate: held.get(code) ?? null }); return keep(); }
+      next[i] = false; off++;
+    });
+    if (!off) { plan.kept++; continue; }
+    if (!left) { plan.deleted.push({ id: d.id, prefix: d.prefix, cells: map.filter(Boolean).length }); continue; }
+    plan.trimmed.push({
+      id: d.id, prefix: d.prefix, off, left,
+      cells: next.map((x) => (x ? '1' : '0')).join(''),
+      names: Object.keys(keptNames).length ? JSON.stringify(keptNames) : null,
+    });
+  }
+  return plan;
+}

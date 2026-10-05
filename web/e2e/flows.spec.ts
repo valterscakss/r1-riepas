@@ -87,3 +87,32 @@ test('the floor role sees the map but not names, and cannot take sets in', async
   await expect(panel.getByText('Sample Person')).toHaveCount(0);
   await expect(panel.getByRole('button', { name: 'Izsniegt riepas' })).toHaveCount(0);
 });
+
+test('a second shop has its own data, and the admin can switch between them', async ({ page }) => {
+  await login(page);
+  // Add the shop.
+  await page.goto('/iestatijumi');
+  await page.getByLabel('Jaunas filiāles nosaukums').fill('Jūrmala');
+  await page.getByRole('button', { name: '＋ Pievienot', exact: true }).click();
+  await expect(page.getByLabel('Filiāles 2 nosaukums')).toHaveValue('Jūrmala');
+
+  // The first shop holds the sample data…
+  await page.goto('/tabula');
+  await expect(page.getByText('AB1234')).toBeVisible();
+
+  // …the second one starts empty.
+  await page.getByLabel('Filiāle').selectOption({ label: 'Jūrmala' });
+  await expect(page.getByText('Rādīti 0 no 0')).toBeVisible();
+  await expect(page.getByText('AB1234')).toHaveCount(0);
+
+  // The choice is remembered on the next visit, and switching back restores the first shop.
+  await page.goto('/tabula');
+  await expect(page.getByText('Rādīti 0 no 0')).toBeVisible();
+  await page.getByLabel('Filiāle').selectOption({ label: 'Filiāle 1' });
+  await expect(page.getByText('AB1234')).toBeVisible();
+
+  // Leave the database as the other tests expect it: one active shop.
+  await page.goto('/iestatijumi');
+  await page.getByLabel('Filiāles 2 nosaukums').locator('xpath=following-sibling::button').click();
+  await expect(page.getByRole('button', { name: 'Ieslēgt' })).toBeVisible();
+});

@@ -1,3 +1,5 @@
+import { getBranch } from './branch';
+
 /** A failed API call with the server's user-facing message. */
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -22,6 +24,8 @@ export async function api<T = unknown>(url: string, init: RequestInit & { json?:
   const { json, ...rest } = init;
   const headers = new Headers(rest.headers);
   if (json !== undefined) headers.set('content-type', 'application/json');
+  const branch = getBranch();
+  if (branch && url.startsWith('/api/')) headers.set('x-branch', branch);
   const res = await fetch(url, { ...rest, headers, body: json !== undefined ? JSON.stringify(json) : rest.body, credentials: 'same-origin', cache: 'no-store' });
   if (res.status === 401 && !url.startsWith('/api/login')) { toLogin(); throw new ApiError(401, 'Sesija beigusies'); }
   const type = res.headers.get('content-type') ?? '';
@@ -38,7 +42,8 @@ export const enc = encodeURIComponent;
 
 /** Download a server-built file (Excel export) and hand it to the browser. */
 export async function download(url: string, fallbackName: string): Promise<void> {
-  const res = await fetch(url, { credentials: 'same-origin' });
+  const branch = getBranch();
+  const res = await fetch(url, { credentials: 'same-origin', headers: branch ? { 'x-branch': branch } : undefined });
   if (res.status === 401) { toLogin(); throw new ApiError(401, 'Sesija beigusies'); }
   if (!res.ok) {
     const d = await res.json().catch(() => null) as { error?: { message?: string } } | null;

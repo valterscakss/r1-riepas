@@ -1,6 +1,19 @@
+/**
+ * A shop. Everything that physically sits somewhere — the racks, the sets on them
+ * and the warehouse jobs — belongs to exactly one. Rack prefixes stay unique across
+ * the whole system, so a spot code still names one place.
+ */
+export interface Branch {
+  id: string;
+  name: string;
+  active: boolean;
+  createdAt: string | null;
+}
+
 /** The canonical storage record used across the API and the UI. */
 export interface StorageRecord {
   id: string;
+  branchId: string;
   season: string | null;
   location: string | null;    // VIETA, e.g. "A1"
   plate: string | null;       // AUTO NR.
@@ -31,8 +44,8 @@ export interface StorageRecord {
 
 export type RecordStatus = 'active' | 'prepared' | 'blocked' | 'released' | 'free';
 
-export type IntakeInput = Omit<StorageRecord, 'id' | 'status' | 'releaseDate' | 'preparedDate'> &
-  Partial<Pick<StorageRecord, 'intakeDate'>>;
+export type IntakeInput = Omit<StorageRecord, 'id' | 'status' | 'releaseDate' | 'preparedDate' | 'branchId'> &
+  Partial<Pick<StorageRecord, 'intakeDate' | 'branchId'>>;
 
 /**
  * What a user is, before per-user permissions are applied. The role only supplies
@@ -75,6 +88,7 @@ export interface RecordEvent {
  */
 export interface Task {
   id: string;
+  branchId: string;
   kind: 'prepare' | 'order' | 'store';
   recordId: string | null;
   title: string;
@@ -89,7 +103,7 @@ export interface Task {
 }
 
 export type TaskInput = Pick<Task, 'kind' | 'recordId' | 'title' | 'details' | 'location' | 'plate'> &
-  { createdBy: string | null };
+  { createdBy: string | null; branchId?: string };
 
 export interface Photo {
   id: string;
@@ -112,6 +126,7 @@ export interface PushSub { endpoint: string; p256dh: string; auth: string; usern
  */
 export interface Container {
   id: string;
+  branchId: string;
   prefix: string;
   label: string | null;
   rows: number;

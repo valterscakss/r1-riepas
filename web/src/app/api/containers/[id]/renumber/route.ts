@@ -5,8 +5,8 @@ import { renameLocation } from '@/server/repo/records';
 import { updateContainer } from '@/server/repo/misc';
 
 /** Clean sequential numbers again; every record moves with its place. */
-export const POST = api<{ id: string }>('admin', async ({ params }) => {
-  const u = await loadUniverse();
+export const POST = api<{ id: string }>('admin', async ({ params, branchId }) => {
+  const u = await loadUniverse(branchId);
   const def = u.defs.find((c) => c.id === params.id);
   if (!def) throw notFound('Konteiners nav atrasts');
   const plan = planRenumber(def, u);

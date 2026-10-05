@@ -31,9 +31,11 @@ try {
   if (Number(n) > 0 && !args.includes('--force')) {
     console.log(`[seed] storage already has ${n} rows — nothing to do (use --force to add anyway).`);
   } else {
+    // Rows belong to a branch; the migration created the first one.
+    const [{ id: branchId }] = (await db.execute<{ id: number }>(sql`select min(id) as id from branches`)).rows;
     for (let i = 0; i < records.length; i += 500) {
       await db.insert(storage).values(records.slice(i, i + 500).map((r) => ({
-        season: str(r.season), location: str(r.location), plate: str(r.plate), makeModel: str(r.makeModel),
+        branchId, season: str(r.season), location: str(r.location), plate: str(r.plate), makeModel: str(r.makeModel),
         customerName: str(r.customerName), isCompany: !!r.isCompany, phone: str(r.phone), size1: str(r.size1),
         brand: str(r.brand), quantity: str(r.quantity), size2: str(r.size2), rimNote: str(r.rimNote),
         notes: str(r.notes), intakeDate: str(r.intakeDate), releaseDate: str(r.releaseDate),

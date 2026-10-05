@@ -35,16 +35,21 @@ function current(a: StorageRecord, b: StorageRecord): StorageRecord {
 /**
  * Every place the shop has and who is in it: places mentioned by records plus
  * every cell of the drawn containers. A place carries rows from every season it
- * was ever used in, so the CURRENT holder is chosen explicitly.
+ * was ever used in, so the CURRENT holder is chosen explicitly. `placeSeason`
+ * (optional) restricts which season's rows define places.
  */
-export function spotUniverse(all: StorageRecord[], defs: Container[]): SpotUniverse {
+export function spotUniverse(all: StorageRecord[], defs: Container[], placeSeason: string | null = null): SpotUniverse {
   const seen = new Map<string, Spot>();
   const occupied = new Map<string, StorageRecord>();
   for (const r of all) {
     const code = (r.location ?? '').toUpperCase();
     const m = code.match(SPOT_RE);
     if (!m) continue;
-    if (!seen.has(code)) seen.set(code, { code, c: m[1], n: Number(m[2]) });
+    // With one season chosen as "the warehouse as it stands", a row from an older
+    // season no longer invents a place — but anything holding tires right now keeps
+    // its place whatever season it came from, so nothing in the warehouse is hidden.
+    const definesPlace = !placeSeason || r.season === placeSeason || holdsSpot(r);
+    if (definesPlace && !seen.has(code)) seen.set(code, { code, c: m[1], n: Number(m[2]) });
     if (!holdsSpot(r)) continue;
     const prev = occupied.get(code);
     occupied.set(code, prev ? current(prev, r) : r);

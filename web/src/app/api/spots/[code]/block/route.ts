@@ -6,14 +6,14 @@ import { blockSpot } from '@/server/repo/records';
 import { logEvent } from '@/server/repo/misc';
 
 /** Hold an empty place (no tires) so it is not handed out. */
-export const POST = api<{ code: string }>({ perm: 'act.operate' }, async ({ params, body, actor }) => {
+export const POST = api<{ code: string }>({ perm: 'act.operate' }, async ({ params, body, actor, branchId }) => {
   const code = normCode(decodeURIComponent(params.code));
   // Membership in the place universe is the real check — custom names
   // (PLAUKTS-1) don't match letters+number but are perfectly valid.
-  const u = await loadUniverse();
+  const u = await loadUniverse(branchId);
   if (!u.spots.some((s) => s.code === code)) throw notFound('Nezināma vieta');
   if (u.occupied.has(code)) throw conflict('Vieta jau ir aizņemta');
-  const rec = await blockSpot(code);
+  const rec = await blockSpot(code, branchId);
   await logEvent(rec.id, 'blocked', commentOf((await body()).comment), actor);
   return Response.json(rec, { status: 201 });
 });

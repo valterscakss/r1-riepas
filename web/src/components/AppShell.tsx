@@ -5,7 +5,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { canOpen, LAST_VIEW_KEY, SCREENS, screenByKey, screenByPath } from '@/client/nav';
 import { useSession } from '@/client/session';
-import { useOpenTasks, usePending, useStats } from '@/client/queries';
+import { useBranches, useOpenTasks, usePending, useStats } from '@/client/queries';
+import { getBranch, setBranch } from '@/client/branch';
 import { useDialogs } from '@/client/dialogs';
 import { initialsOf } from '@/domain/format';
 import { ROLE_LABEL } from '@/domain/perms';
@@ -26,6 +27,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   const tasks = useOpenTasks();
   const pending = usePending(can('screen.pending'));
   const current = screenByPath(pathname);
+  const branches = useBranches();
+  const activeBranch = branches.data?.active;
+
+  // If the remembered shop is not one this user may open, the server already served
+  // the first allowed one — remember that instead.
+  useEffect(() => { if (activeBranch && getBranch() !== activeBranch) setBranch(activeBranch); }, [activeBranch]);
+  const switchBranch = (id: string) => {
+    setBranch(id);
+    // A full load on purpose: every cached screen belongs to the shop just left.
+    window.location.reload();
+  };
 
   // Remember the screen (never an admin one) so the next visit reopens it.
   useEffect(() => {
@@ -59,6 +71,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="logo">R1</div>
           <div><div style={{ fontWeight: 600, fontSize: 15 }}>R1 Tires</div><div className="muted" style={{ fontSize: 11 }}>Riepu noliktava</div></div>
         </div>
+        {branches.data && branches.data.branches.length > 1 && (
+          <div className="branch-pick">
+            <label className="label" htmlFor="branch-select">Filiāle</label>
+            <select id="branch-select" value={activeBranch} onChange={(e) => switchBranch(e.target.value)}>
+              {branches.data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </div>
+        )}
         <nav className="nav" aria-label="Sadaļas">
           {SCREENS.filter((s) => canOpen(s, perms, isAdmin)).map((s, i, list) => (
             <div key={s.key} style={{ display: 'contents' }}>

@@ -10,9 +10,40 @@ import { pushToAll } from './push';
 import { notFound } from './http';
 
 
-export async function loadUniverse(): Promise<SpotUniverse> {
-  const [all, defs] = await Promise.all([records.listRecords(), misc.listContainers()]);
-  return spotUniverse(all, defs);
+/** The setting that names the season whose sheet defines a branch's places. */
+export const placeSeasonKey = (branchId: string) => `placeSeason:${branchId || '1'}`;
+
+export async function placeSeasonOf(branchId: string): Promise<string | null> {
+  const v = await misc.getSetting<string>(placeSeasonKey(branchId));
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
+/** One branch's places and who holds them. */
+export async function loadUniverse(branchId: string): Promise<SpotUniverse> {
+  const [all, defs, season] = await Promise.all([
+    records.listRecords({ branchId }), misc.listContainers(branchId), placeSeasonOf(branchId),
+  ]);
+  return spotUniverse(all, defs, season);
+}
+
+/**
+ * Spot codes must not reach into another shop's letters: "Z5" here while rack Z
+ * lives in the other shop would make a paper slip ambiguous. Returns the clashing
+ * foreign prefix, or null.
+ */
+export async function foreignPrefix(name: string, branchId: string): Promise<string | null> {
+  const others = (await misc.listContainers()).filter((c) => c.branchId !== branchId);
+  return others.find((c) => name.startsWith(c.prefix))?.prefix ?? null;
+}
+
+/**
+ * Refuse a record that lives in another shop. Lists are already filtered, but a
+ * record is also reachable by id — without this, guessing an id would read or
+ * change data in a branch the user was never given.
+ */
+export async function assertSameBranch(recordId: string, branchId: string): Promise<void> {
+  const rec = await records.getRecord(recordId);
+  if (rec && rec.branchId !== branchId) throw notFound('Ieraksts nav šajā filiālē');
 }
 
 /** Saved price rules, or the built-in ones. */
@@ -34,7 +65,7 @@ async function queueJob(kind: 'store' | 'prepare', rec: StorageRecord, actor: st
     const task = await misc.createTask({
       kind, recordId: String(rec.id), title: taskTitleFor(rec),
       details: [taskDetailsFor(rec), extra].filter(Boolean).join(' · ') || null,
-      location: rec.location, plate: rec.plate, createdBy: actor,
+      location: rec.location, plate: rec.plate, createdBy: actor, branchId: rec.branchId,
     });
     announceTask(task);
     return task;
@@ -50,8 +81,8 @@ async function queueJob(kind: 'store' | 'prepare', rec: StorageRecord, actor: st
  * `releaseId` it completes a seasonal swap — the prepared set that reserved the
  * place is closed first.
  */
-export async function intake(b: IntakeBody, actor: string): Promise<StorageRecord> {
-  const u = await loadUniverse();
+export async function intake(b: IntakeBody, actor: string, branchId: string): Promise<StorageRecord> {
+  const u = await loadUniverse(branchId);
   const location = b.location ? normCode(b.location) : firstFreeSpot(u);
   const smsCodes = new Set(u.all.map((r) => r.smsCode).filter((c): c is string => !!c));
   const input = buildIntake(b, { location, pricing: await loadPricing(), smsCodes, now: new Date() });
@@ -62,7 +93,7 @@ export async function intake(b: IntakeBody, actor: string): Promise<StorageRecor
       await misc.closeTasksForRecord(prev, actor);
     }
   }
-  const rec = await records.createRecord(input);
+  const rec = await records.createRecord({ ...input, branchId });
   await misc.logEvent(rec.id, 'created', commentOf(b.notes), actor);
   await queueJob('store', rec, actor);
   return rec;

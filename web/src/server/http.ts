@@ -3,6 +3,8 @@ import { ALL_OFF, computePerms, type PermKey, type Perms } from '@/domain/perms'
 import type { Role } from '@/domain/types';
 import { ensureAdminOnce, tokenFrom, verifyToken, type SessionUser } from './auth';
 import * as usersRepo from './repo/users';
+import { branchesFor, bustBranches, pickBranch } from './branch';
+import type { Branch } from '@/domain/types';
 
 /** A failure the client should see as-is. Anything else is logged and becomes a generic 500. */
 export class HttpError extends Error {
@@ -30,6 +32,10 @@ export interface Ctx<P> {
   perms: Perms;
   /** Username for the history / task stamps. */
   actor: string;
+  /** The shop this request works in ('' only when no branch exists at all). */
+  branchId: string;
+  /** The branches this user may open. */
+  branches: Branch[];
   query: URLSearchParams;
   /** The JSON body as an object; malformed or missing → {}. */
   body: () => Promise<Record<string, unknown>>;
@@ -43,7 +49,7 @@ const cache = new Map<string, { at: number; row: { name: string; role: Role; per
 
 export function bustUser(username: string): void { cache.delete(username.toLowerCase()); }
 /** Test hook: forget every cached user. */
-export function clearUserCache(): void { cache.clear(); }
+export function clearUserCache(): void { cache.clear(); bustBranches(); }
 
 async function currentRow(username: string) {
   const key = username.toLowerCase();
@@ -85,11 +91,15 @@ export function api<P = Record<string, string>>(access: Access, fn: Handler<P>) 
       const params = (context?.params ? await context.params : {}) as P;
       let user: SessionUser = { id: '', username: '', name: '', role: 'staff' };
       let perms: Perms = ALL_OFF;
+      let branches: Branch[] = [];
+      let branchId = '';
       if (access !== 'public') {
         const s = await sessionFrom(req);
         if (!s) return errorJson(401, 'Authentication required');
         if (!allowed(access, s.user, s.perms)) return errorJson(403, access === 'admin' ? 'Admin role required' : 'Nav tiesību šai sadaļai');
         ({ user, perms } = s);
+        branches = await branchesFor(user.username);
+        branchId = pickBranch(branches, req.headers.get('x-branch'));
       }
       let parsed: Record<string, unknown> | null = null;
       const body = async () => {
@@ -100,7 +110,7 @@ export function api<P = Record<string, string>>(access: Access, fn: Handler<P>) 
         } catch { parsed = {}; }
         return parsed;
       };
-      const out = await fn({ req, params, user, perms, actor: user.username, query: req.nextUrl.searchParams, body });
+      const out = await fn({ req, params, user, perms, actor: user.username, branchId, branches, query: req.nextUrl.searchParams, body });
       return out instanceof Response ? out : Response.json(out);
     } catch (e) {
       if (e instanceof HttpError) return errorJson(e.status, e.message);
@@ -115,3 +125,4 @@ export const qs = (q: URLSearchParams, k: string) => (q.get(k) ?? '').trim();
 
 export const clientIp = (req: Request) =>
   req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || req.headers.get('x-real-ip') || 'unknown';
+

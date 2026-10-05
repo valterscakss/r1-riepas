@@ -6,13 +6,14 @@ import { api, errMsg } from '@/client/api';
 import { useDialogs } from '@/client/dialogs';
 import { useSession } from '@/client/session';
 import { useToast } from '@/client/toast';
-import { useRefresh } from '@/client/queries';
+import { useBranches, useRefresh } from '@/client/queries';
 import { useDebounced } from '@/client/useDebounced';
 import { notesOf, size2Of } from '@/domain/sizes';
 import type { StorageRecord } from '@/domain/types';
 import { StatusBadge } from '../records/status';
 import { useOpenRecord } from '../records/RecordProvider';
 import { ExportButton } from '../ui/ExportButton';
+import { ImportDialog, type ImportPreview } from './ImportDialog';
 
 type Col = { k: string; t: string; mono?: boolean };
 const COLS: Col[] = [
@@ -98,9 +99,6 @@ export function TableScreen() {
   );
 }
 
-type Preview = { parsed: number; sheets: number; rows: number; skipped: number; sample: Array<Record<string, string | null>> };
-const PREVIEW_COLS: Array<[string, string]> = [['location', 'Vieta'], ['plate', 'Nr.'], ['makeModel', 'Auto'], ['customerName', 'Klients'], ['size1', 'Izmērs'], ['size2', '2.izm.'], ['brand', 'Ražotājs'], ['quantity', 'Sk.'], ['season', 'Sezona']];
-
 /**
  * Admin Excel import: a dry run shows what the file holds without touching the
  * database; only the confirmation replaces the data.
@@ -111,45 +109,32 @@ function ImportButton() {
   const toast = useToast();
   const refresh = useRefresh();
   const [busy, setBusy] = useState('');
-  const send = (file: File, dry: boolean) => {
+  const branches = useBranches();
+  const send = (file: File, dry: boolean, season = '') => {
     const fd = new FormData();
     fd.append('file', file);
-    return api<Preview & { imported?: number }>(`/api/import${dry ? '?dryRun=1' : ''}`, { method: 'POST', body: fd });
+    const qs = new URLSearchParams();
+    if (dry) qs.set('dryRun', '1');
+    if (season) qs.set('placeSeason', season);
+    return api<ImportPreview & { imported?: number }>(`/api/import${qs.size ? `?${qs}` : ''}`, { method: 'POST', body: fd });
   };
   const run = async (file: File) => {
-    let prev: Preview;
+    let prev: ImportPreview;
     try { setBusy('Analizē failu…'); prev = await send(file, true); }
     catch (e) { await dialogs.alert(`Neizdevās nolasīt failu: ${errMsg(e)}`); return; } finally { setBusy(''); }
-    const ok = await dialogs.confirm({
-      icon: 'warning', title: 'Apstiprināt importu?', wide: true, danger: true, confirmText: `Importēt (${prev.parsed})`,
-      body: (
-        <div style={{ fontSize: 13 }}>
-          <div className="row" style={{ gap: 16, marginBottom: 10 }}><div><b style={{ fontSize: 18 }}>{prev.parsed}</b> ieraksti</div><div className="muted"><b>{prev.sheets}</b> sezonu lapas · {prev.rows} rindas · {prev.skipped} tukšas</div></div>
-          <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
-            <table className="data" style={{ fontSize: 12 }}>
-              <thead><tr>{PREVIEW_COLS.map(([, l]) => <th key={l}>{l}</th>)}</tr></thead>
-              <tbody>{prev.sample.map((r, i) => <tr key={i}>{PREVIEW_COLS.map(([k]) => <td key={k}>{r[k] ?? ''}</td>)}</tr>)}</tbody>
-            </table>
-          </div>
-          <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>Rāda pirmos {prev.sample.length} ierakstus priekšskatam.</div>
-          <div style={{ marginTop: 10, padding: '9px 11px', background: 'var(--danger-soft)', color: 'var(--danger)', borderRadius: 8, fontWeight: 600 }}>
-            ⚠ Šis aizvietos VISUS pašreizējos datus ar šī faila saturu.
-            <div style={{ fontWeight: 400, marginTop: 4 }}>Ierakstu numuri tiek pārnumurēti, tāpēc tiks dzēsta arī <b>darbību vēsture, komentāri, bildes</b> un noliktavas uzdevumi, kas piesaistīti ierakstiem.</div>
-          </div>
-        </div>
-      ),
-    });
-    if (!ok.ok) return;
+    const branch = branches.data?.branches.find((x) => x.id === branches.data?.active);
+    const ok = await dialogs.open<{ season: string }>((done) => <ImportDialog prev={prev} branchName={branches.data && branches.data.branches.length > 1 ? branch?.name ?? null : null} done={done} />);
+    if (!ok) return;
     try {
       setBusy('Importē…');
-      const out = await send(file, false);
+      const out = await send(file, false, ok.season);
       toast(`Importēts: ${out.imported ?? prev.parsed} ieraksti`);
       void refresh();
     } catch (e) { await dialogs.alert(`Imports neizdevās: ${errMsg(e)}`); } finally { setBusy(''); }
   };
   return (
     <>
-      <button className="btn" style={{ height: 38 }} disabled={!!busy} title="Augšupielādēt jaunu Excel tabulu (aizvietos visus datus)" onClick={() => ref.current?.click()}>{busy || '⭱ Importēt Excel'}</button>
+      <button className="btn" style={{ height: 38 }} disabled={!!busy} title="Augšupielādēt jaunu Excel tabulu (aizvietos šīs filiāles datus)" onClick={() => ref.current?.click()}>{busy || '⭱ Importēt Excel'}</button>
       <input ref={ref} type="file" hidden accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
         onChange={(e) => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ''; if (f) void run(f); }} />
     </>

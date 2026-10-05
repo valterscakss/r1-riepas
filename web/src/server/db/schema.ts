@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, customType, index, integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { bigint, boolean, customType, index, integer, pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core';
 
 /**
  * The production schema, table for table and column for column as the Express
@@ -12,6 +12,14 @@ import { bigint, boolean, customType, index, integer, pgTable, text, timestamp }
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' });
 const id = () => bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity();
 const createdAt = () => timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull().defaultNow();
+
+/** A shop. Racks, the sets on them and the warehouse jobs each belong to one. */
+export const branches = pgTable('branches', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull(),
+  active: boolean('active').notNull().default(true),
+  createdAt: createdAt(),
+});
 
 export const storage = pgTable('storage', {
   id: id(),
@@ -36,6 +44,7 @@ export const storage = pgTable('storage', {
   smsCode: text('sms_code'),
   feeEur: text('fee_eur'),
   preparedDate: text('prepared_date'),
+  branchId: integer('branch_id'),
 }, (t) => [
   index('idx_storage_plate').on(sql`upper(${t.plate})`),
   index('idx_storage_status').on(t.status),
@@ -50,6 +59,8 @@ export const users = pgTable('users', {
   role: text('role').notNull().default('staff'),
   createdAt: createdAt(),
   perms: text('perms'),
+  /** JSON array of branch ids the user may open; null = every branch. */
+  branches: text('branches'),
 });
 
 export const containers = pgTable('containers', {
@@ -62,6 +73,7 @@ export const containers = pgTable('containers', {
   cells: text('cells'),
   names: text('names'),
   zones: text('zones'),
+  branchId: integer('branch_id'),
 });
 
 export const recordEvents = pgTable('record_events', {
@@ -86,6 +98,7 @@ export const tasks = pgTable('tasks', {
   createdAt: createdAt(),
   doneBy: text('done_by'),
   doneAt: timestamp('done_at', { withTimezone: true, mode: 'string' }),
+  branchId: integer('branch_id'),
 }, (t) => [
   index('idx_tasks_status').on(t.status),
   index('idx_tasks_record').on(t.recordId),
