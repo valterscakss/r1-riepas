@@ -315,10 +315,22 @@ export function createApp(): express.Express {
     const hit = others.find((c) => name.startsWith(c.prefix));
     return hit ? hit.prefix : null;
   }
+  // The warehouse's real places come from ONE season's sheet — the one that
+  // describes the racks as they stand today. Older seasons stay as history, but a
+  // place they mention and that has since been taken apart must not reappear on
+  // the map. Unset (the default) means every row defines places, as before.
+  const placeSeasonKey = (branchId?: string) => `placeSeason:${branchId || '1'}`;
+  const placeSeasonOf = async (branchId?: string): Promise<string | null> => {
+    const store = await getStore();
+    const v = await store.getSetting(placeSeasonKey(branchId));
+    return typeof v === 'string' && v.trim() ? v.trim() : null;
+  };
+
   async function spotUniverse(branchId?: string) {
     const store = await getStore();
     const all = await store.list({ branchId });
     const defs = await store.listContainers(branchId);
+    const placeSeason = await placeSeasonOf(branchId);
     const seen = new Map<string, { code: string; c: string; n: number }>();
     const occupied = new Map<string, (typeof all)[number]>();
     // A place carries rows from every season it has ever been used in, so the one
@@ -339,7 +351,10 @@ export function createApp(): express.Express {
       const code = (r.location ?? '').toUpperCase();
       const m = code.match(SPOT_RE);
       if (!m) continue;
-      if (!seen.has(code)) seen.set(code, { code, c: m[1], n: Number(m[2]) });
+      // A row from an older season no longer invents a place — but anything that
+      // holds tires right now always keeps its place, whatever season it came from.
+      const definesPlace = !placeSeason || r.season === placeSeason || holdsSpot(r);
+      if (definesPlace && !seen.has(code)) seen.set(code, { code, c: m[1], n: Number(m[2]) });
       // Stored ('active'), staged-for-swap ('prepared') and manually 'blocked' spots all hold the spot.
       if (!holdsSpot(r)) continue;
       const prev = occupied.get(code);
@@ -1675,6 +1690,68 @@ export function createApp(): express.Express {
 
   // --- Excel import (admin only): parse the workbook and REPLACE the DB.
   // The file is parsed in memory and never stored; Excel is the source of truth.
+  // A drawn rack whose places are not in the chosen season's sheet is not in the
+  // warehouse any more: switch those cells off so the rack keeps its shape, and
+  // drop the rack when nothing is left. A cell that holds tires is never touched —
+  // hiding a place with a customer's set in it would lose the set.
+  interface RackPlan {
+    deleted: { id: string; prefix: string; cells: number }[];
+    trimmed: { id: string; prefix: string; off: number; left: number; cells: string; names: string | null }[];
+    kept: number;
+    protectedCells: { code: string; plate: string | null }[];
+  }
+  // `holders` is what the records WILL be — on a preview the rows in the database
+  // are the ones about to be replaced, so judging against them would protect
+  // places the new file does not have and hide the real consequence.
+  async function planRacks(
+    branchId: string,
+    codes: Set<string>,
+    holders?: { location: string | null; status: string; plate: string | null }[],
+  ): Promise<RackPlan> {
+    const store = await getStore();
+    const defs = await store.listContainers(branchId);
+    const all = holders ?? await store.list({ branchId });
+    const held = new Map<string, string | null>();
+    for (const r of all) {
+      if (r.status !== 'active' && r.status !== 'prepared' && r.status !== 'blocked') continue;
+      const c = (r.location ?? '').toUpperCase();
+      if (c) held.set(c, r.plate);
+    }
+    const plan: RackPlan = { deleted: [], trimmed: [], kept: 0, protectedCells: [] };
+    for (const d of defs) {
+      const map = cellMap(d);
+      let names: Record<string, string> = {};
+      try { names = d.names ? JSON.parse(d.names) : {}; } catch { /* ignore bad json */ }
+      // Merged zones are drawn by hand and carry no per-cell code, so leave them be.
+      const zoneCells = new Set<number>();
+      for (const z of parseZones(d.zones)) z.cells.forEach((i) => zoneCells.add(i));
+      const next = [...map];
+      const keptNames: Record<string, string> = {};
+      let off = 0, left = 0;
+      map.forEach((on, i) => {
+        if (!on) return;
+        if (zoneCells.has(i)) { left++; if (names[String(i)]) keptNames[String(i)] = names[String(i)]; return; }
+        const code = (names[String(i)] || `${d.prefix}${i + 1}`).toUpperCase();
+        if (codes.has(code)) { left++; if (names[String(i)]) keptNames[String(i)] = names[String(i)]; return; }
+        if (held.has(code)) {
+          left++;
+          plan.protectedCells.push({ code, plate: held.get(code) ?? null });
+          if (names[String(i)]) keptNames[String(i)] = names[String(i)];
+          return;
+        }
+        next[i] = false; off++;
+      });
+      if (!off) { plan.kept++; continue; }
+      if (!left) { plan.deleted.push({ id: d.id, prefix: d.prefix, cells: map.filter(Boolean).length }); continue; }
+      plan.trimmed.push({
+        id: d.id, prefix: d.prefix, off, left,
+        cells: next.map((x) => (x ? '1' : '0')).join(''),
+        names: Object.keys(keptNames).length ? JSON.stringify(keptNames) : null,
+      });
+    }
+    return plan;
+  }
+
   app.post('/api/import', requireAdmin, upload.single('file'), asyncH(async (req, res) => {
     const file = (req as express.Request & { file?: { buffer: Buffer } }).file;
     if (!file) return res.status(400).json({ error: { message: 'No file uploaded (field name: file)' } });
@@ -1687,6 +1764,14 @@ export function createApp(): express.Express {
     if (parsed.records.length === 0) {
       return res.status(400).json({ error: { message: 'Neatpazina nevienu derīgu lapu. Pārbaudi, vai fails ir tajā pašā formātā (VIETA, AUTO NR., IZMĒRS…).' } });
     }
+    // Which sheet describes the warehouse as it stands today. Everything imports
+    // either way — this only decides which season's places make up the map.
+    const asked = String(req.query.placeSeason ?? (req.body as Record<string, unknown> | undefined)?.placeSeason ?? '').trim();
+    const chosen = asked ? parsed.seasons.find((x) => x.name === asked) : null;
+    if (asked && !chosen) {
+      return res.status(400).json({ error: { message: `Failā nav lapas "${asked}"` } });
+    }
+
     // Dry run: return what WOULD be imported (summary + a sample) without touching the DB.
     if (req.query.dryRun === '1' || req.query.preview === '1') {
       const sample = parsed.records.slice(0, 8).map((r) => ({
@@ -1694,11 +1779,41 @@ export function createApp(): express.Express {
         customerName: r.customerName, size1: r.size1, size2: r.size2, brand: r.brand,
         quantity: r.quantity, status: r.status,
       }));
-      return res.json({ ok: true, dryRun: true, sample, ...parsed.summary });
+      // What each season would do to the drawn racks, so the choice can be made
+      // with the consequences in front of you rather than after the fact.
+      const seasons = [];
+      for (const sInfo of parsed.seasons) {
+        const plan = await planRacks(bid(req), new Set(sInfo.codes), parsed.records);
+        seasons.push({
+          name: sInfo.name, rows: sInfo.rows, places: sInfo.places, active: sInfo.active,
+          free: sInfo.free, held: sInfo.held, released: sInfo.released,
+          racks: {
+            deleted: plan.deleted.map((d) => d.prefix),
+            trimmed: plan.trimmed.map((t) => ({ prefix: t.prefix, off: t.off, left: t.left })),
+            kept: plan.kept,
+            protected: plan.protectedCells.length,
+          },
+        });
+      }
+      return res.json({ ok: true, dryRun: true, sample, seasons, placeSeason: await placeSeasonOf(bid(req)), ...parsed.summary });
     }
     const store = await getStore();
     const { imported } = await store.replaceAll(parsed.records, bid(req));
-    res.json({ ok: true, imported, ...parsed.summary });
+    let racks: { deleted: string[]; trimmed: string[]; protected: number } | undefined;
+    if (chosen) {
+      await store.setSetting(placeSeasonKey(bid(req)), chosen.name);
+      // Reconcile AFTER the import: the records are what decides whether a place
+      // still holds tires, so the plan must see the new rows, not the old ones.
+      const plan = await planRacks(bid(req), new Set(chosen.codes), parsed.records);
+      for (const t of plan.trimmed) await store.updateContainer(t.id, { cells: t.cells, names: t.names });
+      for (const d of plan.deleted) await store.deleteContainer(d.id);
+      racks = {
+        deleted: plan.deleted.map((d) => d.prefix),
+        trimmed: plan.trimmed.map((t) => `${t.prefix} (−${t.off})`),
+        protected: plan.protectedCells.length,
+      };
+    }
+    res.json({ ok: true, imported, placeSeason: chosen?.name ?? null, racks, ...parsed.summary });
   }));
 
   // --- User management (admin only) — the in-app "login & password generator". ---

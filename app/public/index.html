@@ -1209,27 +1209,76 @@ async function doImport(file){
   const cols=[['location','Vieta'],['plate','Nr.'],['makeModel','Auto'],['customerName','Klients'],['size1','Izmērs'],['size2','2.izm.'],['brand','Ražotājs'],['quantity','Sk.'],['season','Sezona']];
   const th=cols.map(c=>`<th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd;font-weight:600;white-space:nowrap;">${c[1]}</th>`).join('');
   const trs=sample.map(r=>`<tr>${cols.map(c=>`<td style="padding:3px 8px;border-bottom:1px solid #f0f0f0;white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis;">${esc(r[c[0]]==null?'':r[c[0]])}</td>`).join('')}</tr>`).join('');
+  // All seasons import as history, but ONE of them says which places the warehouse
+  // actually has today — the sheet where BRĪVS marks an empty place. Places that
+  // only older sheets mention stay out of the map, and racks drawn in the app that
+  // the sheet does not know are taken apart.
+  const seasons=prev.seasons||[];
+  const sel=seasons.length?(pickPlaceSeason(seasons,prev.placeSeason)):'';
+  const seasonRows=seasons.map(x=>`<label style="display:flex;gap:9px;align-items:flex-start;padding:7px 8px;border:1px solid ${x.name===sel?'#2563eb':'#e5e5e5'};border-radius:9px;margin-bottom:6px;cursor:pointer;background:${x.name===sel?'#eff6ff':'#fff'};" data-srow="${esc(x.name)}">
+      <input type="radio" name="pseason" value="${esc(x.name)}" ${x.name===sel?'checked':''} style="margin-top:2px;width:16px;height:16px;accent-color:#2563eb;cursor:pointer;">
+      <span style="min-width:0;">
+        <b>${esc(x.name)}</b>
+        <span style="color:#666;"> · ${x.places} vietas</span>
+        <div style="color:#888;font-size:11px;margin-top:2px;">${x.active} ar riepām · ${x.free} brīvas · ${x.held} aizņemtas · ${x.released} izsniegtas</div>
+        ${rackNote(x.racks)}
+      </span>
+    </label>`).join('');
   const html=`<div style="text-align:left;font-size:13px;">
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;">
       <div><b style="font-size:18px;">${prev.parsed}</b> ieraksti</div>
       <div style="color:#666;"><b>${prev.sheets}</b> sezonu lapas · ${prev.rows} rindas · ${prev.skipped} tukšas</div>
     </div>
-    <div style="max-height:260px;overflow:auto;border:1px solid #eee;border-radius:8px;"><table style="border-collapse:collapse;width:100%;font-size:12px;"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></div>
+    ${seasons.length>1?`<div style="margin-bottom:12px;">
+      <div style="font-weight:600;margin-bottom:6px;">Kura lapa nosaka vietas?</div>
+      <div style="color:#666;font-size:11px;margin-bottom:8px;">Izvēlētās lapas vietas būs vietu karte. Pārējās sezonas paliek kā vēsture, bet to vietas kartē vairs nerādās.</div>
+      <div style="max-height:210px;overflow:auto;">${seasonRows}</div>
+    </div>`:''}
+    <div style="max-height:200px;overflow:auto;border:1px solid #eee;border-radius:8px;"><table style="border-collapse:collapse;width:100%;font-size:12px;"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></div>
     <div style="margin-top:8px;color:#999;font-size:11px;">Rāda pirmos ${sample.length} ierakstus priekšskatam.</div>
     <div style="margin-top:10px;padding:9px 11px;background:#fdecec;color:#b91c1c;border-radius:8px;font-weight:600;">⚠ Šis aizvietos VISUS pašreizējos datus ar šī faila saturu.<div style="font-weight:400;margin-top:4px;">Ierakstu numuri tiek pārnumurēti, tāpēc tiks dzēsta arī <b>darbību vēsture, komentāri, bildes</b> un noliktavas uzdevumi, kas piesaistīti ierakstiem.</div></div>
   </div>`;
-  const r=await ask({icon:'warning',title:'Apstiprināt importu?',html,width:760,confirmButtonText:`Importēt (${prev.parsed})`,confirmButtonColor:'#b91c1c',cancelButtonText:'Atcelt'});
+  const r=await ask({icon:'warning',title:'Apstiprināt importu?',html,width:760,confirmButtonText:`Importēt (${prev.parsed})`,confirmButtonColor:'#b91c1c',cancelButtonText:'Atcelt',
+    didOpen:()=>{document.querySelectorAll('[data-srow]').forEach(el=>el.addEventListener('click',()=>{
+      document.querySelectorAll('[data-srow]').forEach(o=>{const on=o===el;o.style.borderColor=on?'#2563eb':'#e5e5e5';o.style.background=on?'#eff6ff':'#fff';const i=o.querySelector('input');if(i)i.checked=on;});}));},
+    preConfirm:()=>{const c=document.querySelector('input[name="pseason"]:checked');return c?c.value:'';}});
   if(!r.isConfirmed)return;
+  const pick=typeof r.value==='string'?r.value:sel;
   try{
     R1&&R1.fire({title:'Importē…',html:'Aizvieto datus',allowOutsideClick:false,didOpen:()=>R1.showLoading()});
-    const res2=await fetch('/api/import',{method:'POST',body:mkFd()});
+    const res2=await fetch('/api/import'+(pick?'?placeSeason='+encodeURIComponent(pick):''),{method:'POST',body:mkFd()});
     const out=await res2.json().catch(()=>({}));
     if(!res2.ok||!out.ok)throw new Error(impErr(out,res2));
     R1&&R1.close();
-    toast('Importēts: '+(out.imported!=null?out.imported:prev.parsed)+' ieraksti');
-    await Promise.all([loadTable(),loadStats()]);updateTabContent();
+    const parts=['Importēts: '+(out.imported!=null?out.imported:prev.parsed)+' ieraksti'];
+    if(out.placeSeason)parts.push('vietas no '+out.placeSeason);
+    if(out.racks&&out.racks.deleted&&out.racks.deleted.length)parts.push('dzēsti plaukti: '+out.racks.deleted.join(', '));
+    if(out.racks&&out.racks.trimmed&&out.racks.trimmed.length)parts.push('sašaurināti: '+out.racks.trimmed.join(', '));
+    toast(parts.join(' · '));
+    S.tableLoaded=false;await Promise.all([loadTable(),loadStats()]);bustView();updateTabContent();
   }catch(e){R1&&R1.close();alertErr('Imports neizdevās: '+(e.message||e));}
 }
+// Default to the season already in use, else the newest one in the file.
+const SEASON_ORDER={PAVASARIS:1,VASARA:2,RUDENS:3,ZIEMA:4};
+function seasonRank(name){
+  const u=String(name||'').toUpperCase();
+  const y=(u.match(/(19|20)\d{2}/)||[''])[0];
+  const k=Object.keys(SEASON_ORDER).find(x=>u.includes(x));
+  return (y?Number(y):0)*10+(k?SEASON_ORDER[k]:0);}
+function pickPlaceSeason(list,current){
+  if(current&&list.some(x=>x.name===current))return current;
+  let best=list[0];
+  for(const x of list)if(seasonRank(x.name)>seasonRank(best.name))best=x;
+  return best?best.name:'';}
+// What choosing this sheet would do to the racks drawn in the app.
+function rackNote(r){
+  if(!r)return '';
+  const bits=[];
+  if(r.deleted&&r.deleted.length)bits.push('dzēš plauktus '+r.deleted.join(', '));
+  if(r.trimmed&&r.trimmed.length)bits.push('sašaurina '+r.trimmed.map(t=>t.prefix+' (−'+t.off+' vietas)').join(', '));
+  if(r.protected)bits.push(r.protected+' vietas paliek, jo tur ir riepas');
+  if(!bits.length)return '<div style="color:#059669;font-size:11px;margin-top:3px;">plaukti paliek, kā ir</div>';
+  return '<div style="color:#b45309;font-size:11px;margin-top:3px;">'+esc(bits.join(' · '))+'</div>';}
 function tableHTML(){
   return `<div class="page" style="padding:var(--pad);margin:0 auto;">
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
