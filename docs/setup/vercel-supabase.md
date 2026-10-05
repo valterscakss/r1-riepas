@@ -1,79 +1,76 @@
 # Deploy on Vercel + Supabase
 
-This is the recommended stack: **Supabase** = managed Postgres (with automatic
-backups and version history), **Vercel** = hosting. The app auto-detects Postgres
-from `DATABASE_URL` and creates its table on first connect.
+**Supabase** = managed Postgres (EU region, automatic backups), **Vercel** =
+hosting. The app is the Next.js project in `web/`. The old Express app in `app/`
+still works against the same database until it is removed (see *Switching over*).
 
 ---
 
 ## Step 1 — Supabase (database)
 
-1. Create a project at <https://supabase.com> (choose an **EU region** — the data is
-   EU customer data). Set a database password.
-2. Get the connection string: **Project → Settings → Database → Connection string →
-   URI**. It looks like:
-   `postgresql://postgres:[PASSWORD]@db.[ref].supabase.co:5432/postgres`
-   - For serverless (Vercel), prefer the **connection pooler** URI (port `6543`) if
-     offered — it handles many short-lived connections better.
-3. (Optional) The table is created automatically by the app, but you can pre-create
-   it by pasting `db/supabase/001_storage.sql` into the Supabase **SQL editor**.
+1. Create a project at <https://supabase.com> in an **EU region** (it holds EU
+   customer data) and set a database password.
+2. **Project → Settings → Database → Connection string → URI.** For Vercel use
+   the **connection pooler** URI (port `6543`) — serverless opens many
+   short-lived connections.
+3. Optional but recommended: download the **SSL certificate** on the same page
+   and put its contents in `DATABASE_CA_CERT`, so the server certificate is
+   verified (without it the link is encrypted but not verified).
 
-## Step 2 — Load your data
+Tables are created by the app's migrations (`web/drizzle/`), not by hand.
 
-From your machine (needs the source workbook once, to build the seed):
+## Step 2 — Vercel (hosting)
 
-```bash
-npm install
-npm run import:emit-seed        # -> app/data/real-seed.json (gitignored)
-
-cd app
-DATABASE_URL="postgresql://postgres:[PASSWORD]@db.[ref].supabase.co:5432/postgres" \
-  npm run load:supabase -- --file data/real-seed.json --truncate
-```
-
-This loads ~9,600 records in a few seconds. Re-running with `--truncate` replaces
-them. (You can also import a CSV via the Supabase Table Editor if you prefer.)
-
-## Step 3 — Vercel (hosting)
-
-1. At <https://vercel.com> → **Add New → Project** → import this GitHub repo
-   (branch `main`).
-2. Set **Root Directory = `app`** (the app lives there; `app/vercel.json` routes
-   everything to the Express handler).
-3. Add these **Environment Variables**:
+1. <https://vercel.com> → **Add New → Project** → import this repository.
+2. **Root Directory = `web`**. Framework preset: Next.js (detected).
+3. Environment variables:
 
    | Key | Value |
    | :- | :- |
-   | `DATABASE_URL` | Supabase connection string from Step 1 (with password) |
-   | `AUTH_SECRET` | any long random string (signs login sessions) |
-   | `ADMIN_USERNAME` | e.g. `admin` — **your login username** |
-   | `ADMIN_PASSWORD` | choose one — **your login password** |
-   | `ANONYMIZE_PHONES` | `true` (replaces phone numbers with `01010101010` during testing) |
+   | `DATABASE_URL` | Supabase pooler URI from Step 1 |
+   | `AUTH_SECRET` | long random string (`openssl rand -base64 48`) — **the same value the Express app used**, so nobody is logged out at the switch |
+   | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | the first admin on an empty database; changing the password later resets that admin's password once |
+   | `DATABASE_CA_CERT` | optional, see Step 1 |
+   | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | optional, Web Push (`npx web-push generate-vapid-keys`) — the same keys as before keep existing phone subscriptions working |
+   | `ANONYMIZE_PHONES` | optional, `true` while testing Excel imports |
 
-4. **Deploy.** You get a URL like `https://r1-tires.vercel.app`.
-   - Check `‹url›/api/health` → should say `postgres (supabase)`.
-   - Open `‹url›/` and **log in** with `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
+4. **Deploy.** A production build first applies pending migrations, then builds.
+   Preview deployments never migrate (they usually share the production
+   `DATABASE_URL`, and an unmerged branch must not change its schema).
+5. Check `‹url›/api/health` → `{"ok":true,"store":"postgres"}` and log in.
 
-The app creates its tables and seeds the admin user automatically on first hit —
-no SQL needed. Data: either import the CSV in Supabase (Step 2), or log in and use
-the **Admin → Import from Excel** tab to upload the workbook (phones get dummied
-while `ANONYMIZE_PHONES=true`).
+## Loading data
 
-> Deploying from a terminal instead? From `app/`:
-> `npx vercel --prod` (add the env vars with `vercel env add` first). Needs your
-> Vercel login/token on that machine.
+- From the workbook: log in as admin → **Tabula → ⭱ Importēt Excel**. It shows a
+  dry-run preview before anything is replaced.
+- From a seed file (`npm run import:emit-seed` at the repo root):
+  `cd web && DATABASE_URL=… npm run db:seed -- --file ../app/data/real-seed.json`
+  (loads into an empty table only; `--force` to add anyway).
 
----
+## Switching over from the Express app
+
+The Next.js app uses the **same tables, cookie name and token format**, so the
+switch is a hosting change, not a data migration.
+
+1. Take a Supabase backup (Database → Backups) — belt and braces.
+2. In the existing Vercel project, set **Root Directory** from `app` to `web`,
+   keep every environment variable, and redeploy. (Or create a second project
+   on `web`, test it on its own URL against the same database, then move the
+   domain.)
+3. The first production build runs the baseline migration. It is idempotent on
+   the existing schema: it only records itself as applied (plus the two
+   BRĪVS/AIZŅEMTS clean-ups the old app ran on every start).
+4. Check: log in, open Novietnes, Tabula, a record's photos, the Noliktava
+   queue. Installed phones reopen on the new screens; old `/?view=…` links and
+   notification clicks still land in the right place.
+5. **Rollback:** set Root Directory back to `app` and redeploy. Nothing in the
+   database needs undoing — the schema is unchanged.
+
+Once the new app has run in production for a while, `app/` can be deleted.
 
 ## Notes
 
-- **Backups:** Supabase runs automated daily backups (and Point-in-Time Recovery on
-  paid plans) — this is the backup story the requirements review asked for.
-- **Security / GDPR:** the app still has **no staff login** — anyone with the URL can
-  read/write. Before real customer data is on a public URL, add the login (the
-  `users`/auth design is in `db/migrations/001_init.sql`) or restrict access. Keep
-  Supabase in an EU region and its keys private. Never commit `DATABASE_URL`.
-- **Local development** still works with zero setup (SQLite) when `DATABASE_URL` is
-  not set: `cd app && npm install && npm run dev`.
-- **Render** (`render.yaml`, `docs/setup/deploy.md`) remains as an alternative host
-  if ever needed, but Vercel + Supabase is the primary path.
+- **Backups:** Supabase runs daily backups; Point-in-Time Recovery on paid plans.
+- **Local development:** Postgres in Docker — see `web/README.md`.
+- **Self-hosting:** `web/Dockerfile` builds a standalone image that applies
+  migrations on start; it needs `DATABASE_URL` and `AUTH_SECRET`.

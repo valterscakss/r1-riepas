@@ -30,17 +30,21 @@ the migration can be reviewed before a real load. Latest run: 9,644 tire sets,
 
 ## Tech stack
 
-Node.js + TypeScript · Express · **Supabase (Postgres)** for data · **Vercel** for
-hosting. The app has a pluggable datastore (Postgres/Supabase, Google Sheets, or a
-self-contained SQLite for local dev) selected by environment. See
-`docs/setup/vercel-supabase.md` to deploy.
+**Next.js 16** (App Router, React 19) + TypeScript · **Postgres** via Drizzle ORM
+(Supabase in production, Docker locally) · **Vercel** for hosting. The app lives
+in `web/`; see `web/README.md` to run it and `docs/setup/vercel-supabase.md` to
+deploy. The previous Express app (`app/`) runs against the same database and
+stays until the switch-over is confirmed (`docs/migration/nextjs-plan.md`).
 
 ## Repository layout
 
 ```
-db/migrations/     SQL schema migrations
+web/               The application (Next.js): UI, API routes, domain logic, tests
+app/               Previous Express app — kept for the switch-over, then removed
 tools/import/      Excel migration importer (dry-run)
+docs/migration/    Next.js migration plan and status
 docs/phase-1/      Requirements review, build plan, integration plan, data model
+docs/setup/        Deployment guides
 data/              Local migration in/out (gitignored; never commit customer data)
 ```
 
