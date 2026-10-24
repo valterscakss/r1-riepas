@@ -18,7 +18,7 @@ services:
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
-        value: "20"
+        value: "22"
       - key: DB_FILE
         value: /data/r1.db
       # To seed real data on first boot, upload a seed file to the disk and set:
