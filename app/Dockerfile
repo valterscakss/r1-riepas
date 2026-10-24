@@ -1,5 +1,5 @@
 # R1 Tires app — production image
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 # Build tools for native modules (better-sqlite3), removed after install keeps
 # layers lean; prebuilt binaries are used when available.
