@@ -59,6 +59,75 @@ falls back to the local seed. The store in use is shown in the app header and at
 | GET | `/api/storage/:id` | One record |
 | POST | `/api/intake` | Create an intake |
 | POST | `/api/storage/:id/release` | Mark retrieved/released |
+| GET | `/api/tasks?status=open\|done\|all` | Warehouse job queue |
+| POST | `/api/tasks` | Post a free-text warehouse order (`{ text }`) |
+| POST | `/api/tasks/:id/done` · `/reopen` | Tick a job off / put it back |
+| GET · PUT | `/api/pricing` | Read / replace the price rules (PUT is admin) |
+| POST | `/api/pricing/recalculate?dryRun=1` | Reprice sets still in storage |
+| GET · POST | `/api/storage/:id/photos` | List / attach photos |
+| GET · DELETE | `/api/photos/:id` | Serve / remove one photo |
+
+## Noliktava — the warehouse view
+
+`Noliktava` is a single screen for the person who physically fetches the tires.
+It lists **only what still has to be brought**; ticking `✓ Gatavs` takes the job
+out of the list. Two things feed the same queue:
+
+- **Sagatavot riepas** — pressing *Sagatavot* anywhere in the app (Izsniegšana,
+  Novietnes, a record card) queues a job automatically, carrying the spot code,
+  plate, tire details and any comment. Undoing the prepare, releasing the set, or
+  completing the swap closes the job again.
+- **Pasūtījums** — free text typed into the box at the top of the view ("4×
+  Nokian 205/55/16 no A ceha"). First line becomes the headline, the rest detail.
+
+### Install it on a phone
+
+The app is a PWA (`manifest.webmanifest` + `sw.js`). On Android open the site in
+Chrome → *Add to home screen*; on iOS use Safari → *Share* → *Add to Home Screen*.
+It opens on whichever screen was last used, so the warehouse phone lands on
+`Noliktava` every time.
+
+### Push notifications
+
+Set these env vars to notify every registered device the moment a job is queued
+— including when the app is closed:
+
+```bash
+npx web-push generate-vapid-keys      # prints a public/private pair
+VAPID_PUBLIC_KEY=...
+VAPID_PRIVATE_KEY=...                 # keep secret — server only
+VAPID_SUBJECT=mailto:admin@example.com
+```
+
+Then each device taps **🔔 Ieslēgt paziņojumus** once in the Noliktava view.
+Without the keys push is simply off: the app still polls every 20 s, keeps the
+sidebar badge live, and raises a local notification while it is open.
+Note that iOS only delivers Web Push to apps added to the Home Screen.
+
+## Iestatījumi — pricing rules (admin)
+
+Prices are **width ranges**: the first number of `225/45/17` picks the range, and
+for a staggered set the widest tire decides. Each range has its own price, and
+three multipliers apply when the set is stored on rims. "Pārbaudi cenu" takes a
+size and shows which range it lands in and the price with and without rims.
+
+Overlapping ranges are rejected on save, since which range won would otherwise
+depend on row order. **Pārrēķināt glabātajām** reprices sets currently in storage
+and dry-runs first, showing how many change plus a before → after sample. Released
+orders are never touched — they keep the amount the customer actually paid.
+
+## Photos on a record
+
+Open any record (Tabula, Klienti, or a spot) and attach photos of the set —
+tread, damage, the rims. **📷 Uzņemt bildi** opens the phone camera directly;
+**⭱ Izvēlēties failu** picks from the gallery and takes several at once. Images
+are downscaled to 1280 px JPEG in the browser before upload and stored as rows in
+the database, so there is no second service to configure. Each upload also lands
+in the record's history.
+
+Note that a full Excel re-import renumbers records, so it clears photos, history
+and record-linked warehouse jobs along with the data — the import dialog says so
+before you confirm.
 
 ## Notes / known refinements
 
